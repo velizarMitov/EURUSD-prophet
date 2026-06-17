@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Data files (large — keep out of git)
+*.csv
+*.parquet
+*.feather
+*.h5
+*.pkl
+*.pickle
+
+# Output images (optional — remove lines below if you want to commit them)
+eurusd_phase2_results.png
+eurusd_phase3_results.png
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
