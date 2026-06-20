@@ -1,9 +1,10 @@
 import numpy as np
 import pandas as pd
-from src.features import add_advanced_features
+import pytest
+from src.features import add_advanced_features, build_live_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN
 
 def test_feature_engineering_success():
-    """Unit test logically verifying the exact extraction geometry explicitly isolating features 
+    """Unit test logically verifying the exact extraction geometry explicitly isolating features
     preventing DataFrame corruption edge cases."""
     dates = pd.date_range('2026-01-01', periods=300, freq='D')
     df = pd.DataFrame({
@@ -15,17 +16,48 @@ def test_feature_engineering_success():
     }, index=dates)
 
     res = add_advanced_features(df)
-    
+
     # Assertions guaranteeing explicit functional reliability
     assert not res.isnull().any().any(), "Function illegally generated NaN bounds within output matrix."
     assert 'day_sin' in res.columns, "Cyclical feature extraction bypassed."
     assert 'volatility_20' in res.columns, "Volatility matrix bypassed."
+    assert TARGET_RETURN_COLUMN in res.columns, "Continuous Multi-Task return target bypassed."
+    assert TARGET_DIRECTION_COLUMN in res.columns, "Binary Multi-Task direction target bypassed."
+    assert set(res[TARGET_DIRECTION_COLUMN].unique()).issubset({0, 1}), "Direction target escaped its binary bounds."
+    assert ((res[TARGET_RETURN_COLUMN] > 0).astype(int) == res[TARGET_DIRECTION_COLUMN]).all(), \
+        "target_direction must be the exact sign of target_return."
     # With a maximum rolling window of 200 and lags of 4, the initial 200+ samples must mathematically drop
     assert len(res) < 300, "Structural sequential overlap detected. NaN shifting bounds failed."
     # The longest window is 200 bars (`SMA_200`), making rows 0-198 (199 rows) contain NaNs.
-    # The target shift(-1) drops the very last row.
-    # Total drops: 199 (due to SMA_200 lacking prev periods) + 1 (due to shift) = 200 dropped rows. However, pandas rolling computes mean inclusive of start.
-    assert len(res) == 300 - 199, f"Sequential boundary row exclusion math is strictly misaligned. Expected {300-199}, got {len(res)}"
+    # target_return's shift(-1) genuinely propagates NaN on the very last row (unlike a boolean
+    # comparison against NaN, which silently evaluates to False instead of being dropped), so it
+    # is correctly excluded by dropna() too.
+    # Total drops: 199 (SMA_200 warmup) + 1 (last-row target undefined) = 200 dropped rows.
+    assert len(res) == 300 - 200, f"Sequential boundary row exclusion math is strictly misaligned. Expected {300-200}, got {len(res)}"
+
+
+def test_build_live_features_no_mock():
+    """Verify live inference features are genuinely recomputed from appended history,
+    not hardcoded/mocked constants, and that the newest bar survives (no target-shift drop)."""
+    dates = pd.date_range('2026-01-01', periods=250, freq='D')
+    history = pd.DataFrame({
+        'open': np.random.rand(250) * 0.1 + 1.1,
+        'high': np.random.rand(250) * 0.1 + 1.15,
+        'low': np.random.rand(250) * 0.1 + 1.05,
+        'close': np.random.rand(250) * 0.1 + 1.12,
+        'tick_volume': np.random.randint(1000, 100000, 250)
+    }, index=dates)
+
+    new_bar = {'open': 1.15, 'high': 1.16, 'low': 1.14, 'close': 1.155, 'tick_volume': 50000}
+    window = build_live_features(history, new_bar, time_steps=20)
+
+    assert len(window) == 20, "Sliding window length must exactly match the requested time_steps."
+    assert list(window.columns) == FEATURE_COLUMNS, "Live feature columns must match the trained FEATURE_COLUMNS order."
+    assert not window.isnull().any().any(), "Live feature window must be fully real-valued, no NaNs."
+
+    last_row = window.iloc[-1]
+    expected_sma_21 = pd.concat([history['close'], pd.Series([new_bar['close']])]).tail(21).mean()
+    assert last_row['SMA_21'] == pytest.approx(expected_sma_21), "SMA_21 must be genuinely computed from real history, not mocked."
 
 def test_feature_engineering_edge_cases():
     """Unit test explicitly guaranteeing 0 Open prices evaluate correctly evading DivisionByZero crashes."""

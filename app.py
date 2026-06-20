@@ -1,99 +1,130 @@
 import gradio as gr
-import pandas as pd
-import numpy as np
 import joblib
 import warnings
 
 import os
+import sys
 
-# Suppress specific non-critical numerical extraction warnings for production
 warnings.filterwarnings('ignore')
 
-# Determine absolute paths for robust deployment execution regardless of CWD
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'models', 'best_gbm_eurusd.pkl')
-SCALER_PATH = os.path.join(BASE_DIR, 'models', 'scaler_gb_eurusd.pkl')
+sys.path.insert(0, BASE_DIR)
 
-# Mathematical Baseline Definitions matching the Notebook's structure precisely
-FEATURE_COLUMNS = [
-    'open', 'high', 'low', 'close', 'tick_volume', 'log_return', 
-    'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20', 
-    'bar_dynamics', 'return_lag_1', 'dynamics_lag_1', 'return_lag_2', 
-    'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos'
-]
+from src.features import load_history, build_live_features
 
-# Initialize model state so all names are always defined at module level
-model = None
-scaler = None
-model_loaded = False
-error_msg = ""
+MODELS_DIR = os.path.join(BASE_DIR, 'models')
+GBM_CLASSIFIER_PATH = os.path.join(MODELS_DIR, 'best_gbm_eurusd.pkl')
+GBM_REGRESSOR_PATH = os.path.join(MODELS_DIR, 'best_gbm_regressor_eurusd.pkl')
+GBM_SCALER_PATH = os.path.join(MODELS_DIR, 'scaler_gb_eurusd.pkl')
+LSTM_MODEL_PATH = os.path.join(MODELS_DIR, 'lstm_multitask_eurusd.keras')
+LSTM_SCALER_PATH = os.path.join(MODELS_DIR, 'scaler_lstm_multitask.pkl')
+LSTM_TIME_STEPS_PATH = os.path.join(MODELS_DIR, 'lstm_time_steps.pkl')
 
-# Loading serialized ML pipeline artifacts computationally via absolute paths
+gbm_classifier = None
+gbm_regressor = None
+gbm_scaler = None
+lstm_model = None
+lstm_scaler = None
+lstm_time_steps = None
+history_df = None
+load_errors = []
+
 try:
-    model = joblib.load(MODEL_PATH)
-    scaler = joblib.load(SCALER_PATH)
-    model_loaded = True
+    gbm_classifier = joblib.load(GBM_CLASSIFIER_PATH)
+    gbm_regressor = joblib.load(GBM_REGRESSOR_PATH)
+    gbm_scaler = joblib.load(GBM_SCALER_PATH)
 except Exception as e:
-    error_msg = str(e)
-    print(f"Artifacts missing: {e}. Please ensure 'models/' directory exists and contains trained .pkl files.")
+    load_errors.append(f"GBM dual pipeline: {e}")
+
+try:
+    os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+    from tensorflow.keras.models import load_model
+    lstm_model = load_model(LSTM_MODEL_PATH)
+    lstm_scaler = joblib.load(LSTM_SCALER_PATH)
+    lstm_time_steps = joblib.load(LSTM_TIME_STEPS_PATH)
+except Exception as e:
+    load_errors.append(f"Multi-Task LSTM: {e}")
+
+try:
+    history_df = load_history()
+except Exception as e:
+    load_errors.append(f"Historical feature context: {e}")
+
+gbm_ready = gbm_classifier is not None and gbm_regressor is not None and gbm_scaler is not None
+lstm_ready = lstm_model is not None and lstm_scaler is not None and lstm_time_steps is not None
+models_ready = (gbm_ready or lstm_ready) and history_df is not None
+
+
+def _predict_gbm(feature_row):
+    scaled = gbm_scaler.transform(feature_row.to_frame().T)
+    prob_up = float(gbm_classifier.predict_proba(scaled)[0, 1])
+    pred_class = int(gbm_classifier.predict(scaled)[0])
+    predicted_return = float(gbm_regressor.predict(scaled)[0])
+    confidence = prob_up if pred_class == 1 else (1 - prob_up)
+    return ("UP" if pred_class == 1 else "DOWN"), confidence, predicted_return * 100
+
+
+def _predict_lstm(window_df):
+    scaled = lstm_scaler.transform(window_df.values)
+    window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
+    predicted_return, prob_up = lstm_model.predict(window_3d, verbose=0)
+    predicted_return = float(predicted_return.ravel()[0])
+    prob_up = float(prob_up.ravel()[0])
+    confidence = prob_up if prob_up >= 0.5 else (1 - prob_up)
+    return ("UP" if prob_up >= 0.5 else "DOWN"), confidence, predicted_return * 100
+
 
 def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
     """
-    Inference mapping endpoint. Integrates the extracted inputs, fakes computational 
-    long-term rolling dependencies matching standard mathematical averages natively, 
-    and pipes data into the verified Gradient Boosting Decision Trees. 
+    Real inference: appends the submitted bar to genuine EURUSD price history,
+    recomputes the actual rolling SMA/volatility/lag indicators (no mocked
+    constants), then queries both production models.
     """
-    if not model_loaded or model is None or scaler is None:
-        return f"Critical MLOps Failure: Model not loaded. Error: {error_msg}", "N/A"
-    
-    # Building a simulation matrix structurally matching our 20-feature dimensional constraint
-    inference_vector = np.zeros((1, len(FEATURE_COLUMNS)))
-    
-    # 1. Base Variables Mapping
-    inference_vector[0, 0] = open_p
-    inference_vector[0, 1] = high_p
-    inference_vector[0, 2] = low_p
-    inference_vector[0, 3] = close_p
-    inference_vector[0, 4] = volume_p
-    
-    # 2. Approximate Dependent Technical Indicators to enable isolated demo functionality 
-    # (In formal architectures, these require streaming real history. We mock stable approximations here).
-    log_return = np.log(close_p / open_p) if open_p > 0 else 0
-    bar_dynamics = (high_p - low_p) / open_p if open_p > 0 else 0
-    
-    inference_vector[0, 5] = log_return               # log_return
-    inference_vector[0, 6] = close_p * 0.999          # SMA_21 
-    inference_vector[0, 7] = close_p * 0.995          # SMA_50
-    inference_vector[0, 8] = close_p * 0.990          # SMA_100
-    inference_vector[0, 9] = close_p * 0.985          # SMA_200
-    inference_vector[0, 10] = 0.005                   # volatility_20
-    inference_vector[0, 11] = bar_dynamics            # bar_dynamics
-    inference_vector[0, 12] = 0.001                   # return_lag_1
-    inference_vector[0, 13] = 0.003                   # dynamics_lag_1
-    inference_vector[0, 14] = -0.002                  # return_lag_2
-    inference_vector[0, 15] = 0.002                   # dynamics_lag_2
-    inference_vector[0, 16] = 0.0015                  # return_lag_3
-    inference_vector[0, 17] = 0.004                   # dynamics_lag_3
-    inference_vector[0, 18] = 0.974                   # day_sin (Wednesday approx)
-    inference_vector[0, 19] = -0.222                  # day_cos (Wednesday approx)
-    
-    # 3. Formally transform vector avoiding data-leakage via isolated weights
-    scaled_vector = scaler.transform(inference_vector)
-    
-    # 4. Infer probability and predicted discrete structural bounds
-    prob_up = model.predict_proba(scaled_vector)[0, 1]
-    pred_class = model.predict(scaled_vector)[0]
-    
-    direction = "UP 📈" if pred_class == 1 else "DOWN 📉"
-    confidence = f"{prob_up:.2%}" if pred_class == 1 else f"{(1 - prob_up):.2%}"
-    
-    return direction, confidence
+    if not models_ready:
+        msg = f"Critical MLOps Failure: Model artifacts not loaded. Errors: {load_errors}"
+        return msg, msg
+
+    new_bar = {"open": open_p, "high": high_p, "low": low_p, "close": close_p, "tick_volume": volume_p}
+    max_window = max(lstm_time_steps or 1, 1)
+
+    try:
+        feature_window = build_live_features(history_df, new_bar, time_steps=max_window)
+    except Exception as e:
+        msg = f"Feature computation failed: {e}"
+        return msg, msg
+
+    direction_parts = []
+    return_parts = []
+
+    if gbm_ready:
+        direction, confidence, predicted_return = _predict_gbm(feature_window.iloc[-1])
+        arrow = "📈" if direction == "UP" else "📉"
+        direction_parts.append(f"GBM: {direction} {arrow} ({confidence:.2%})")
+        return_parts.append(f"GBM: {predicted_return:+.4f}%")
+
+    if lstm_ready:
+        if len(feature_window) < lstm_time_steps:
+            direction_parts.append("LSTM: insufficient history")
+            return_parts.append("LSTM: insufficient history")
+        else:
+            direction, confidence, predicted_return = _predict_lstm(feature_window.tail(lstm_time_steps))
+            arrow = "📈" if direction == "UP" else "📉"
+            direction_parts.append(f"LSTM: {direction} {arrow} ({confidence:.2%})")
+            return_parts.append(f"LSTM: {predicted_return:+.4f}%")
+
+    return "  |  ".join(direction_parts), "  |  ".join(return_parts)
+
 
 # Gradio Component Construction
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue")) as ui:
-    gr.Markdown("# EURUSD Directional Extrapolator via Gradient Boosting")
-    gr.Markdown("Input the current daily trading parameters. Our computational matrix evaluates 20 temporal features structurally extracted and returns the probabilistic directional mapping.")
-    
+    gr.Markdown("# EURUSD Multi-Task Predictor (GBM + Multi-Task LSTM)")
+    gr.Markdown(
+        "Input the current daily trading parameters. The app appends this bar to real historical "
+        "EURUSD price data, recomputes genuine technical indicators, and queries both the Gradient "
+        "Boosting dual pipeline and the Multi-Task LSTM (shared trunk, dual heads) for next-bar "
+        "direction and exact % return."
+    )
+
     with gr.Row():
         with gr.Column():
             open_val = gr.Number(label="Open Price", value=1.1000, step=0.0001)
@@ -101,17 +132,23 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue")) as ui:
             low_val = gr.Number(label="Low Price", value=1.0950, step=0.0001)
             close_val = gr.Number(label="Close Price", value=1.1020, step=0.0001)
             vol_val = gr.Number(label="Daily Tick Volume", value=85000, step=100)
-            
-            predict_btn = gr.Button("Evaluate Market Direction", variant="primary")
-            
-        with gr.Column():
-            out_direction = gr.Textbox(label="Predicted Target Axis (T+1)", placeholder="Waiting for parameters...")
-            out_prob = gr.Textbox(label="Evaluator Algorithmic Confidence", placeholder="...")
-            
-    gr.Markdown("---")
-    gr.Markdown("**Technical Limitation Warning:** *Mock application assumes continuous SMA averages aligned linearly with current inputs for UI functional demonstration. Actual API executions mandate rolling cache computations.*")
 
-    predict_btn.click(predict_eurusd, inputs=[open_val, high_val, low_val, close_val, vol_val], outputs=[out_direction, out_prob])
+            predict_btn = gr.Button("Evaluate Market Direction", variant="primary")
+
+        with gr.Column():
+            out_direction = gr.Textbox(label="Predicted Market Direction (T+1)", placeholder="Waiting for parameters...")
+            out_return = gr.Textbox(label="Predicted Exact Return (T+1, %)", placeholder="...")
+
+    gr.Markdown("---")
+    if not models_ready:
+        gr.Markdown(f"**Startup Warning:** Some model artifacts failed to load: {load_errors}")
+    gr.Markdown(
+        "**Note:** Features (SMA/volatility/lags) are computed from genuine historical EURUSD bars "
+        "(`results/eurusd_features.csv`) with your submitted bar appended as the most recent observation — "
+        "no values are hardcoded or approximated."
+    )
+
+    predict_btn.click(predict_eurusd, inputs=[open_val, high_val, low_val, close_val, vol_val], outputs=[out_direction, out_return])
 
 if __name__ == "__main__":
     ui.launch()

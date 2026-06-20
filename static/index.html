@@ -51,7 +51,17 @@
                 const resData = await response.json();
                 
                 if (response.ok) {
-                    box.innerHTML = `<strong>Predicted Target:</strong> ${resData.direction}<br/><strong>Confidence:</strong> ${(resData.confidence * 100).toFixed(2)}%`;
+                    let rows = "";
+                    if (resData.gbm) {
+                        rows += `<strong>GBM</strong> &mdash; Direction: ${resData.gbm.direction} | Confidence: ${(resData.gbm.confidence * 100).toFixed(2)}% | Return: ${resData.gbm.predicted_return_pct.toFixed(4)}%<br/>`;
+                    }
+                    if (resData.lstm) {
+                        rows += `<strong>LSTM</strong> &mdash; Direction: ${resData.lstm.direction} | Confidence: ${(resData.lstm.confidence * 100).toFixed(2)}% | Return: ${resData.lstm.predicted_return_pct.toFixed(4)}%<br/>`;
+                    }
+                    if (resData.lstm_error) {
+                        rows += `<em>LSTM: ${resData.lstm_error}</em><br/>`;
+                    }
+                    box.innerHTML = rows || "No model produced a prediction.";
                 } else {
                     box.className = "result error";
                     box.innerText = `API Error: ${resData.detail}`;
