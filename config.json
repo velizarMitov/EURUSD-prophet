@@ -1,0 +1,43 @@
+{
+  "random_state": 42,
+  "data": {
+    "symbol": "EURUSD",
+    "timeframe": "D1",
+    "history_csv_path": "results/eurusd_features.csv"
+  },
+  "pca": {
+    "variance_threshold": 0.95,
+    "lag_columns": [
+      "return_lag_1", "dynamics_lag_1",
+      "return_lag_2", "dynamics_lag_2",
+      "return_lag_3", "dynamics_lag_3"
+    ]
+  },
+  "split": {
+    "gbm_train_fraction": 0.8,
+    "lstm_train_fraction": 0.70,
+    "lstm_val_fraction": 0.85
+  },
+  "gbm": {
+    "cv_splits": 5,
+    "param_grid": {
+      "n_estimators": [100, 200],
+      "learning_rate": [0.01, 0.05, 0.1],
+      "max_depth": [3, 5]
+    },
+    "huber_alpha": 0.9
+  },
+  "lstm": {
+    "time_steps": 20,
+    "units": 64,
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "epochs": 100,
+    "batch_size": 64,
+    "patience": 10,
+    "loss_weights": {
+      "return_output": 1.0,
+      "direction_output": 50.0
+    }
+  }
+}

@@ -2,6 +2,8 @@ import os
 
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 # Canonical 20-column feature order consumed by the trained GBM/LSTM artifacts.
 # Shared by the notebook (training) and api.py/app.py (inference) so the two
@@ -11,6 +13,15 @@ FEATURE_COLUMNS = [
     'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20',
     'bar_dynamics', 'return_lag_1', 'dynamics_lag_1', 'return_lag_2',
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos'
+]
+
+# The 6 autoregressive lag columns are the most mutually correlated block in
+# FEATURE_COLUMNS (each is a shifted copy of log_return/bar_dynamics) and are
+# the dimensionality-reduction target described in the project's PCA section.
+LAG_COLUMNS = [
+    'return_lag_1', 'dynamics_lag_1',
+    'return_lag_2', 'dynamics_lag_2',
+    'return_lag_3', 'dynamics_lag_3',
 ]
 
 TARGET_RETURN_COLUMN = 'target_return'
@@ -91,3 +102,39 @@ def build_live_features(history: pd.DataFrame, new_bar: dict, time_steps: int) -
     combined = pd.concat([history, new_row])
     engineered = compute_features(combined)
     return engineered[FEATURE_COLUMNS].tail(time_steps)
+
+
+def fit_lag_pca(df: pd.DataFrame, lag_columns=LAG_COLUMNS, variance_threshold: float = 0.95):
+    """
+    Fit a StandardScaler + PCA on the autoregressive lag columns only. Must be
+    fit on a chronological TRAIN slice (never the full dataset) to avoid leakage.
+    Returns (lag_scaler, lag_pca); lag_pca.n_components_ is chosen automatically
+    to explain >= variance_threshold of the lag block's variance.
+    """
+    lag_scaler = StandardScaler()
+    scaled_lags = lag_scaler.fit_transform(df[lag_columns])
+    lag_pca = PCA(n_components=variance_threshold)
+    lag_pca.fit(scaled_lags)
+    return lag_scaler, lag_pca
+
+
+def apply_lag_pca(df: pd.DataFrame, lag_scaler: StandardScaler, lag_pca: PCA, lag_columns=LAG_COLUMNS) -> pd.DataFrame:
+    """
+    Replace the raw lag columns with their principal components. All other
+    columns are preserved in their original order; PCA components are
+    appended as lag_pca_1..lag_pca_k. Used identically at training time and
+    at live inference time so the model always sees the same input shape.
+    """
+    scaled_lags = lag_scaler.transform(df[lag_columns])
+    components = lag_pca.transform(scaled_lags)
+
+    reduced = df.drop(columns=lag_columns).copy()
+    for i in range(components.shape[1]):
+        reduced[f'lag_pca_{i + 1}'] = components[:, i]
+    return reduced
+
+
+def model_input_columns(lag_pca: PCA, base_columns=FEATURE_COLUMNS, lag_columns=LAG_COLUMNS) -> list:
+    """The exact column order produced by apply_lag_pca, for a given fitted PCA."""
+    remaining = [c for c in base_columns if c not in lag_columns]
+    return remaining + [f'lag_pca_{i + 1}' for i in range(lag_pca.n_components_)]

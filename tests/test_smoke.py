@@ -4,6 +4,8 @@ def test_smoke_model_resolution():
     """Smoke test ensuring exactly that critical artifact payloads exist precisely locally."""
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     required_artifacts = [
+        os.path.join('models', 'lag_scaler.pkl'),
+        os.path.join('models', 'lag_pca.pkl'),
         os.path.join('models', 'best_gbm_eurusd.pkl'),
         os.path.join('models', 'best_gbm_regressor_eurusd.pkl'),
         os.path.join('models', 'scaler_gb_eurusd.pkl'),
@@ -11,6 +13,8 @@ def test_smoke_model_resolution():
         os.path.join('models', 'scaler_lstm_multitask.pkl'),
         os.path.join('models', 'lstm_time_steps.pkl'),
         os.path.join('results', 'eurusd_features.csv'),
+        'config.json',
+        '.env.example',
     ]
 
     for relative_path in required_artifacts:

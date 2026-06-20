@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 import pytest
-from src.features import add_advanced_features, build_live_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN
+from src.features import (
+    add_advanced_features, build_live_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
+    LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
+)
 
 def test_feature_engineering_success():
     """Unit test logically verifying the exact extraction geometry explicitly isolating features
@@ -58,6 +61,40 @@ def test_build_live_features_no_mock():
     last_row = window.iloc[-1]
     expected_sma_21 = pd.concat([history['close'], pd.Series([new_bar['close']])]).tail(21).mean()
     assert last_row['SMA_21'] == pytest.approx(expected_sma_21), "SMA_21 must be genuinely computed from real history, not mocked."
+
+def test_lag_pca_fit_transform_no_leakage():
+    """Verify the lag-PCA helpers reduce/replace the lag columns consistently
+    between a 'training' fit and a held-out 'live' application, with the fit
+    never touching anything beyond the slice it was given (no leakage)."""
+    dates = pd.date_range('2026-01-01', periods=400, freq='D')
+    df = pd.DataFrame({
+        'open': np.random.rand(400) * 0.1 + 1.1,
+        'high': np.random.rand(400) * 0.1 + 1.15,
+        'low': np.random.rand(400) * 0.1 + 1.05,
+        'close': np.random.rand(400) * 0.1 + 1.12,
+        'tick_volume': np.random.randint(1000, 100000, 400)
+    }, index=dates)
+
+    engineered = add_advanced_features(df)
+    train_slice = engineered.iloc[:150]
+    lag_scaler, lag_pca = fit_lag_pca(train_slice, lag_columns=LAG_COLUMNS, variance_threshold=0.95)
+
+    assert lag_pca.n_components_ <= len(LAG_COLUMNS), "PCA must never produce more components than input lag columns."
+    assert lag_pca.explained_variance_ratio_.sum() >= 0.95 - 1e-9, "Selected components must explain >= the configured variance threshold."
+
+    reduced = apply_lag_pca(engineered, lag_scaler, lag_pca, lag_columns=LAG_COLUMNS)
+    for col in LAG_COLUMNS:
+        assert col not in reduced.columns, f"Raw lag column {col} must be dropped after PCA reduction."
+    expected_pca_cols = [f'lag_pca_{i + 1}' for i in range(lag_pca.n_components_)]
+    for col in expected_pca_cols:
+        assert col in reduced.columns, f"Expected PCA component column {col} missing from reduced output."
+    assert len(reduced) == len(engineered), "PCA reduction must not drop or add rows."
+
+    cols = model_input_columns(lag_pca, base_columns=list(engineered.columns), lag_columns=LAG_COLUMNS)
+    non_target_cols = [c for c in cols if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)]
+    assert non_target_cols == [c for c in reduced.columns if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)], \
+        "model_input_columns() must match the actual column order produced by apply_lag_pca()."
+
 
 def test_feature_engineering_edge_cases():
     """Unit test explicitly guaranteeing 0 Open prices evaluate correctly evading DivisionByZero crashes."""

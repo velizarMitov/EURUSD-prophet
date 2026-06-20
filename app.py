@@ -1,5 +1,6 @@
 import gradio as gr
 import joblib
+import json
 import warnings
 
 import os
@@ -10,9 +11,14 @@ warnings.filterwarnings('ignore')
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
-from src.features import load_history, build_live_features
+from src.features import load_history, build_live_features, apply_lag_pca, LAG_COLUMNS
+
+with open(os.path.join(BASE_DIR, 'config.json')) as f:
+    CONFIG = json.load(f)
 
 MODELS_DIR = os.path.join(BASE_DIR, 'models')
+LAG_SCALER_PATH = os.path.join(MODELS_DIR, 'lag_scaler.pkl')
+LAG_PCA_PATH = os.path.join(MODELS_DIR, 'lag_pca.pkl')
 GBM_CLASSIFIER_PATH = os.path.join(MODELS_DIR, 'best_gbm_eurusd.pkl')
 GBM_REGRESSOR_PATH = os.path.join(MODELS_DIR, 'best_gbm_regressor_eurusd.pkl')
 GBM_SCALER_PATH = os.path.join(MODELS_DIR, 'scaler_gb_eurusd.pkl')
@@ -20,6 +26,8 @@ LSTM_MODEL_PATH = os.path.join(MODELS_DIR, 'lstm_multitask_eurusd.keras')
 LSTM_SCALER_PATH = os.path.join(MODELS_DIR, 'scaler_lstm_multitask.pkl')
 LSTM_TIME_STEPS_PATH = os.path.join(MODELS_DIR, 'lstm_time_steps.pkl')
 
+lag_scaler = None
+lag_pca = None
 gbm_classifier = None
 gbm_regressor = None
 gbm_scaler = None
@@ -28,6 +36,12 @@ lstm_scaler = None
 lstm_time_steps = None
 history_df = None
 load_errors = []
+
+try:
+    lag_scaler = joblib.load(LAG_SCALER_PATH)
+    lag_pca = joblib.load(LAG_PCA_PATH)
+except Exception as e:
+    load_errors.append(f"PCA lag reduction: {e}")
 
 try:
     gbm_classifier = joblib.load(GBM_CLASSIFIER_PATH)
@@ -46,17 +60,20 @@ except Exception as e:
     load_errors.append(f"Multi-Task LSTM: {e}")
 
 try:
-    history_df = load_history()
+    history_df = load_history(os.path.join(BASE_DIR, CONFIG['data']['history_csv_path']))
 except Exception as e:
     load_errors.append(f"Historical feature context: {e}")
 
-gbm_ready = gbm_classifier is not None and gbm_regressor is not None and gbm_scaler is not None
-lstm_ready = lstm_model is not None and lstm_scaler is not None and lstm_time_steps is not None
+pca_ready = lag_scaler is not None and lag_pca is not None
+
+gbm_ready = pca_ready and gbm_classifier is not None and gbm_regressor is not None and gbm_scaler is not None
+lstm_ready = pca_ready and lstm_model is not None and lstm_scaler is not None and lstm_time_steps is not None
 models_ready = (gbm_ready or lstm_ready) and history_df is not None
 
 
-def _predict_gbm(feature_row):
-    scaled = gbm_scaler.transform(feature_row.to_frame().T)
+def _predict_gbm(model_input_row):
+    assert gbm_classifier is not None and gbm_regressor is not None and gbm_scaler is not None
+    scaled = gbm_scaler.transform(model_input_row.to_frame().T)
     prob_up = float(gbm_classifier.predict_proba(scaled)[0, 1])
     pred_class = int(gbm_classifier.predict(scaled)[0])
     predicted_return = float(gbm_regressor.predict(scaled)[0])
@@ -64,8 +81,9 @@ def _predict_gbm(feature_row):
     return ("UP" if pred_class == 1 else "DOWN"), confidence, predicted_return * 100
 
 
-def _predict_lstm(window_df):
-    scaled = lstm_scaler.transform(window_df.values)
+def _predict_lstm(model_input_window):
+    assert lstm_model is not None and lstm_scaler is not None
+    scaled = lstm_scaler.transform(model_input_window.values)
     window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
     predicted_return, prob_up = lstm_model.predict(window_3d, verbose=0)
     predicted_return = float(predicted_return.ravel()[0])
@@ -89,6 +107,7 @@ def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
 
     try:
         feature_window = build_live_features(history_df, new_bar, time_steps=max_window)
+        model_input_window = apply_lag_pca(feature_window, lag_scaler, lag_pca, lag_columns=LAG_COLUMNS)
     except Exception as e:
         msg = f"Feature computation failed: {e}"
         return msg, msg
@@ -97,17 +116,17 @@ def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
     return_parts = []
 
     if gbm_ready:
-        direction, confidence, predicted_return = _predict_gbm(feature_window.iloc[-1])
+        direction, confidence, predicted_return = _predict_gbm(model_input_window.iloc[-1])
         arrow = "📈" if direction == "UP" else "📉"
         direction_parts.append(f"GBM: {direction} {arrow} ({confidence:.2%})")
         return_parts.append(f"GBM: {predicted_return:+.4f}%")
 
     if lstm_ready:
-        if len(feature_window) < lstm_time_steps:
+        if len(model_input_window) < lstm_time_steps:
             direction_parts.append("LSTM: insufficient history")
             return_parts.append("LSTM: insufficient history")
         else:
-            direction, confidence, predicted_return = _predict_lstm(feature_window.tail(lstm_time_steps))
+            direction, confidence, predicted_return = _predict_lstm(model_input_window.tail(lstm_time_steps))
             arrow = "📈" if direction == "UP" else "📉"
             direction_parts.append(f"LSTM: {direction} {arrow} ({confidence:.2%})")
             return_parts.append(f"LSTM: {predicted_return:+.4f}%")
