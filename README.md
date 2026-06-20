@@ -9,10 +9,13 @@ The pipeline formally implements, evaluates, and contrasts:
 3. **Gradient Boosting Machine (GBM):** Tree-based iterative residual optimizers capturing feature importance mathematically.
 
 ## Project Structure
-* **`notebooks/01_data_preparation.ipynb`**: The primary research environment. Contains mathematical formulations in LaTeX, rigorous exploratory data analysis (EDA / ADF / ACF), explicit model construction logic, hyperparameter tuning (Optuna), and evaluation plotting.
+* **`notebooks/01_data_preparation.ipynb`**: The primary research environment. Contains mathematical formulations in LaTeX, rigorous exploratory data analysis (EDA / ADF / ACF), PCA dimensionality reduction, explicit Multi-Task model construction logic (GBM dual pipeline + Functional API LSTM), hyperparameter tuning, and evaluation plotting.
 * **`app.py`**: The standalone production-ready UI. Built natively in Gradio, this script securely mounts the serialized mathematical weights and executes inference logic seamlessly.
-* **`models/`**: Contains the strictly vetted joblib artifacts (`best_gbm_eurusd.pkl`, `scaler_gb_eurusd.pkl`).
+* **`api.py`**: The FastAPI REST endpoint serving the same dual-model predictions for programmatic/HTTP clients.
+* **`config.json`**: Centralized hyperparameters and file paths (PCA variance threshold, GBM/LSTM settings, data paths) loaded dynamically by both the notebook and the production scripts.
+* **`models/`**: Contains the trained joblib/Keras artifacts (GBM classifier+regressor, Multi-Task LSTM, PCA + scalers).
 * **`results/`**: Analytical diagnostic exports including Confusion Matrices, Learning Curves, and the compiled feature subsets.
+* **`Dockerfile`**: Optional container definition for running the Gradio app with strict environment reproducibility (see [Docker Execution](#optional-docker-execution-environment-reproducibility) below).
 
 ## Installation & Setup
 
@@ -24,37 +27,61 @@ git clone https://github.com/velizarMitov/EURUSD-prophet.git
 cd EURUSD-prophet
 ```
 
-**2. Initialize and activate the Virtual Environment:**
+## Usage
+
+### 1. Local Execution (Primary Method)
+This is the recommended way to run the project — no container runtime required.
+
+**a. Create the virtual environment:**
+```bash
+python -m venv venv
+```
+
+**b. Activate the virtual environment:**
 *On Windows:*
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+venv\Scripts\activate
 ```
 *On macOS/Linux:*
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+source venv/bin/activate
 ```
 
-**3. Install strictly defined dependencies:**
+**c. Install the required dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-## Usage
-
-### 1. Launching the Research Environment
-To re-run the EDA or computationally evaluate the LSTM topologies:
-```bash
-jupyter notebook notebooks/01_data_preparation.ipynb
-```
-
-### 2. Launching the Inference UI
-To execute the production endpoint serving the trained predictive weights:
+**d. Run the web application:**
 ```bash
 python app.py
 ```
-*This initiates a local web server (typically accessible at `http://127.0.0.1:7860`).*
+*This initiates a local Gradio web server, by default accessible at `http://127.0.0.1:7860`.*
+
+Other entry points use the same activated environment:
+```bash
+# Research notebook (EDA, PCA, Multi-Task model training)
+jupyter notebook notebooks/01_data_preparation.ipynb
+
+# REST API (FastAPI) instead of the Gradio UI
+python -m uvicorn api:app --reload
+```
+
+### 2. Optional: Running via Docker (Environment Reproducibility)
+Containerization is **not required** to run this project — it is provided strictly as an optional MLOps best practice for guaranteeing a byte-identical runtime environment across machines (no "works on my machine" dependency drift). Skip this section unless you specifically need that guarantee.
+
+**a. Build the image:**
+```bash
+docker build -t eurusd-prophet .
+```
+
+**b. Run the container:**
+```bash
+docker run -p 7860:7860 eurusd-prophet
+```
+*The Gradio UI is then reachable on the host at `http://127.0.0.1:7860`, identically to the local execution method above.*
+
+> **Note:** `MetaTrader5` is a Windows-only package used solely by the research notebook's optional live data fetch (Section 2). The Docker image targets the Gradio app, which serves inference from the bundled `results/eurusd_features.csv` history instead, so that dependency is excluded from the containerized build rather than failing on Linux.
 
 ## Deployment Model Card
 * **Primary Methodology Evaluated:** Gradient Boosting Decision Trees.
