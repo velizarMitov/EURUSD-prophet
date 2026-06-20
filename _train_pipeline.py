@@ -59,8 +59,10 @@ print(f"Lag columns in: {len(LAG_COLUMNS)}  ->  PCA components out: {lag_pca.n_c
 print(f"Cumulative variance explained: {lag_pca.explained_variance_ratio_.sum():.4f}")
 
 basic_advanced_df_reduced = apply_lag_pca(basic_advanced_df, lag_scaler, lag_pca, lag_columns=LAG_COLUMNS)
-MODEL_INPUT_COLUMNS = model_input_columns(lag_pca, base_columns=list(basic_advanced_df.columns), lag_columns=LAG_COLUMNS)
-MODEL_INPUT_COLUMNS = [c for c in MODEL_INPUT_COLUMNS if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)]
+# Use the canonical FEATURE_COLUMNS constant (not basic_advanced_df.columns, which also
+# carries tick_volume/target columns as passthrough) so training and live inference can
+# never silently diverge on which columns actually feed the models.
+MODEL_INPUT_COLUMNS = model_input_columns(lag_pca, base_columns=FEATURE_COLUMNS, lag_columns=LAG_COLUMNS)
 print(f"Model input columns ({len(MODEL_INPUT_COLUMNS)}): {MODEL_INPUT_COLUMNS}")
 
 # ---------------------------------------------------------------------------

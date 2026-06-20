@@ -5,11 +5,20 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
-# Canonical 20-column feature order consumed by the trained GBM/LSTM artifacts.
+# Canonical 19-column feature order consumed by the trained GBM/LSTM artifacts.
 # Shared by the notebook (training) and api.py/app.py (inference) so the two
 # can never silently drift apart.
+#
+# tick_volume is deliberately excluded: MT5's "tick_volume" is a broker-specific
+# tick count, not genuine traded volume, and the bundled 1971-2026 training
+# history carries decades of degenerate placeholder values (e.g. 1) from its
+# earliest synthetic era. That contaminated the fitted StandardScaler's
+# mean/std for the column, which then caused the LSTM to extrapolate wildly
+# on genuine live volumes (8+ standard deviations out). It is still loaded
+# and surfaced to the UI for display purposes (see load_history/build_live_features
+# callers' bar_used dicts), it just never reaches the models.
 FEATURE_COLUMNS = [
-    'open', 'high', 'low', 'close', 'tick_volume', 'log_return',
+    'open', 'high', 'low', 'close', 'log_return',
     'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20',
     'bar_dynamics', 'return_lag_1', 'dynamics_lag_1', 'return_lag_2',
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos'
@@ -34,7 +43,7 @@ DEFAULT_HISTORY_PATH = os.path.join(
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute the 20 FEATURE_COLUMNS from raw OHLCV. Unlike add_advanced_features,
+    Compute the 19 FEATURE_COLUMNS from raw OHLCV. Unlike add_advanced_features,
     this does NOT compute targets or drop rows, so the most recent bar (which
     has no future bar to derive a target from) survives — required for live
     inference on the latest available row.

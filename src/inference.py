@@ -1,7 +1,6 @@
 import os
 
 import joblib
-import numpy as np
 import pandas as pd
 
 from .features import (
@@ -115,14 +114,6 @@ class PredictionService:
 
     def _predict_lstm(self, model_input_window):
         scaled = self.lstm_scaler.transform(model_input_window.values)
-        # `scaler_lstm_multitask` was fit across the full 1971-2026 history, whose
-        # earliest decades carry degenerate placeholder tick_volume (~1-10) that
-        # drags the fitted mean/std far below genuine live broker volumes
-        # (~1e5-2e5). That single feature can land 8-10 std devs out for real
-        # data, and unlike the GBM trees (scale-invariant), the LSTM extrapolates
-        # wildly on out-of-distribution inputs. Clip to a still-generous +/-5 std
-        # so a single contaminated feature can't blow up the regression head.
-        scaled = np.clip(scaled, -5.0, 5.0)
         window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
         predicted_return, prob_up = self.lstm_model.predict(window_3d, verbose=0)
         predicted_return = float(predicted_return.ravel()[0])
