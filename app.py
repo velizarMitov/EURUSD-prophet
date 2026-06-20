@@ -4,8 +4,15 @@ import numpy as np
 import joblib
 import warnings
 
+import os
+
 # Suppress specific non-critical numerical extraction warnings for production
 warnings.filterwarnings('ignore')
+
+# Determine absolute paths for robust deployment execution regardless of CWD
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'best_gbm_eurusd.pkl')
+SCALER_PATH = os.path.join(BASE_DIR, 'models', 'scaler_gb_eurusd.pkl')
 
 # Mathematical Baseline Definitions matching the Notebook's structure precisely
 FEATURE_COLUMNS = [
@@ -15,10 +22,10 @@ FEATURE_COLUMNS = [
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos'
 ]
 
-# Loading serialized ML pipeline artifacts computationally
+# Loading serialized ML pipeline artifacts computationally via absolute paths
 try:
-    model = joblib.load('models/best_gbm_eurusd.pkl')
-    scaler = joblib.load('models/scaler_gb_eurusd.pkl')
+    model = joblib.load(MODEL_PATH)
+    scaler = joblib.load(SCALER_PATH)
     model_loaded = True
 except Exception as e:
     model = None
