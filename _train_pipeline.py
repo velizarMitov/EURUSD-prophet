@@ -12,6 +12,9 @@ import json
 import numpy as np
 import pandas as pd
 import joblib
+import mlflow
+import mlflow.sklearn
+import mlflow.keras
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
@@ -29,6 +32,8 @@ with open('config.json') as f:
 
 RANDOM_STATE = CONFIG['random_state']
 np.random.seed(RANDOM_STATE)
+
+mlflow.set_experiment("EURUSD_Prediction")
 
 print("=== 1. Loading historical OHLCV ===")
 raw_df = pd.read_csv(CONFIG['data']['history_csv_path'], index_col='time', parse_dates=True)
@@ -79,31 +84,59 @@ print("=== 5. GBM Hyperparameter Tuning ===")
 tscv_gb = TimeSeriesSplit(n_splits=CONFIG['gbm']['cv_splits'])
 param_grid = CONFIG['gbm']['param_grid']
 
-print("--- Classification head (target_direction) ---")
-grid_search = GridSearchCV(
-    GradientBoostingClassifier(random_state=RANDOM_STATE),
-    param_grid=param_grid, cv=tscv_gb, scoring='roc_auc', n_jobs=-1
-)
-grid_search.fit(X_gb_train_s, y_dir_train)
-best_gbm = grid_search.best_estimator_
-print(f"Best params: {grid_search.best_params_}  CV ROC-AUC: {grid_search.best_score_:.4f}")
+with mlflow.start_run(run_name="GBM_dual_pipeline"):
+    print("--- Classification head (target_direction) ---")
+    grid_search = GridSearchCV(
+        GradientBoostingClassifier(random_state=RANDOM_STATE),
+        param_grid=param_grid, cv=tscv_gb, scoring='roc_auc', n_jobs=-1
+    )
+    grid_search.fit(X_gb_train_s, y_dir_train)
+    best_gbm = grid_search.best_estimator_
+    print(f"Best params: {grid_search.best_params_}  CV ROC-AUC: {grid_search.best_score_:.4f}")
 
-print("--- Regression head (target_return, Huber loss) ---")
-grid_search_reg = GridSearchCV(
-    GradientBoostingRegressor(loss='huber', alpha=CONFIG['gbm']['huber_alpha'], random_state=RANDOM_STATE),
-    param_grid=param_grid, cv=tscv_gb, scoring='neg_mean_absolute_error', n_jobs=-1
-)
-grid_search_reg.fit(X_gb_train_s, y_ret_train)
-best_gbm_reg = grid_search_reg.best_estimator_
-print(f"Best params: {grid_search_reg.best_params_}  CV MAE: {-grid_search_reg.best_score_:.6f}")
+    print("--- Regression head (target_return, Huber loss) ---")
+    grid_search_reg = GridSearchCV(
+        GradientBoostingRegressor(loss='huber', alpha=CONFIG['gbm']['huber_alpha'], random_state=RANDOM_STATE),
+        param_grid=param_grid, cv=tscv_gb, scoring='neg_mean_absolute_error', n_jobs=-1
+    )
+    grid_search_reg.fit(X_gb_train_s, y_ret_train)
+    best_gbm_reg = grid_search_reg.best_estimator_
+    print(f"Best params: {grid_search_reg.best_params_}  CV MAE: {-grid_search_reg.best_score_:.6f}")
 
-print("\n=== 6. GBM Evaluation ===")
-y_pred_dir = best_gbm.predict(X_gb_test_s)
-y_prob_dir = best_gbm.predict_proba(X_gb_test_s)[:, 1]
-print(f"[Direction] Accuracy={accuracy_score(y_dir_test, y_pred_dir):.4f}  ROC-AUC={roc_auc_score(y_dir_test, y_prob_dir):.4f}")
+    print("\n=== 6. GBM Evaluation ===")
+    y_pred_dir = best_gbm.predict(X_gb_test_s)
+    y_prob_dir = best_gbm.predict_proba(X_gb_test_s)[:, 1]
+    acc_gb = accuracy_score(y_dir_test, y_pred_dir)
+    auc_gb = roc_auc_score(y_dir_test, y_prob_dir)
+    print(f"[Direction] Accuracy={acc_gb:.4f}  ROC-AUC={auc_gb:.4f}")
 
-y_pred_ret = best_gbm_reg.predict(X_gb_test_s)
-print(f"[Return]    MSE={mean_squared_error(y_ret_test, y_pred_ret):.8f}  MAE={mean_absolute_error(y_ret_test, y_pred_ret):.6f}")
+    y_pred_ret = best_gbm_reg.predict(X_gb_test_s)
+    mse_gb = mean_squared_error(y_ret_test, y_pred_ret)
+    mae_gb = mean_absolute_error(y_ret_test, y_pred_ret)
+    print(f"[Return]    MSE={mse_gb:.8f}  MAE={mae_gb:.6f}")
+
+    mlflow.log_params({
+        "model_family": "GradientBoosting_DualPipeline",
+        "direction_n_estimators": grid_search.best_params_['n_estimators'],
+        "direction_learning_rate": grid_search.best_params_['learning_rate'],
+        "direction_max_depth": grid_search.best_params_['max_depth'],
+        "return_n_estimators": grid_search_reg.best_params_['n_estimators'],
+        "return_learning_rate": grid_search_reg.best_params_['learning_rate'],
+        "return_max_depth": grid_search_reg.best_params_['max_depth'],
+        "huber_alpha": CONFIG['gbm']['huber_alpha'],
+        "cv_splits": CONFIG['gbm']['cv_splits'],
+        "pca_variance_threshold": CONFIG['pca']['variance_threshold'],
+        "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+    })
+    mlflow.log_metrics({
+        "direction_accuracy": acc_gb,
+        "direction_roc_auc": auc_gb,
+        "return_mse": mse_gb,
+        "return_mae": mae_gb,
+    })
+    mlflow.sklearn.log_model(best_gbm, artifact_path="gbm_direction_classifier")
+    mlflow.sklearn.log_model(best_gbm_reg, artifact_path="gbm_return_regressor")
+    print(f"MLflow run logged: run_id={mlflow.active_run().info.run_id}")
 
 print("\n=== 7. Persisting GBM + PCA artifacts ===")
 os.makedirs('models', exist_ok=True)
@@ -177,24 +210,52 @@ mt_lstm_model.compile(
 )
 mt_lstm_model.summary()
 
-print("\n=== 10. Training ===")
-early_stop = EarlyStopping(monitor='val_loss', patience=CONFIG['lstm']['patience'], restore_best_weights=True, verbose=1)
-history = mt_lstm_model.fit(
-    X_train_seq,
-    {'return_output': y_ret_train_seq, 'direction_output': y_dir_train_seq},
-    validation_data=(X_val_seq, {'return_output': y_ret_val_seq, 'direction_output': y_dir_val_seq}),
-    epochs=CONFIG['lstm']['epochs'], batch_size=CONFIG['lstm']['batch_size'], callbacks=[early_stop], verbose=2
-)
-print(f"Stopped after {len(history.history['loss'])} epochs.")
+with mlflow.start_run(run_name="MultiTask_LSTM"):
+    print("\n=== 10. Training ===")
+    early_stop = EarlyStopping(monitor='val_loss', patience=CONFIG['lstm']['patience'], restore_best_weights=True, verbose=1)
+    history = mt_lstm_model.fit(
+        X_train_seq,
+        {'return_output': y_ret_train_seq, 'direction_output': y_dir_train_seq},
+        validation_data=(X_val_seq, {'return_output': y_ret_val_seq, 'direction_output': y_dir_val_seq}),
+        epochs=CONFIG['lstm']['epochs'], batch_size=CONFIG['lstm']['batch_size'], callbacks=[early_stop], verbose=2
+    )
+    print(f"Stopped after {len(history.history['loss'])} epochs.")
 
-print("\n=== 11. Evaluation ===")
-y_pred_ret_lstm, y_prob_dir_lstm = mt_lstm_model.predict(X_test_seq, verbose=0)
-y_pred_ret_lstm = y_pred_ret_lstm.ravel()
-y_prob_dir_lstm = y_prob_dir_lstm.ravel()
-y_pred_dir_lstm = (y_prob_dir_lstm >= 0.5).astype(int)
+    print("\n=== 11. Evaluation ===")
+    y_pred_ret_lstm, y_prob_dir_lstm = mt_lstm_model.predict(X_test_seq, verbose=0)
+    y_pred_ret_lstm = y_pred_ret_lstm.ravel()
+    y_prob_dir_lstm = y_prob_dir_lstm.ravel()
+    y_pred_dir_lstm = (y_prob_dir_lstm >= 0.5).astype(int)
 
-print(f"[Return]    MSE={mean_squared_error(y_ret_test_seq, y_pred_ret_lstm):.8f}  MAE={mean_absolute_error(y_ret_test_seq, y_pred_ret_lstm):.6f}")
-print(f"[Direction] Accuracy={accuracy_score(y_dir_test_seq, y_pred_dir_lstm):.4f}  ROC-AUC={roc_auc_score(y_dir_test_seq, y_prob_dir_lstm):.4f}")
+    mse_lstm = mean_squared_error(y_ret_test_seq, y_pred_ret_lstm)
+    mae_lstm = mean_absolute_error(y_ret_test_seq, y_pred_ret_lstm)
+    acc_lstm = accuracy_score(y_dir_test_seq, y_pred_dir_lstm)
+    auc_lstm = roc_auc_score(y_dir_test_seq, y_prob_dir_lstm)
+    print(f"[Return]    MSE={mse_lstm:.8f}  MAE={mae_lstm:.6f}")
+    print(f"[Direction] Accuracy={acc_lstm:.4f}  ROC-AUC={auc_lstm:.4f}")
+
+    mlflow.log_params({
+        "model_family": "MultiTask_LSTM_FunctionalAPI",
+        "units": CONFIG['lstm']['units'],
+        "dropout": CONFIG['lstm']['dropout'],
+        "learning_rate": CONFIG['lstm']['learning_rate'],
+        "epochs_configured": CONFIG['lstm']['epochs'],
+        "epochs_trained": len(history.history['loss']),
+        "batch_size": CONFIG['lstm']['batch_size'],
+        "patience": CONFIG['lstm']['patience'],
+        "time_steps": TIME_STEPS,
+        "loss_weight_return": CONFIG['lstm']['loss_weights']['return_output'],
+        "loss_weight_direction": CONFIG['lstm']['loss_weights']['direction_output'],
+        "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+    })
+    mlflow.log_metrics({
+        "return_mse": mse_lstm,
+        "return_mae": mae_lstm,
+        "direction_accuracy": acc_lstm,
+        "direction_roc_auc": auc_lstm,
+    })
+    mlflow.keras.log_model(mt_lstm_model, artifact_path="multitask_lstm")
+    print(f"MLflow run logged: run_id={mlflow.active_run().info.run_id}")
 
 print("\n=== 12. Persisting LSTM artifacts ===")
 mt_lstm_model.save('models/lstm_multitask_eurusd.keras')
