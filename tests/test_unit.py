@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from src.features import (
-    add_advanced_features, build_live_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
-    LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
+    add_advanced_features, build_live_features, merge_macro_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN,
+    TARGET_DIRECTION_COLUMN, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
 )
 
 def test_feature_engineering_success():
@@ -17,7 +17,8 @@ def test_feature_engineering_success():
         'high': np.random.rand(300) * 0.1 + 1.15,
         'low': np.random.rand(300) * 0.1 + 1.05,
         'close': np.random.rand(300) * 0.1 + 1.12,
-        'tick_volume': np.random.randint(1000, 100000, 300)
+        'tick_volume': np.random.randint(1000, 100000, 300),
+        'yield_differential': np.random.uniform(-1.0, 3.0, 300),
     }, index=dates)
 
     res = add_advanced_features(df)
@@ -50,10 +51,11 @@ def test_build_live_features_no_mock():
         'high': np.random.rand(250) * 0.1 + 1.15,
         'low': np.random.rand(250) * 0.1 + 1.05,
         'close': np.random.rand(250) * 0.1 + 1.12,
-        'tick_volume': np.random.randint(1000, 100000, 250)
+        'tick_volume': np.random.randint(1000, 100000, 250),
+        'yield_differential': np.random.uniform(-1.0, 3.0, 250),
     }, index=dates)
 
-    new_bar = {'open': 1.15, 'high': 1.16, 'low': 1.14, 'close': 1.155, 'tick_volume': 50000}
+    new_bar = {'open': 1.15, 'high': 1.16, 'low': 1.14, 'close': 1.155, 'tick_volume': 50000, 'yield_differential': 1.8}
     window = build_live_features(history, new_bar, time_steps=20)
 
     assert len(window) == 20, "Sliding window length must exactly match the requested time_steps."
@@ -74,7 +76,8 @@ def test_lag_pca_fit_transform_no_leakage():
         'high': np.random.rand(400) * 0.1 + 1.15,
         'low': np.random.rand(400) * 0.1 + 1.05,
         'close': np.random.rand(400) * 0.1 + 1.12,
-        'tick_volume': np.random.randint(1000, 100000, 400)
+        'tick_volume': np.random.randint(1000, 100000, 400),
+        'yield_differential': np.random.uniform(-1.0, 3.0, 400),
     }, index=dates)
 
     engineered = add_advanced_features(df)
@@ -96,6 +99,89 @@ def test_lag_pca_fit_transform_no_leakage():
     non_target_cols = [c for c in cols if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)]
     assert non_target_cols == [c for c in reduced.columns if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)], \
         "model_input_columns() must match the actual column order produced by apply_lag_pca()."
+
+
+def test_merge_macro_features_no_lookahead_on_weekend_gap():
+    """A Saturday/Sunday FX bar must inherit Friday's differential via ffill,
+    never a future Monday value -- this is the look-ahead guard the
+    macro merge is built around."""
+    ohlcv_dates = pd.to_datetime(['2026-06-19', '2026-06-20', '2026-06-21', '2026-06-22'])  # Fri, Sat, Sun, Mon
+    ohlcv = pd.DataFrame({
+        'open': [1.1] * 4, 'high': [1.1] * 4, 'low': [1.1] * 4, 'close': [1.1] * 4, 'tick_volume': [1] * 4,
+    }, index=ohlcv_dates)
+
+    macro = pd.DataFrame(
+        {'yield_differential': [1.50, 1.80]},
+        index=pd.DatetimeIndex(['2026-06-19', '2026-06-22'], tz='UTC'),
+    )
+
+    merged = merge_macro_features(ohlcv, macro)
+    assert merged.loc[ohlcv_dates[0], 'yield_differential'] == pytest.approx(1.50)
+    assert merged.loc[ohlcv_dates[1], 'yield_differential'] == pytest.approx(1.50), "Saturday must inherit Friday's value."
+    assert merged.loc[ohlcv_dates[2], 'yield_differential'] == pytest.approx(1.50), "Sunday must inherit Friday's value."
+    assert merged.loc[ohlcv_dates[3], 'yield_differential'] == pytest.approx(1.80), "Monday must use its own value, not Friday's."
+    assert list(merged.index) == list(ohlcv_dates), "merge_macro_features must preserve the caller's original index labels."
+
+
+def test_fetch_yield_differential_prefers_fred_api(monkeypatch, tmp_path):
+    """When the official FRED API (via FRED_API_KEY) succeeds, the free
+    public-CSV fallback must not be called at all."""
+    import src.macro_data as macro_data
+
+    fake_df = pd.DataFrame({'yield_differential': [1.5, 1.6]}, index=pd.date_range('2026-06-01', periods=2, tz='UTC'))
+    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda series_ids, start, end: fake_df)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("pandas_datareader must not be called when the FRED API succeeds.")
+    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', _boom)
+
+    df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-02', cache_path=str(tmp_path / 'cache.csv'))
+    assert source == 'FRED_api'
+    assert len(df) == 2
+
+
+def test_fetch_yield_differential_falls_back_to_public_endpoint(monkeypatch, tmp_path):
+    """When no FRED_API_KEY is configured (or the official API fails), fall
+    back to FRED's public CSV endpoint, which needs no key."""
+    import src.macro_data as macro_data
+
+    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
+    fake_df = pd.DataFrame({'yield_differential': [2.0]}, index=pd.date_range('2026-06-01', periods=1, tz='UTC'))
+    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: fake_df)
+
+    df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=str(tmp_path / 'cache.csv'))
+    assert source == 'FRED_public'
+    assert len(df) == 1
+
+
+def test_fetch_yield_differential_falls_back_to_cache_when_unreachable(monkeypatch, tmp_path):
+    """When neither live FRED source is reachable, reuse the last cached
+    snapshot on disk rather than failing the whole prediction pipeline."""
+    import src.macro_data as macro_data
+
+    cache_path = str(tmp_path / 'cache.csv')
+    cached_df = pd.DataFrame({'yield_differential': [0.9]}, index=pd.date_range('2026-05-01', periods=1, tz='UTC'))
+    cached_df.to_csv(cache_path)
+
+    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: None)
+
+    df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=cache_path)
+    assert source == 'cache'
+    assert df['yield_differential'].iloc[0] == pytest.approx(0.9)
+
+
+def test_fetch_yield_differential_returns_none_when_nothing_reachable(monkeypatch, tmp_path):
+    """With no live source and no cache file at all, the caller must get
+    (None, None) so it can apply its own constant-default fallback."""
+    import src.macro_data as macro_data
+
+    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: None)
+
+    df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=str(tmp_path / 'missing.csv'))
+    assert df is None
+    assert source is None
 
 
 def test_compute_consensus_agreement_averages():
@@ -253,7 +339,8 @@ def test_feature_engineering_edge_cases():
         'high': np.ones(300) * 1.5,
         'low': np.ones(300) * 0.5,
         'close': np.ones(300) * 1.0,
-        'tick_volume': np.ones(300)
+        'tick_volume': np.ones(300),
+        'yield_differential': np.ones(300) * 1.5,
     }, index=dates)
     
     res = add_advanced_features(df)

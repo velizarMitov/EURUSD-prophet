@@ -4,10 +4,11 @@ import joblib
 import pandas as pd
 
 from .features import (
-    load_history, compute_features, apply_lag_pca,
+    load_history, compute_features, apply_lag_pca, merge_macro_features,
     LAG_COLUMNS, FEATURE_COLUMNS,
 )
 from .live_data import fetch_live_market_data
+from .macro_data import fetch_yield_differential
 
 
 class PredictionService:
@@ -18,7 +19,17 @@ class PredictionService:
     """
 
     def __init__(self, base_dir: str, config: dict):
+        """
+        Load every serialized artifact (PCA, both GBM heads + their scaler,
+        the Multi-Task LSTM + its scaler/time_steps, and the bundled
+        historical OHLCV CSV) exactly once at process start-up. Each load is
+        independently try/excepted into self.load_errors rather than failing
+        fast, so e.g. a missing LSTM file still leaves the GBM pipeline (or
+        vice versa) servable -- see self.gbm_ready/self.lstm_ready/
+        self.models_ready below for how callers should gate on this.
+        """
         self.config = config
+        self.base_dir = base_dir
         models_dir = os.path.join(base_dir, 'models')
         self.load_errors = []
 
@@ -78,6 +89,18 @@ class PredictionService:
             ohlcv_df = self.history_df.tail(bars_needed)
             data_source = "history_fallback"
 
+        macro_cfg = self.config.get('macro', {})
+        macro_df, macro_source = fetch_yield_differential(
+            ohlcv_df.index.min(), ohlcv_df.index.max(),
+            series_ids=macro_cfg.get('fred_series'),
+            cache_path=os.path.join(self.base_dir, macro_cfg.get('cache_path', 'results/yield_differential.csv')),
+        )
+        if macro_df is not None:
+            ohlcv_df = merge_macro_features(ohlcv_df, macro_df)
+        else:
+            ohlcv_df = ohlcv_df.assign(yield_differential=0.0)
+            macro_source = "unavailable"
+
         engineered = compute_features(ohlcv_df).dropna(subset=FEATURE_COLUMNS)
         if len(engineered) < time_steps:
             raise RuntimeError(
@@ -96,12 +119,22 @@ class PredictionService:
             "low": float(last_row['low']),
             "close": float(last_row['close']),
             "tick_volume": float(last_row['tick_volume']),
+            "yield_differential": float(last_row['yield_differential']),
+            "macro_source": macro_source,
         }
         forecasting_date = (as_of_date + pd.Timedelta(days=1)).date().isoformat()
 
         return model_input_window, data_source, bar_used, as_of_date.date().isoformat(), forecasting_date
 
     def _predict_gbm(self, model_input_row):
+        """
+        Run the GBM dual pipeline on a single flat feature row (no sliding
+        window -- tree ensembles consume one observation at a time, unlike
+        the LSTM). `model_input_row` must already be PCA-reduced and in
+        FEATURE_COLUMNS/model_input_columns() order; it is scaled here with
+        the same StandardScaler fitted at training time before either head
+        sees it.
+        """
         scaled = self.gbm_scaler.transform(model_input_row.to_frame().T)
         prob_up = float(self.gbm_classifier.predict_proba(scaled)[0, 1])
         pred_class = int(self.gbm_classifier.predict(scaled)[0])
@@ -113,6 +146,14 @@ class PredictionService:
         }
 
     def _predict_lstm(self, model_input_window):
+        """
+        Run the Multi-Task LSTM on a `(time_steps, n_features)` sliding
+        window (the model's two Functional-API heads: `return_output` for
+        the continuous % return, `direction_output` for the UP/DOWN
+        probability). Scaled with the LSTM's own StandardScaler -- distinct
+        from the GBM scaler, since the two architectures were fit on
+        differently-split train slices (see config.json `split` section).
+        """
         scaled = self.lstm_scaler.transform(model_input_window.values)
         window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
         predicted_return, prob_up = self.lstm_model.predict(window_3d, verbose=0)
@@ -151,6 +192,14 @@ class PredictionService:
         }
 
     def predict(self) -> dict:
+        """
+        End-to-end, zero-input inference for t+1: resolve the latest live
+        feature window (Section 2/2B's MT5/yfinance + FRED fallback chains),
+        run whichever of the GBM/LSTM pipelines is loaded, and assemble a
+        single response dict with both models' predictions plus a committee
+        consensus (see compute_consensus). Raises RuntimeError if no model
+        artifacts loaded successfully at all.
+        """
         if not self.models_ready:
             raise RuntimeError(f"Model artifacts not loaded. Errors: {self.load_errors}")
 

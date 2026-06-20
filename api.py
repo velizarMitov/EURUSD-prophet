@@ -3,6 +3,7 @@ import sys
 import json
 import warnings
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -11,6 +12,7 @@ warnings.filterwarnings('ignore')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 from src.inference import PredictionService
 
@@ -47,6 +49,8 @@ if os.path.exists(static_dir):
 
 @app.get("/")
 def read_root():
+    """Serve the zero-input dashboard (static/index.html) at the API root,
+    or a minimal JSON health summary if the static/ directory is absent."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)

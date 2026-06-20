@@ -7,6 +7,13 @@
     "live_symbol": "EURUSD=X",
     "live_fetch_bars": 250
   },
+  "macro": {
+    "fred_series": {
+      "us10y": "DGS10",
+      "de10y": "IRLTLT01DEM156N"
+    },
+    "cache_path": "results/yield_differential.csv"
+  },
   "pca": {
     "variance_threshold": 0.95,
     "lag_columns": [

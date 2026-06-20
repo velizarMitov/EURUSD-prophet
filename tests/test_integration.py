@@ -23,7 +23,7 @@ def test_integration_predict_endpoint():
         assert "as_of_date" in data, "API omitted the 'Data As Of' date."
         assert "forecasting_date" in data, "API omitted the t+1 forecasting date."
         assert "bar_used" in data, "API omitted the bar actually used for inference."
-        for field in ("date", "open", "high", "low", "close", "tick_volume"):
+        for field in ("date", "open", "high", "low", "close", "tick_volume", "yield_differential", "macro_source"):
             assert field in data['bar_used'], f"bar_used missing '{field}'."
 
         assert "gbm" in data or "lstm" in data, "API returned no predictions from either model."

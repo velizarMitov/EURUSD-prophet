@@ -46,6 +46,13 @@
             history_fallback: 'Historical fallback (no live source reachable)',
         };
 
+        const MACRO_SOURCE_LABELS = {
+            FRED_api: 'Live FRED API',
+            FRED_public: 'Live FRED public endpoint',
+            cache: 'Cached FRED snapshot',
+            unavailable: 'Unavailable — defaulted to 0.0',
+        };
+
         async function fetchAndPredict() {
             const btn = document.getElementById('predictBtn');
             const spinner = document.getElementById('spinner');
@@ -94,12 +101,15 @@
             const fmt = (v) => (typeof v === 'number' ? v.toFixed(5) : v);
             const bar = data.bar_used || {};
             const sourceLabel = DATA_SOURCE_LABELS[data.data_source] || data.data_source;
+            const macroLabel = MACRO_SOURCE_LABELS[bar.macro_source] || bar.macro_source;
+            const yieldDiff = typeof bar.yield_differential === 'number' ? bar.yield_differential.toFixed(3) : bar.yield_differential;
 
             // --- Today's Market State ---
             html += `<div class="card">
                 <h3>Today's Market State &mdash; Data 'As Of' ${data.as_of_date}</h3>
                 <div class="sub-value">${sourceLabel}</div>
                 <div class="sub-value">O ${fmt(bar.open)} / H ${fmt(bar.high)} / L ${fmt(bar.low)} / C ${fmt(bar.close)} / Vol ${bar.tick_volume}</div>
+                <div class="meta">US10Y&minus;DE10Y Yield Differential: ${yieldDiff} (${macroLabel})</div>
             </div>`;
 
             // --- Prediction for Next Period (Committee Consensus) ---

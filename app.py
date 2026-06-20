@@ -5,10 +5,13 @@ import warnings
 import os
 import sys
 
+from dotenv import load_dotenv
+
 warnings.filterwarnings('ignore')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 from src.inference import PredictionService
 
@@ -21,6 +24,13 @@ DATA_SOURCE_LABELS = {
     "MT5": "Live MT5 terminal session",
     "yfinance": "Live Yahoo Finance fetch",
     "history_fallback": "Historical fallback (no live source reachable)",
+}
+
+MACRO_SOURCE_LABELS = {
+    "FRED_api": "Live FRED API",
+    "FRED_public": "Live FRED public endpoint",
+    "cache": "Cached FRED snapshot",
+    "unavailable": "Unavailable -- defaulted to 0.0",
 }
 
 
@@ -44,9 +54,11 @@ def fetch_and_predict():
 
     bar = result['bar_used']
     source_label = DATA_SOURCE_LABELS.get(result['data_source'], result['data_source'])
+    macro_label = MACRO_SOURCE_LABELS.get(bar.get('macro_source'), bar.get('macro_source'))
     market_state = (
         f"Data 'As Of' {result['as_of_date']}  ({source_label})\n"
-        f"O={bar['open']:.5f}  H={bar['high']:.5f}  L={bar['low']:.5f}  C={bar['close']:.5f}  Vol={bar['tick_volume']:.0f}"
+        f"O={bar['open']:.5f}  H={bar['high']:.5f}  L={bar['low']:.5f}  C={bar['close']:.5f}  Vol={bar['tick_volume']:.0f}\n"
+        f"US10Y-DE10Y Yield Differential: {bar['yield_differential']:+.3f}  ({macro_label})"
     )
 
     direction_parts, return_parts = [], []

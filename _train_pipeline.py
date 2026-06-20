@@ -15,6 +15,7 @@ import joblib
 import mlflow
 import mlflow.sklearn
 import mlflow.keras
+from dotenv import load_dotenv
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
@@ -23,9 +24,12 @@ from sklearn.metrics import (
 )
 
 from src.features import (
-    add_advanced_features, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN, FEATURE_COLUMNS,
-    LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
+    add_advanced_features, merge_macro_features, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
+    FEATURE_COLUMNS, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
 )
+from src.macro_data import fetch_yield_differential
+
+load_dotenv('.env')
 
 with open('config.json') as f:
     CONFIG = json.load(f)
@@ -39,6 +43,22 @@ print("=== 1. Loading historical OHLCV ===")
 raw_df = pd.read_csv(CONFIG['data']['history_csv_path'], index_col='time', parse_dates=True)
 raw_df = raw_df[['open', 'high', 'low', 'close', 'tick_volume']]
 print(f"Loaded {len(raw_df):,} bars ({raw_df.index[0].date()} -> {raw_df.index[-1].date()})")
+
+print("\n=== 1B. Macro Feature Ingestion (FRED: US 10Y - DE 10Y Yield Differential) ===")
+macro_cfg = CONFIG.get('macro', {})
+macro_df, macro_source = fetch_yield_differential(
+    raw_df.index.min(), raw_df.index.max(),
+    series_ids=macro_cfg.get('fred_series'),
+    cache_path=macro_cfg.get('cache_path', 'results/yield_differential.csv'),
+)
+if macro_df is not None:
+    raw_df = merge_macro_features(raw_df, macro_df)
+    print(f"Merged yield_differential via {macro_source}: {len(macro_df):,} macro observations "
+          f"({macro_df.index[0].date()} -> {macro_df.index[-1].date()})")
+else:
+    raw_df = raw_df.assign(yield_differential=0.0)
+    macro_source = "unavailable"
+    print("WARNING: no live or cached FRED data reachable -- yield_differential defaulted to 0.0")
 
 print("\n=== 2. Feature Engineering (Multi-Task targets) ===")
 basic_advanced_df = add_advanced_features(raw_df)
@@ -129,6 +149,7 @@ with mlflow.start_run(run_name="GBM_dual_pipeline"):
         "cv_splits": CONFIG['gbm']['cv_splits'],
         "pca_variance_threshold": CONFIG['pca']['variance_threshold'],
         "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+        "macro_yield_differential_source": macro_source,
     })
     mlflow.log_metrics({
         "direction_accuracy": acc_gb,
@@ -249,6 +270,7 @@ with mlflow.start_run(run_name="MultiTask_LSTM"):
         "loss_weight_return": CONFIG['lstm']['loss_weights']['return_output'],
         "loss_weight_direction": CONFIG['lstm']['loss_weights']['direction_output'],
         "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+        "macro_yield_differential_source": macro_source,
     })
     mlflow.log_metrics({
         "return_mse": mse_lstm,
