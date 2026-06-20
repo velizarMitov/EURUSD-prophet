@@ -106,7 +106,7 @@ print("=== 5. GBM Hyperparameter Tuning ===")
 tscv_gb = TimeSeriesSplit(n_splits=CONFIG['gbm']['cv_splits'])
 param_grid = CONFIG['gbm']['param_grid']
 
-with mlflow.start_run(run_name="GBM_dual_pipeline"):
+with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     print("--- Classification head (target_direction) ---")
     grid_search = GridSearchCV(
         GradientBoostingClassifier(random_state=RANDOM_STATE),
@@ -159,7 +159,7 @@ with mlflow.start_run(run_name="GBM_dual_pipeline"):
     })
     mlflow.sklearn.log_model(best_gbm, artifact_path="gbm_direction_classifier")
     mlflow.sklearn.log_model(best_gbm_reg, artifact_path="gbm_return_regressor")
-    print(f"MLflow run logged: run_id={mlflow.active_run().info.run_id}")
+    print(f"MLflow run logged: run_id={gbm_run.info.run_id}")
 
 print("\n=== 7. Persisting GBM + PCA artifacts ===")
 os.makedirs('models', exist_ok=True)
@@ -233,7 +233,7 @@ mt_lstm_model.compile(
 )
 mt_lstm_model.summary()
 
-with mlflow.start_run(run_name="MultiTask_LSTM"):
+with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
     print("\n=== 10. Training ===")
     early_stop = EarlyStopping(monitor='val_loss', patience=CONFIG['lstm']['patience'], restore_best_weights=True, verbose=1)
     history = mt_lstm_model.fit(
@@ -279,7 +279,7 @@ with mlflow.start_run(run_name="MultiTask_LSTM"):
         "direction_roc_auc": auc_lstm,
     })
     mlflow.keras.log_model(mt_lstm_model, artifact_path="multitask_lstm")
-    print(f"MLflow run logged: run_id={mlflow.active_run().info.run_id}")
+    print(f"MLflow run logged: run_id={lstm_run.info.run_id}")
 
 print("\n=== 12. Persisting LSTM artifacts ===")
 mt_lstm_model.save('models/lstm_multitask_eurusd.keras')
