@@ -49,21 +49,71 @@ Violations that cause silent leakage in financial ML:
 
 ### Step 1 — Data Acquisition
 
-```python
-import yfinance as yf
-import pandas as pd
+Choose the source that fits your setup. All sources must produce the same normalized DataFrame before proceeding.
 
-df = yf.download("EURUSD=X", start="2018-01-01", end="2024-12-31", interval="1d")
-df.to_csv("data/raw/eurusd_daily.csv")
+---
+
+#### Option A — MetaTrader5 (default for this project)
+
+```python
+import MetaTrader5 as mt5
+import pandas as pd
+from datetime import datetime, timezone
+
+mt5.initialize()  # MT5 terminal must be open and logged in
+
+symbol    = "EURUSD"
+timeframe = mt5.TIMEFRAME_D1
+
+utc_now = datetime.now(timezone.utc)
+rates   = mt5.copy_rates_from(symbol, timeframe, utc_now, 20_000)
+
+# Fallback if date-based fetch is empty
+if rates is None or len(rates) == 0:
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 20_000)
+
+mt5.shutdown()
+
+df = pd.DataFrame(rates)
+df['time'] = pd.to_datetime(df['time'], unit='s')
+df.set_index('time', inplace=True)
+df.sort_index(inplace=True)
+df = df[['open', 'high', 'low', 'close', 'tick_volume']]
 ```
 
-Alternatives: `pandas_datareader`, broker APIs, Dukascopy CSV exports.
+---
 
-**Validation checks after loading:**
+#### Option B — yfinance (no broker required)
+
+```python
+import yfinance as yf
+
+df = yf.download("EURUSD=X", start="2018-01-01", end="2024-12-31", interval="1d")
+df.columns = [c.lower() for c in df.columns]          # normalize column names
+df = df.rename(columns={"vol": "tick_volume"})
+df = df[['open', 'high', 'low', 'close', 'tick_volume']]
+df.index.name = 'time'
+```
+
+---
+
+#### Option C — CSV / Dukascopy export
+
+```python
+df = pd.read_csv("data/raw/EURUSD_D1.csv", parse_dates=["time"], index_col="time")
+df.columns = [c.lower() for c in df.columns]
+df.sort_index(inplace=True)
+df = df[['open', 'high', 'low', 'close', 'tick_volume']]
+```
+
+---
+
+**Validation checks after loading (all sources):**
 - [ ] Index is `DatetimeIndex`, sorted ascending
 - [ ] No duplicate timestamps
-- [ ] Columns: Open, High, Low, Close, Volume (or Adj Close)
+- [ ] Columns: `open`, `high`, `low`, `close`, `tick_volume`
 - [ ] Date range matches expectations
+- [ ] `tick_volume` may be 0 for some FX brokers — this is normal
 
 ### Step 2 — Missing Value Audit
 
