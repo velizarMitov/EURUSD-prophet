@@ -6,70 +6,122 @@
     <title>EURUSD Prediction Core</title>
     <style>
         body { font-family: -apple-system, system-ui, sans-serif; background-color: #f4f7f6; padding: 2rem; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 640px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { font-size: 1.5rem; color: #2c3e50; border-bottom: 2px solid #ecf0f1; padding-bottom: 0.5rem; }
-        .form-group { margin-bottom: 1rem; }
-        label { display: block; margin-bottom: 0.25rem; font-weight: bold; font-size: 0.9rem; }
-        input { width: 100%; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        button { width: 100%; padding: 0.75rem; background-color: #3498db; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background 0.3s; }
-        button:hover { background-color: #2980b9; }
-        .result { margin-top: 1.5rem; padding: 1rem; background-color: #e8f8f5; border-left: 4px solid #1abc9c; border-radius: 4px; display: none; }
-        .error { background-color: #fdedec; border-left-color: #e74c3c; color: #c0392b; }
+        p.sub { color: #666; font-size: 0.9rem; margin-top: 0.5rem; }
+        button { width: 100%; padding: 0.9rem; background-color: #3498db; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background 0.3s; margin-top: 1rem; }
+        button:hover:not(:disabled) { background-color: #2980b9; }
+        button:disabled { background-color: #95a5a6; cursor: wait; }
+        .spinner { display: none; margin: 1.5rem auto 0; width: 32px; height: 32px; border: 4px solid #ecf0f1; border-top-color: #3498db; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        .spinner.active { display: block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .dashboard { margin-top: 1.5rem; display: none; }
+        .dashboard.active { display: block; }
+        .card { padding: 1rem; border-radius: 4px; margin-bottom: 0.75rem; border-left: 4px solid #95a5a6; background-color: #f4f6f6; }
+        .card.up { border-left-color: #27ae60; background-color: #eafaf1; }
+        .card.down { border-left-color: #e74c3c; background-color: #fdedec; }
+        .card h3 { margin: 0 0 0.5rem 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; color: #555; }
+        .card .value { font-size: 1.15rem; font-weight: bold; }
+        .card .sub-value { margin-top: 0.25rem; font-size: 0.95rem; }
+        .meta { font-size: 0.8rem; color: #888; margin-top: 0.75rem; line-height: 1.4; }
+        .error { background-color: #fdedec; border-left: 4px solid #e74c3c; color: #c0392b; padding: 1rem; border-radius: 4px; margin-top: 1.5rem; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>EURUSD Directional Extrapolator (Web API)</h1>
-        <div class="form-group"><label>Open Price:</label><input type="number" id="open" value="1.1000" step="0.0001"></div>
-        <div class="form-group"><label>High Price:</label><input type="number" id="high" value="1.1050" step="0.0001"></div>
-        <div class="form-group"><label>Low Price:</label><input type="number" id="low" value="1.0950" step="0.0001"></div>
-        <div class="form-group"><label>Close Price:</label><input type="number" id="close" value="1.1020" step="0.0001"></div>
-        <div class="form-group"><label>Tick Volume:</label><input type="number" id="volume" value="85000"></div>
-        <button onclick="predict()">Execute API Inference</button>
-        <div id="resultBox" class="result"></div>
+        <h1>EURUSD Directional Extrapolator</h1>
+        <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs both production models. No manual input, no date picker.</p>
+
+        <button id="predictBtn" onclick="fetchAndPredict()">Fetch Live Market Data &amp; Predict Tomorrow</button>
+        <div id="spinner" class="spinner"></div>
+
+        <div id="dashboard" class="dashboard"></div>
+        <div id="errorBox" class="error" style="display:none;"></div>
     </div>
+
     <script>
-        async function predict() {
-            const data = {
-                open: parseFloat(document.getElementById('open').value),
-                high: parseFloat(document.getElementById('high').value),
-                low: parseFloat(document.getElementById('low').value),
-                close: parseFloat(document.getElementById('close').value),
-                tick_volume: parseFloat(document.getElementById('volume').value)
-            };
-            const box = document.getElementById('resultBox');
-            box.style.display = 'block';
-            box.innerText = "Querying model...";
-            box.className = "result";
-            
+        const DATA_SOURCE_LABELS = {
+            MT5: 'Live MT5 terminal session',
+            yfinance: 'Live Yahoo Finance fetch',
+            history_fallback: 'Historical fallback (no live source reachable)',
+        };
+
+        async function fetchAndPredict() {
+            const btn = document.getElementById('predictBtn');
+            const spinner = document.getElementById('spinner');
+            const dashboard = document.getElementById('dashboard');
+            const errorBox = document.getElementById('errorBox');
+
+            btn.disabled = true;
+            btn.textContent = 'Fetching Live Data & Predicting…';
+            spinner.classList.add('active');
+            dashboard.classList.remove('active');
+            dashboard.innerHTML = '';
+            errorBox.style.display = 'none';
+
             try {
-                const response = await fetch('/api/predict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                const resData = await response.json();
-                
-                if (response.ok) {
-                    let rows = "";
-                    if (resData.gbm) {
-                        rows += `<strong>GBM</strong> &mdash; Direction: ${resData.gbm.direction} | Confidence: ${(resData.gbm.confidence * 100).toFixed(2)}% | Return: ${resData.gbm.predicted_return_pct.toFixed(4)}%<br/>`;
-                    }
-                    if (resData.lstm) {
-                        rows += `<strong>LSTM</strong> &mdash; Direction: ${resData.lstm.direction} | Confidence: ${(resData.lstm.confidence * 100).toFixed(2)}% | Return: ${resData.lstm.predicted_return_pct.toFixed(4)}%<br/>`;
-                    }
-                    if (resData.lstm_error) {
-                        rows += `<em>LSTM: ${resData.lstm_error}</em><br/>`;
-                    }
-                    box.innerHTML = rows || "No model produced a prediction.";
-                } else {
-                    box.className = "result error";
-                    box.innerText = `API Error: ${resData.detail}`;
+                const response = await fetch('/api/predict', { method: 'POST' });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Unknown API error');
                 }
+
+                renderDashboard(data);
             } catch (err) {
-                box.className = "result error";
-                box.innerText = `Network/Connection Error: ${err.message}`;
+                errorBox.textContent = `Error: ${err.message}`;
+                errorBox.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Fetch Live Market Data & Predict Tomorrow';
+                spinner.classList.remove('active');
             }
+        }
+
+        function modelCard(title, pred) {
+            const cls = pred.direction === 'UP' ? 'up' : 'down';
+            const arrow = pred.direction === 'UP' ? '📈' : '📉';
+            return `<div class="card ${cls}">
+                <h3>${title}</h3>
+                <div class="value">${pred.direction} ${arrow} &mdash; ${(pred.confidence * 100).toFixed(2)}% confidence</div>
+                <div class="sub-value">Predicted return: ${pred.predicted_return_pct.toFixed(4)}%</div>
+            </div>`;
+        }
+
+        function renderDashboard(data) {
+            const dashboard = document.getElementById('dashboard');
+            let html = '';
+            const fmt = (v) => (typeof v === 'number' ? v.toFixed(5) : v);
+            const bar = data.bar_used || {};
+            const sourceLabel = DATA_SOURCE_LABELS[data.data_source] || data.data_source;
+
+            // --- Today's Market State ---
+            html += `<div class="card">
+                <h3>Today's Market State &mdash; Data 'As Of' ${data.as_of_date}</h3>
+                <div class="sub-value">${sourceLabel}</div>
+                <div class="sub-value">O ${fmt(bar.open)} / H ${fmt(bar.high)} / L ${fmt(bar.low)} / C ${fmt(bar.close)} / Vol ${bar.tick_volume}</div>
+            </div>`;
+
+            // --- Prediction for Next Period (Committee Consensus) ---
+            if (data.consensus) {
+                const c = data.consensus;
+                const cls = c.direction === 'UP' ? 'up' : 'down';
+                const arrow = c.direction === 'UP' ? '📈' : '📉';
+                const agreement = c.agreement ? '✅ Models agree' : '⚠️ Models disagree — showing the higher-confidence call';
+                html += `<div class="card ${cls}" style="border-left-width: 6px;">
+                    <h3>Prediction for Next Period &mdash; Forecasting Date ${data.forecasting_date}</h3>
+                    <div class="value">${c.direction} ${arrow} &mdash; ${(c.confidence * 100).toFixed(2)}% confidence</div>
+                    <div class="sub-value">Averaged predicted return: ${c.predicted_return_pct.toFixed(4)}%</div>
+                    <div class="meta">${agreement}</div>
+                </div>`;
+            }
+
+            if (data.gbm) html += modelCard('GBM &mdash; Gradient Boosting', data.gbm);
+            if (data.lstm) html += modelCard('Multi-Task LSTM', data.lstm);
+            if (data.lstm_error) html += `<div class="meta">LSTM: ${data.lstm_error}</div>`;
+
+            dashboard.innerHTML = html;
+            dashboard.classList.add('active');
         }
     </script>
 </body>

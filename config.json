@@ -3,7 +3,9 @@
   "data": {
     "symbol": "EURUSD",
     "timeframe": "D1",
-    "history_csv_path": "results/eurusd_features.csv"
+    "history_csv_path": "results/eurusd_features.csv",
+    "live_symbol": "EURUSD=X",
+    "live_fetch_bars": 250
   },
   "pca": {
     "variance_threshold": 0.95,

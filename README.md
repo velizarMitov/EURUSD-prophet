@@ -1,7 +1,7 @@
 # EURUSD Exchange Rate Predictor: Machine Learning Pipeline
 
 ## Project Overview
-This repository contains a full end-to-end Machine Learning pipeline predicting the directional closing patterns of the EUR/USD exchange rate. Developed under rigorous academic guidelines for a University Final Project, the system explores the **Bias-Variance tradeoff**, implementing robust temporal cross-validation bounds to protect against financial stochastic noise. 
+This repository contains a full end-to-end Machine Learning pipeline predicting the directional closing patterns of the EUR/USD exchange rate. Developed under rigorous academic guidelines for SoftUni ML Learning Final Project, the system explores the **Bias-Variance tradeoff**, implementing robust temporal cross-validation bounds to protect against financial stochastic noise. 
 
 The pipeline formally implements, evaluates, and contrasts:
 1. **Advanced Feature Engineering:** Autoregressive lags, bar dynamics, and cyclical datetime encoders.

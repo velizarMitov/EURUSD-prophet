@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -94,6 +96,153 @@ def test_lag_pca_fit_transform_no_leakage():
     non_target_cols = [c for c in cols if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)]
     assert non_target_cols == [c for c in reduced.columns if c not in (TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN)], \
         "model_input_columns() must match the actual column order produced by apply_lag_pca()."
+
+
+def test_compute_consensus_agreement_averages():
+    """When both models agree on direction, the consensus must average their
+    confidence/return rather than just picking one arbitrarily."""
+    from src.inference import PredictionService
+
+    predictions = {
+        'gbm': {'direction': 'UP', 'confidence': 0.60, 'predicted_return_pct': 0.10},
+        'lstm': {'direction': 'UP', 'confidence': 0.70, 'predicted_return_pct': 0.20},
+    }
+    consensus = PredictionService.compute_consensus(predictions)
+
+    assert consensus['direction'] == 'UP'
+    assert consensus['agreement'] is True
+    assert consensus['confidence'] == pytest.approx(0.65)
+    assert consensus['predicted_return_pct'] == pytest.approx(0.15)
+
+
+def test_compute_consensus_disagreement_defers_to_confident_model():
+    """When models disagree on direction, the consensus must flag the
+    disagreement and defer to whichever model is more confident, rather than
+    silently averaging across opposite-signed predictions."""
+    from src.inference import PredictionService
+
+    predictions = {
+        'gbm': {'direction': 'DOWN', 'confidence': 0.55, 'predicted_return_pct': -0.05},
+        'lstm': {'direction': 'UP', 'confidence': 0.80, 'predicted_return_pct': 0.30},
+    }
+    consensus = PredictionService.compute_consensus(predictions)
+
+    assert consensus['agreement'] is False
+    assert consensus['direction'] == 'UP'
+    assert consensus['confidence'] == pytest.approx(0.80)
+    assert consensus['predicted_return_pct'] == pytest.approx(0.30)
+
+
+def test_fetch_live_market_data_prefers_mt5(monkeypatch):
+    """When a live MT5 terminal session is reachable, it must be used in
+    preference to Yahoo Finance, per the requested MT5 -> yfinance fallback order."""
+    import src.live_data as live_data
+
+    rates = np.array(
+        [(1781481600 + i * 86400, 1.10 + i * 0.001, 1.11 + i * 0.001, 1.09 + i * 0.001, 1.105 + i * 0.001, 100000 + i, 5, 0) for i in range(5)],
+        dtype=[('time', '<i8'), ('open', '<f8'), ('high', '<f8'), ('low', '<f8'), ('close', '<f8'),
+               ('tick_volume', '<i8'), ('spread', '<i4'), ('real_volume', '<i8')]
+    )
+
+    class _FakeMT5:
+        TIMEFRAME_D1 = 1
+
+        @staticmethod
+        def initialize():
+            return True
+
+        @staticmethod
+        def copy_rates_from_pos(symbol, timeframe, start, count):
+            return rates
+
+        @staticmethod
+        def shutdown():
+            pass
+
+    monkeypatch.setitem(sys.modules, 'MetaTrader5', _FakeMT5)
+
+    def _boom_yfinance(*args, **kwargs):
+        raise AssertionError("yfinance must not be called when MT5 succeeds.")
+
+    monkeypatch.setattr(live_data, "_fetch_from_yfinance", _boom_yfinance)
+
+    df, source = live_data.fetch_live_market_data(bars=5)
+    assert source == "MT5"
+    assert len(df) == 5
+    assert list(df.columns) == ['open', 'high', 'low', 'close', 'tick_volume']
+
+
+def test_fetch_live_market_data_falls_back_to_yfinance(monkeypatch):
+    """When MT5 is unreachable, the pipeline must fall back to Yahoo Finance
+    rather than returning nothing."""
+    import src.live_data as live_data
+
+    monkeypatch.setattr(live_data, "_fetch_from_mt5", lambda symbol, bars: None)
+
+    fake_df = pd.DataFrame({
+        'open': [1.10], 'high': [1.11], 'low': [1.09], 'close': [1.105], 'tick_volume': [0.0],
+    }, index=pd.date_range('2026-06-19', periods=1))
+    monkeypatch.setattr(live_data, "_fetch_from_yfinance", lambda symbol, bars: fake_df)
+
+    df, source = live_data.fetch_live_market_data(bars=5)
+    assert source == "yfinance"
+    assert len(df) == 1
+
+
+def test_fetch_live_market_data_returns_none_when_both_unreachable(monkeypatch):
+    """When neither live source is reachable, the caller must get (None, None)
+    so it can fall back to its own bundled historical data."""
+    import src.live_data as live_data
+
+    monkeypatch.setattr(live_data, "_fetch_from_mt5", lambda symbol, bars: None)
+    monkeypatch.setattr(live_data, "_fetch_from_yfinance", lambda symbol, bars: None)
+
+    df, source = live_data.fetch_live_market_data(bars=5)
+    assert df is None
+    assert source is None
+
+
+def test_fetch_latest_bar_returns_none_on_failure(monkeypatch):
+    """The automated fetch must degrade gracefully (return None, not raise)
+    so callers can fall back to historical data when live data is unreachable."""
+    import src.live_data as live_data
+
+    class _BoomTicker:
+        def __init__(self, symbol):
+            pass
+
+        def history(self, **kwargs):
+            raise ConnectionError("simulated network failure")
+
+    monkeypatch.setattr(live_data.yf, "Ticker", _BoomTicker)
+    assert live_data.fetch_latest_bar("EURUSD=X") is None
+
+
+def test_fetch_latest_bar_parses_successful_response(monkeypatch):
+    """Verify a successful fetch is parsed into the expected dict shape without hitting the network."""
+    import src.live_data as live_data
+
+    fake_history = pd.DataFrame({
+        'Open': [1.10, 1.11],
+        'High': [1.12, 1.13],
+        'Low': [1.09, 1.10],
+        'Close': [1.105, 1.115],
+        'Volume': [0, 0],
+    }, index=pd.date_range('2026-06-18', periods=2, freq='D'))
+
+    class _FakeTicker:
+        def __init__(self, symbol):
+            pass
+
+        def history(self, **kwargs):
+            return fake_history
+
+    monkeypatch.setattr(live_data.yf, "Ticker", _FakeTicker)
+    result = live_data.fetch_latest_bar("EURUSD=X")
+
+    assert result['date'] == '2026-06-19'
+    assert result['close'] == pytest.approx(1.115)
+    assert result['tick_volume'] == 0.0
 
 
 def test_feature_engineering_edge_cases():
