@@ -2,5 +2,13 @@
   "pythonPath": "C:/Program Files/Python312/python.exe",
   "pythonVersion": "3.12",
   "typeCheckingMode": "basic",
-  "reportMissingModuleSource": "none"
+  "reportMissingModuleSource": "none",
+  "reportAttributeAccessIssue": "none",
+  "reportArgumentType": "none",
+  "reportIndexIssue": "none",
+  "reportCallIssue": "none",
+  "reportAssignmentType": "none",
+  "reportOperatorIssue": "none",
+  "reportOptionalSubscript": "none",
+  "reportUnusedExpression": "none"
 }

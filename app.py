@@ -22,15 +22,18 @@ FEATURE_COLUMNS = [
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos'
 ]
 
+# Initialize model state so all names are always defined at module level
+model = None
+scaler = None
+model_loaded = False
+error_msg = ""
+
 # Loading serialized ML pipeline artifacts computationally via absolute paths
 try:
     model = joblib.load(MODEL_PATH)
     scaler = joblib.load(SCALER_PATH)
     model_loaded = True
 except Exception as e:
-    model = None
-    scaler = None
-    model_loaded = False
     error_msg = str(e)
     print(f"Artifacts missing: {e}. Please ensure 'models/' directory exists and contains trained .pkl files.")
 
@@ -40,7 +43,7 @@ def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
     long-term rolling dependencies matching standard mathematical averages natively, 
     and pipes data into the verified Gradient Boosting Decision Trees. 
     """
-    if not model_loaded:
+    if not model_loaded or model is None or scaler is None:
         return f"Critical MLOps Failure: Model not loaded. Error: {error_msg}", "N/A"
     
     # Building a simulation matrix structurally matching our 20-feature dimensional constraint
