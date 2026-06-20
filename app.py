@@ -24,6 +24,7 @@ except Exception as e:
     model = None
     scaler = None
     model_loaded = False
+    error_msg = str(e)
     print(f"Artifacts missing: {e}. Please ensure 'models/' directory exists and contains trained .pkl files.")
 
 def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
@@ -33,7 +34,7 @@ def predict_eurusd(open_p, high_p, low_p, close_p, volume_p):
     and pipes data into the verified Gradient Boosting Decision Trees. 
     """
     if not model_loaded:
-        return "Critical MLOps Failure: Model artifacts successfully unlinked or unreachable.", "N/A"
+        return f"Critical MLOps Failure: Model not loaded. Error: {error_msg}", "N/A"
     
     # Building a simulation matrix structurally matching our 20-feature dimensional constraint
     inference_vector = np.zeros((1, len(FEATURE_COLUMNS)))
