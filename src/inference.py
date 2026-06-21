@@ -150,7 +150,14 @@ class PredictionService:
             "yield_differential": float(last_row['yield_differential']),
             "macro_source": macro_source,
         }
-        forecasting_date = (as_of_date + pd.Timedelta(days=1)).date().isoformat()
+        # The model's "next bar" is the next *trading* session, not the next
+        # calendar day: FX closes Friday night, and the shift(-1) targets were
+        # built over history that already skips weekends, so the row after a
+        # Friday is a Monday. Roll Friday/Saturday forward to Monday so the
+        # displayed forecast date matches what the model actually predicts.
+        weekday = as_of_date.weekday()           # Mon=0 .. Fri=4, Sat=5, Sun=6
+        days_ahead = {4: 3, 5: 2}.get(weekday, 1)  # Fri->Mon, Sat->Mon, else +1
+        forecasting_date = (as_of_date + pd.Timedelta(days=days_ahead)).date().isoformat()
 
         return model_input_window, data_source, bar_used, as_of_date.date().isoformat(), forecasting_date
 
