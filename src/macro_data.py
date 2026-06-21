@@ -23,6 +23,7 @@ def _combine(us: pd.Series, de: pd.Series) -> pd.DataFrame:
         else combined.index.tz_convert('UTC')
     )
     combined = combined.sort_index().ffill()
+    combined.index.name = 'DATE'
     combined['yield_differential'] = combined['us10y'] - combined['de10y']
     # Raw us10y/de10y are kept alongside yield_differential for display/
     # diagnostic purposes (e.g. the notebook's Section 2C charts) --
@@ -78,6 +79,22 @@ def fetch_yield_differential(start, end, series_ids: dict = None, cache_path: st
         source = "FRED_public"
 
     if df is not None and not df.empty:
+        # A live fetch only covers [start, end] of the *current* price history,
+        # which can be much narrower than what's already cached (e.g. a short
+        # MT5 backfill window). Merge onto the existing cache instead of
+        # overwriting it outright, or older history gets silently destroyed.
+        if cache_path and os.path.exists(cache_path):
+            try:
+                cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+                cached.index.name = 'DATE'
+                cached.index = (
+                    cached.index.tz_localize('UTC') if cached.index.tz is None
+                    else cached.index.tz_convert('UTC')
+                )
+                df = pd.concat([cached, df]).sort_index()
+                df = df[~df.index.duplicated(keep='last')]
+            except (OSError, ValueError):
+                pass
         try:
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             df.to_csv(cache_path)
