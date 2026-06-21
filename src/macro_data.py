@@ -24,7 +24,11 @@ def _combine(us: pd.Series, de: pd.Series) -> pd.DataFrame:
     )
     combined = combined.sort_index().ffill()
     combined['yield_differential'] = combined['us10y'] - combined['de10y']
-    return combined[['yield_differential']].dropna()
+    # Raw us10y/de10y are kept alongside yield_differential for display/
+    # diagnostic purposes (e.g. the notebook's Section 2C charts) --
+    # merge_macro_features() below only ever selects yield_differential, so
+    # production training/inference is unaffected by these extra columns.
+    return combined[['us10y', 'de10y', 'yield_differential']].dropna()
 
 
 def _fetch_via_fredapi(series_ids: dict, start, end):

@@ -157,12 +157,16 @@ class PredictionService:
         scaled = self.lstm_scaler.transform(model_input_window.values)
         window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
         predicted_return, prob_up = self.lstm_model.predict(window_3d, verbose=0)
-        predicted_return = float(predicted_return.ravel()[0])
+        # The model is trained on the return target in percentage units
+        # (see _train_pipeline.py Section 8), unlike the GBM regressor which
+        # is trained on the raw fraction -- so, unlike _predict_gbm, this
+        # output is NOT multiplied by 100 again.
+        predicted_return_pct = float(predicted_return.ravel()[0])
         prob_up = float(prob_up.ravel()[0])
         return {
             "direction": "UP" if prob_up >= 0.5 else "DOWN",
             "confidence": prob_up if prob_up >= 0.5 else (1 - prob_up),
-            "predicted_return_pct": predicted_return * 100,
+            "predicted_return_pct": predicted_return_pct,
         }
 
     @staticmethod

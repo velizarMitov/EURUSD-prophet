@@ -1,0 +1,4 @@
+,Accuracy,ROC-AUC
+WITHOUT yield_differential,0.504,0.5071
+WITH yield_differential,0.5002,0.505
+Δ  (FRED effect),-0.0039,-0.0021

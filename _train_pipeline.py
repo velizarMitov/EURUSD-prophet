@@ -176,7 +176,16 @@ print("Saved: lag_scaler.pkl, lag_pca.pkl, best_gbm_eurusd.pkl, best_gbm_regress
 print("\n=== 8. Multi-Task LSTM: Sliding-Window Data Preparation ===")
 df_dl = basic_advanced_df_reduced.dropna().copy()
 data_x = df_dl[MODEL_INPUT_COLUMNS].values
-data_y_return = df_dl[TARGET_RETURN_COLUMN].values
+# Fractional log-returns have std ~0.006, so their raw MSE (~3e-5) is five
+# orders of magnitude below direction's binary-crossentropy (~0.69). With
+# config.json's loss_weights left at their previous ratio, the shared LSTM
+# trunk received almost no gradient signal for the return head, which never
+# converged past initialization (observed: live predicted returns of -11%,
+# and a test MAE of 0.037 vs. the GBM regressor's 0.003 on the same target).
+# Training on the target in percentage units instead brings its MSE to the
+# same order of magnitude as the direction loss, so loss_weights in
+# config.json can stay balanced without an arbitrarily large constant.
+data_y_return = df_dl[TARGET_RETURN_COLUMN].values * 100
 data_y_direction = df_dl[TARGET_DIRECTION_COLUMN].values
 
 n_total = len(df_dl)
@@ -250,11 +259,14 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
     y_prob_dir_lstm = y_prob_dir_lstm.ravel()
     y_pred_dir_lstm = (y_prob_dir_lstm >= 0.5).astype(int)
 
-    mse_lstm = mean_squared_error(y_ret_test_seq, y_pred_ret_lstm)
-    mae_lstm = mean_absolute_error(y_ret_test_seq, y_pred_ret_lstm)
+    # y_ret_test_seq/y_pred_ret_lstm are in percent units (see Section 8) --
+    # divide by 100 to report MSE/MAE in the same fractional units as the
+    # GBM regressor above, so the two heads' errors are directly comparable.
+    mse_lstm = mean_squared_error(y_ret_test_seq / 100, y_pred_ret_lstm / 100)
+    mae_lstm = mean_absolute_error(y_ret_test_seq / 100, y_pred_ret_lstm / 100)
     acc_lstm = accuracy_score(y_dir_test_seq, y_pred_dir_lstm)
     auc_lstm = roc_auc_score(y_dir_test_seq, y_prob_dir_lstm)
-    print(f"[Return]    MSE={mse_lstm:.8f}  MAE={mae_lstm:.6f}")
+    print(f"[Return]    MSE={mse_lstm:.8f}  MAE={mae_lstm:.6f}  (fractional units, comparable to GBM)")
     print(f"[Direction] Accuracy={acc_lstm:.4f}  ROC-AUC={auc_lstm:.4f}")
 
     mlflow.log_params({
