@@ -294,6 +294,52 @@ is tuned:
   not beat a coin flip** — the low-confidence consensus guard (§3.3) exists
   precisely for this.
 
+### 4.2.1 The Efficient Market Reality
+
+A recurring question is *"why are the predicted returns such tiny fractions of
+a percent (e.g. `-0.0225%`)?"* The answer is that this is **mathematically
+correct behaviour, not a defect** — and the test block proves it numerically.
+
+**The "Predict the Mean" baseline.** EUR/USD daily returns are, to a very good
+approximation, a **random walk**: their unconditional mean is ≈ 0 and a typical
+day moves ± one standard deviation. On the held-out test block:
+
+| Quantity | Value |
+|---|---|
+| Actual next-day return — mean | **+0.0060%** (≈ zero) |
+| Actual next-day return — std | **0.5846%** (the typical daily move) |
+| GBM regressor — predicted mean | **+0.0062%** (≈ the unconditional mean) |
+| GBM regressor — predicted std | **0.0057%** (≈ **100× tighter** than reality) |
+| `corr(prediction, actual)` | **≈ 0.000** (essentially no signal) |
+
+The decisive comparison is the MAE:
+
+| Predictor | Test MAE |
+|---|---|
+| Trivial **"predict the mean"** baseline (`ŷ = mean(y)`) | **0.2958%** |
+| The trained **GBM regressor** | **0.2959%** |
+
+The GBM is **indistinguishable from — in fact a hair worse than — a constant
+that always predicts the historical average**. This is the empirical signature
+of an efficient market: there is almost no day-ahead signal in the price/feature
+history to extract, so no estimator can do materially better than the mean.
+
+**Why Huber loss makes the predictions hug zero — by design.** The GBM regressor
+uses `loss='huber'` (`alpha=0.9`), a robust loss that behaves like MSE near the
+centre and like MAE in the tails. On a noisy target with no learnable signal,
+the loss-minimising output is the conditional mean, and Huber's tail-robustness
+**actively shrinks predictions toward that mean** to avoid overfitting to
+individual noisy moves. The ~100× collapse in predicted std is exactly this
+shrinkage working as intended — it is the model declining to fabricate
+confident forecasts it cannot justify.
+
+**Conclusion — a feature of mathematical honesty, not a bug.** The micro-percent
+outputs are the system *correctly* reporting that day-ahead EUR/USD returns are
+near-unpredictable. A model that emitted large, swinging return forecasts on
+this target would be **overfitting noise and lying about its certainty**. The
+practical implication (also noted in §4.5): `predicted_return_pct` should be read
+as near-noise, not as a tradeable magnitude.
+
 ### 4.3 FRED feature — ablation shows net-negative effect
 
 `results/2C_fred_ablation.csv`:
