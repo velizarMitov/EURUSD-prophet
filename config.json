@@ -23,9 +23,8 @@
     ]
   },
   "split": {
-    "gbm_train_fraction": 0.8,
-    "lstm_train_fraction": 0.70,
-    "lstm_val_fraction": 0.85
+    "train_fraction": 0.80,
+    "val_fraction": 0.10
   },
   "gbm": {
     "cv_splits": 5,

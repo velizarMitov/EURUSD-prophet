@@ -4,6 +4,18 @@ Sections 3/4 (features), 14 (PCA on lag features), 15 (Multi-Task LSTM) and
 16 (GBM dual pipeline), sourcing raw OHLCV from results/eurusd_features.csv
 since no live MT5 terminal is available in this environment, and reading
 all hyperparameters from config.json. Produces real artifacts under models/.
+
+Unified-pipeline refactor:
+  * ONE chronological split shared by every model (train_fraction / val_fraction
+    from config.json) -- GBM trains on [0:80%], the LSTM on [0:70%] with
+    [70%:80%] as its early-stopping validation set, and BOTH evaluate on the
+    identical held-out [80%:100%] test block.
+  * ONE global StandardScaler (global_scaler.pkl) fit exclusively on the 0-80%
+    block, replacing the former separate scaler_gb / scaler_lstm.
+  * PCA on the lag block fit strictly on the same 0-80% slice (resolves the
+    prior coupling where PCA saw 70% but GBM split at 80%).
+  * target_return arrives natively in PERCENT units from src/features.py, so
+    there is no longer any *100 rescaling anywhere in training or inference.
 """
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -60,18 +72,31 @@ else:
     macro_source = "unavailable"
     print("WARNING: no live or cached FRED data reachable -- yield_differential defaulted to 0.0")
 
-print("\n=== 2. Feature Engineering (Multi-Task targets) ===")
+print("\n=== 2. Feature Engineering (Multi-Task targets, target_return in PERCENT) ===")
 basic_advanced_df = add_advanced_features(raw_df)
 assert list(basic_advanced_df[FEATURE_COLUMNS].columns) == FEATURE_COLUMNS
 print(f"Shape: {basic_advanced_df.shape}")
 
 # ---------------------------------------------------------------------------
-# Section 14 — PCA on autoregressive lag features
+# Section 14 — Unified chronological splits + PCA on autoregressive lags
 # ---------------------------------------------------------------------------
-print("\n=== 3. PCA on Lag Features (fit on train slice only) ===")
-pca_fit_end = int(len(basic_advanced_df) * CONFIG['split']['lstm_train_fraction'])
+print("\n=== 3. Unified Chronological Splits & PCA on Lag Features ===")
+n_total = len(basic_advanced_df)
+train_fraction = CONFIG['split']['train_fraction']    # 0.80
+val_fraction = CONFIG['split']['val_fraction']        # 0.10
+
+# One set of chronological boundaries shared by EVERY model, so the PCA, the
+# global scaler, the GBM and the LSTM can never drift apart. The held-out TEST
+# block [train_end:] is identical for both models and is never seen by the PCA
+# fit or the global-scaler fit below -- that is the leakage boundary that matters.
+train_end = int(n_total * train_fraction)                        # 80% -> test starts here (GBM train = [0:train_end])
+lstm_train_end = int(n_total * (train_fraction - val_fraction))  # 70% -> LSTM val starts here
+print(f"n={n_total}  LSTM-train [0:{lstm_train_end}]  LSTM-val [{lstm_train_end}:{train_end}]  "
+      f"TEST [{train_end}:{n_total}]   (GBM-train = [0:{train_end}])")
+
+# PCA on the lag block, fit STRICTLY on the unified 0-80% train slice.
 lag_scaler, lag_pca = fit_lag_pca(
-    basic_advanced_df.iloc[:pca_fit_end],
+    basic_advanced_df.iloc[:train_end],
     lag_columns=LAG_COLUMNS,
     variance_threshold=CONFIG['pca']['variance_threshold']
 )
@@ -86,21 +111,27 @@ MODEL_INPUT_COLUMNS = model_input_columns(lag_pca, base_columns=FEATURE_COLUMNS,
 print(f"Model input columns ({len(MODEL_INPUT_COLUMNS)}): {MODEL_INPUT_COLUMNS}")
 
 # ---------------------------------------------------------------------------
-# Section 16 — GBM Dual Pipeline
+# Unified global StandardScaler -- ONE scaler for BOTH models. Fit exclusively
+# on the 0-80% block, then used to transform the entire matrix (the 80-100%
+# test rows are scaled with train-only statistics, so there is no test leakage).
+# This replaces the former separate scaler_gb / scaler_lstm entirely.
 # ---------------------------------------------------------------------------
-print("\n=== 4. GBM Dual Pipeline: Chronological Split & Scaling ===")
-y_direction = basic_advanced_df_reduced[TARGET_DIRECTION_COLUMN]
-y_return = basic_advanced_df_reduced[TARGET_RETURN_COLUMN]
-X = basic_advanced_df_reduced[MODEL_INPUT_COLUMNS]
+X_all = basic_advanced_df_reduced[MODEL_INPUT_COLUMNS]
+global_scaler = StandardScaler()
+global_scaler.fit(X_all.iloc[:train_end])
+X_all_scaled = global_scaler.transform(X_all)
+print(f"Global scaler fit on [0:{train_end}] ({train_fraction:.0%}); transformed full matrix {X_all_scaled.shape}.")
 
-n_split = int(len(basic_advanced_df_reduced) * CONFIG['split']['gbm_train_fraction'])
-X_gb_train, X_gb_test = X.iloc[:n_split], X.iloc[n_split:]
-y_dir_train, y_dir_test = y_direction.iloc[:n_split], y_direction.iloc[n_split:]
-y_ret_train, y_ret_test = y_return.iloc[:n_split], y_return.iloc[n_split:]
+# ---------------------------------------------------------------------------
+# Section 16 — GBM Dual Pipeline (train [0:train_end] / test [train_end:])
+# ---------------------------------------------------------------------------
+print("\n=== 4. GBM Dual Pipeline: Chronological Split & Global Scaling ===")
+y_direction = basic_advanced_df_reduced[TARGET_DIRECTION_COLUMN].values
+y_return = basic_advanced_df_reduced[TARGET_RETURN_COLUMN].values    # already in PERCENT
 
-scaler_gb = StandardScaler()
-X_gb_train_s = scaler_gb.fit_transform(X_gb_train)
-X_gb_test_s = scaler_gb.transform(X_gb_test)
+X_gb_train_s, X_gb_test_s = X_all_scaled[:train_end], X_all_scaled[train_end:]
+y_dir_train, y_dir_test = y_direction[:train_end], y_direction[train_end:]
+y_ret_train, y_ret_test = y_return[:train_end], y_return[train_end:]
 
 print("=== 5. GBM Hyperparameter Tuning ===")
 tscv_gb = TimeSeriesSplit(n_splits=CONFIG['gbm']['cv_splits'])
@@ -116,16 +147,16 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     best_gbm = grid_search.best_estimator_
     print(f"Best params: {grid_search.best_params_}  CV ROC-AUC: {grid_search.best_score_:.4f}")
 
-    print("--- Regression head (target_return, Huber loss) ---")
+    print("--- Regression head (target_return [percent], Huber loss) ---")
     grid_search_reg = GridSearchCV(
         GradientBoostingRegressor(loss='huber', alpha=CONFIG['gbm']['huber_alpha'], random_state=RANDOM_STATE),
         param_grid=param_grid, cv=tscv_gb, scoring='neg_mean_absolute_error', n_jobs=-1
     )
     grid_search_reg.fit(X_gb_train_s, y_ret_train)
     best_gbm_reg = grid_search_reg.best_estimator_
-    print(f"Best params: {grid_search_reg.best_params_}  CV MAE: {-grid_search_reg.best_score_:.6f}")
+    print(f"Best params: {grid_search_reg.best_params_}  CV MAE: {-grid_search_reg.best_score_:.6f} (percent)")
 
-    print("\n=== 6. GBM Evaluation ===")
+    print("\n=== 6. GBM Evaluation (held-out test) ===")
     y_pred_dir = best_gbm.predict(X_gb_test_s)
     y_prob_dir = best_gbm.predict_proba(X_gb_test_s)[:, 1]
     acc_gb = accuracy_score(y_dir_test, y_pred_dir)
@@ -133,9 +164,11 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     print(f"[Direction] Accuracy={acc_gb:.4f}  ROC-AUC={auc_gb:.4f}")
 
     y_pred_ret = best_gbm_reg.predict(X_gb_test_s)
+    # Both heads are now natively in PERCENT units, so these errors are directly
+    # comparable with the LSTM's below -- no /100 normalization required anywhere.
     mse_gb = mean_squared_error(y_ret_test, y_pred_ret)
     mae_gb = mean_absolute_error(y_ret_test, y_pred_ret)
-    print(f"[Return]    MSE={mse_gb:.8f}  MAE={mae_gb:.6f}")
+    print(f"[Return]    MSE={mse_gb:.6f}  MAE={mae_gb:.6f}  (percent units)")
 
     mlflow.log_params({
         "model_family": "GradientBoosting_DualPipeline",
@@ -149,6 +182,10 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
         "cv_splits": CONFIG['gbm']['cv_splits'],
         "pca_variance_threshold": CONFIG['pca']['variance_threshold'],
         "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+        "train_fraction": train_fraction,
+        "val_fraction": val_fraction,
+        "target_unit": "percent",
+        "scaler": "global_StandardScaler",
         "macro_yield_differential_source": macro_source,
     })
     mlflow.log_metrics({
@@ -161,45 +198,43 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     mlflow.sklearn.log_model(best_gbm_reg, artifact_path="gbm_return_regressor")
     print(f"MLflow run logged: run_id={gbm_run.info.run_id}")
 
-print("\n=== 7. Persisting GBM + PCA artifacts ===")
+print("\n=== 7. Persisting GBM + PCA + global scaler artifacts ===")
 os.makedirs('models', exist_ok=True)
 joblib.dump(lag_scaler, 'models/lag_scaler.pkl')
 joblib.dump(lag_pca, 'models/lag_pca.pkl')
+joblib.dump(global_scaler, 'models/global_scaler.pkl')
 joblib.dump(best_gbm, 'models/best_gbm_eurusd.pkl')
 joblib.dump(best_gbm_reg, 'models/best_gbm_regressor_eurusd.pkl')
-joblib.dump(scaler_gb, 'models/scaler_gb_eurusd.pkl')
-print("Saved: lag_scaler.pkl, lag_pca.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl, scaler_gb_eurusd.pkl")
+print("Saved: lag_scaler.pkl, lag_pca.pkl, global_scaler.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl")
+
+# The former per-model scalers are now superseded by the single global_scaler.
+# Remove any stale copies so inference can never silently load an out-of-date,
+# wrong-unit scaler alongside the freshly retrained artifacts.
+for _stale in ('models/scaler_gb_eurusd.pkl', 'models/scaler_lstm_multitask.pkl'):
+    if os.path.exists(_stale):
+        os.remove(_stale)
+        print(f"Removed superseded scaler: {_stale}")
 
 # ---------------------------------------------------------------------------
 # Section 15 — Multi-Task LSTM (Functional API, shared trunk, dual heads)
 # ---------------------------------------------------------------------------
 print("\n=== 8. Multi-Task LSTM: Sliding-Window Data Preparation ===")
-df_dl = basic_advanced_df_reduced.dropna().copy()
-data_x = df_dl[MODEL_INPUT_COLUMNS].values
-# Fractional log-returns have std ~0.006, so their raw MSE (~3e-5) is five
-# orders of magnitude below direction's binary-crossentropy (~0.69). With
-# config.json's loss_weights left at their previous ratio, the shared LSTM
-# trunk received almost no gradient signal for the return head, which never
-# converged past initialization (observed: live predicted returns of -11%,
-# and a test MAE of 0.037 vs. the GBM regressor's 0.003 on the same target).
-# Training on the target in percentage units instead brings its MSE to the
-# same order of magnitude as the direction loss, so loss_weights in
-# config.json can stay balanced without an arbitrarily large constant.
-data_y_return = df_dl[TARGET_RETURN_COLUMN].values * 100
-data_y_direction = df_dl[TARGET_DIRECTION_COLUMN].values
+# target_return is ALREADY in percent (src/features.py), which keeps the return
+# head's MSE on the same order of magnitude as the direction head's BCE so the
+# shared trunk gets real gradient for both tasks at equal loss_weights. There is
+# therefore no *100 rescaling here anymore.
+data_y_return = basic_advanced_df_reduced[TARGET_RETURN_COLUMN].values
+data_y_direction = basic_advanced_df_reduced[TARGET_DIRECTION_COLUMN].values
 
-n_total = len(df_dl)
-train_end = int(n_total * CONFIG['split']['lstm_train_fraction'])
-val_end = int(n_total * CONFIG['split']['lstm_val_fraction'])
+# Reuse the SAME global-scaler-transformed matrix -- the LSTM no longer owns a
+# scaler. Slice it into the unified 0-70 / 70-80 / 80-100 chronological blocks.
+X_train_s = X_all_scaled[:lstm_train_end]
+X_val_s = X_all_scaled[lstm_train_end:train_end]
+X_test_s = X_all_scaled[train_end:]
 
-X_train_raw, y_ret_train_raw, y_dir_train_raw = data_x[:train_end], data_y_return[:train_end], data_y_direction[:train_end]
-X_val_raw, y_ret_val_raw, y_dir_val_raw = data_x[train_end:val_end], data_y_return[train_end:val_end], data_y_direction[train_end:val_end]
-X_test_raw, y_ret_test_raw, y_dir_test_raw = data_x[val_end:], data_y_return[val_end:], data_y_direction[val_end:]
-
-scaler_lstm = StandardScaler()
-X_train_s = scaler_lstm.fit_transform(X_train_raw)
-X_val_s = scaler_lstm.transform(X_val_raw)
-X_test_s = scaler_lstm.transform(X_test_raw)
+y_ret_train_raw, y_dir_train_raw = data_y_return[:lstm_train_end], data_y_direction[:lstm_train_end]
+y_ret_val_raw, y_dir_val_raw = data_y_return[lstm_train_end:train_end], data_y_direction[lstm_train_end:train_end]
+y_ret_test_raw, y_dir_test_raw = data_y_return[train_end:], data_y_direction[train_end:]
 
 
 def create_mt_sequences(X, y_ret, y_dir, time_steps):
@@ -243,7 +278,7 @@ mt_lstm_model.compile(
 mt_lstm_model.summary()
 
 with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
-    print("\n=== 10. Training ===")
+    print("\n=== 10. Training (early-stopping on the 70-80% validation block) ===")
     early_stop = EarlyStopping(monitor='val_loss', patience=CONFIG['lstm']['patience'], restore_best_weights=True, verbose=1)
     history = mt_lstm_model.fit(
         X_train_seq,
@@ -253,20 +288,19 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
     )
     print(f"Stopped after {len(history.history['loss'])} epochs.")
 
-    print("\n=== 11. Evaluation ===")
+    print("\n=== 11. Evaluation (held-out test) ===")
     y_pred_ret_lstm, y_prob_dir_lstm = mt_lstm_model.predict(X_test_seq, verbose=0)
     y_pred_ret_lstm = y_pred_ret_lstm.ravel()
     y_prob_dir_lstm = y_prob_dir_lstm.ravel()
     y_pred_dir_lstm = (y_prob_dir_lstm >= 0.5).astype(int)
 
-    # y_ret_test_seq/y_pred_ret_lstm are in percent units (see Section 8) --
-    # divide by 100 to report MSE/MAE in the same fractional units as the
-    # GBM regressor above, so the two heads' errors are directly comparable.
-    mse_lstm = mean_squared_error(y_ret_test_seq / 100, y_pred_ret_lstm / 100)
-    mae_lstm = mean_absolute_error(y_ret_test_seq / 100, y_pred_ret_lstm / 100)
+    # Both target and prediction are in percent units (same as the GBM regressor
+    # above), so MSE/MAE are reported directly and are head-to-head comparable.
+    mse_lstm = mean_squared_error(y_ret_test_seq, y_pred_ret_lstm)
+    mae_lstm = mean_absolute_error(y_ret_test_seq, y_pred_ret_lstm)
     acc_lstm = accuracy_score(y_dir_test_seq, y_pred_dir_lstm)
     auc_lstm = roc_auc_score(y_dir_test_seq, y_prob_dir_lstm)
-    print(f"[Return]    MSE={mse_lstm:.8f}  MAE={mae_lstm:.6f}  (fractional units, comparable to GBM)")
+    print(f"[Return]    MSE={mse_lstm:.6f}  MAE={mae_lstm:.6f}  (percent units, comparable to GBM)")
     print(f"[Direction] Accuracy={acc_lstm:.4f}  ROC-AUC={auc_lstm:.4f}")
 
     mlflow.log_params({
@@ -282,6 +316,10 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
         "loss_weight_return": CONFIG['lstm']['loss_weights']['return_output'],
         "loss_weight_direction": CONFIG['lstm']['loss_weights']['direction_output'],
         "n_model_input_features": len(MODEL_INPUT_COLUMNS),
+        "train_fraction": train_fraction,
+        "val_fraction": val_fraction,
+        "target_unit": "percent",
+        "scaler": "global_StandardScaler",
         "macro_yield_differential_source": macro_source,
     })
     mlflow.log_metrics({
@@ -295,8 +333,7 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
 
 print("\n=== 12. Persisting LSTM artifacts ===")
 mt_lstm_model.save('models/lstm_multitask_eurusd.keras')
-joblib.dump(scaler_lstm, 'models/scaler_lstm_multitask.pkl')
 joblib.dump(TIME_STEPS, 'models/lstm_time_steps.pkl')
-print("Saved: lstm_multitask_eurusd.keras, scaler_lstm_multitask.pkl, lstm_time_steps.pkl")
+print("Saved: lstm_multitask_eurusd.keras, lstm_time_steps.pkl")
 
 print("\n=== DONE ===")

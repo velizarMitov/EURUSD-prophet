@@ -18,15 +18,21 @@ class PredictionService:
     api.py and app.py so the two frontends can never drift apart.
     """
 
+    # Minimum averaged confidence for a unanimous call to count as a genuine
+    # agreement. The direction heads sit near chance (ROC-AUC ~0.50), so a
+    # coin-flip "agreement" must not be surfaced as a confident ensemble call.
+    CONFIDENCE_THRESHOLD = 0.52
+
     def __init__(self, base_dir: str, config: dict):
         """
-        Load every serialized artifact (PCA, both GBM heads + their scaler,
-        the Multi-Task LSTM + its scaler/time_steps, and the bundled
+        Load every serialized artifact (PCA, the single global feature scaler,
+        both GBM heads, the Multi-Task LSTM + its time_steps, and the bundled
         historical OHLCV CSV) exactly once at process start-up. Each load is
         independently try/excepted into self.load_errors rather than failing
         fast, so e.g. a missing LSTM file still leaves the GBM pipeline (or
         vice versa) servable -- see self.gbm_ready/self.lstm_ready/
-        self.models_ready below for how callers should gate on this.
+        self.models_ready below for how callers should gate on this. Both model
+        families share ONE global_scaler (no per-model scalers anymore).
         """
         self.config = config
         self.base_dir = base_dir
@@ -34,8 +40,9 @@ class PredictionService:
         self.load_errors = []
 
         self.lag_scaler = self.lag_pca = None
-        self.gbm_classifier = self.gbm_regressor = self.gbm_scaler = None
-        self.lstm_model = self.lstm_scaler = self.lstm_time_steps = None
+        self.global_scaler = None
+        self.gbm_classifier = self.gbm_regressor = None
+        self.lstm_model = self.lstm_time_steps = None
         self.history_df = None
 
         try:
@@ -44,10 +51,17 @@ class PredictionService:
         except Exception as e:
             self.load_errors.append(f"PCA lag reduction: {e}")
 
+        # Single global StandardScaler shared by BOTH model families (replaces
+        # the former separate scaler_gb / scaler_lstm). Fitted once in
+        # _train_pipeline.py on the unified 0-80% train block.
+        try:
+            self.global_scaler = joblib.load(os.path.join(models_dir, 'global_scaler.pkl'))
+        except Exception as e:
+            self.load_errors.append(f"Global feature scaler: {e}")
+
         try:
             self.gbm_classifier = joblib.load(os.path.join(models_dir, 'best_gbm_eurusd.pkl'))
             self.gbm_regressor = joblib.load(os.path.join(models_dir, 'best_gbm_regressor_eurusd.pkl'))
-            self.gbm_scaler = joblib.load(os.path.join(models_dir, 'scaler_gb_eurusd.pkl'))
         except Exception as e:
             self.load_errors.append(f"GBM dual pipeline: {e}")
 
@@ -55,7 +69,6 @@ class PredictionService:
             os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
             from tensorflow.keras.models import load_model
             self.lstm_model = load_model(os.path.join(models_dir, 'lstm_multitask_eurusd.keras'))
-            self.lstm_scaler = joblib.load(os.path.join(models_dir, 'scaler_lstm_multitask.pkl'))
             self.lstm_time_steps = joblib.load(os.path.join(models_dir, 'lstm_time_steps.pkl'))
         except Exception as e:
             self.load_errors.append(f"Multi-Task LSTM: {e}")
@@ -66,8 +79,9 @@ class PredictionService:
             self.load_errors.append(f"Historical feature context: {e}")
 
         self.pca_ready = self.lag_scaler is not None and self.lag_pca is not None
-        self.gbm_ready = self.pca_ready and None not in (self.gbm_classifier, self.gbm_regressor, self.gbm_scaler)
-        self.lstm_ready = self.pca_ready and None not in (self.lstm_model, self.lstm_scaler, self.lstm_time_steps)
+        self.scaler_ready = self.global_scaler is not None
+        self.gbm_ready = self.pca_ready and self.scaler_ready and None not in (self.gbm_classifier, self.gbm_regressor)
+        self.lstm_ready = self.pca_ready and self.scaler_ready and None not in (self.lstm_model, self.lstm_time_steps)
         self.models_ready = (self.gbm_ready or self.lstm_ready) and self.history_df is not None
 
     def _resolve_latest_window(self, time_steps: int):
@@ -85,9 +99,23 @@ class PredictionService:
         yf_symbol = self.config['data'].get('live_symbol', 'EURUSD=X')
 
         ohlcv_df, data_source = fetch_live_market_data(mt5_symbol, yf_symbol, bars=bars_needed)
-        if ohlcv_df is None or len(ohlcv_df) < 200 + time_steps:
+
+        # Graceful live-edge handling. A live fetch can return fewer bars than
+        # the SMA_200 + lag/LSTM warm-up needs (thin session, holiday week, a
+        # freshly listed symbol). Rather than hard-failing, back-fill the
+        # missing PRECEDING rows from the bundled history so the rolling-window
+        # warm-up is always satisfied, while keeping whatever fresh live bars we
+        # did get. Duplicate dates are resolved in favour of the live bar.
+        if ohlcv_df is None or len(ohlcv_df) == 0:
             ohlcv_df = self.history_df.tail(bars_needed)
             data_source = "history_fallback"
+        elif len(ohlcv_df) < bars_needed:
+            missing = bars_needed - len(ohlcv_df)
+            preceding = self.history_df[self.history_df.index < ohlcv_df.index.min()].tail(missing)
+            combined = pd.concat([preceding, ohlcv_df])
+            combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+            ohlcv_df = combined
+            data_source = f"{data_source}+history_backfill"
 
         macro_cfg = self.config.get('macro', {})
         macro_df, macro_source = fetch_yield_differential(
@@ -132,17 +160,19 @@ class PredictionService:
         window -- tree ensembles consume one observation at a time, unlike
         the LSTM). `model_input_row` must already be PCA-reduced and in
         FEATURE_COLUMNS/model_input_columns() order; it is scaled here with
-        the same StandardScaler fitted at training time before either head
-        sees it.
+        the single global_scaler (the same instance the LSTM uses) before
+        either head sees it.
         """
-        scaled = self.gbm_scaler.transform(model_input_row.to_frame().T)
+        scaled = self.global_scaler.transform(model_input_row.to_frame().T)
         prob_up = float(self.gbm_classifier.predict_proba(scaled)[0, 1])
         pred_class = int(self.gbm_classifier.predict(scaled)[0])
+        # The regressor is now trained on target_return in PERCENT units (see
+        # src/features.py), so its output is already a percentage -- no *100.
         predicted_return = float(self.gbm_regressor.predict(scaled)[0])
         return {
             "direction": "UP" if pred_class == 1 else "DOWN",
             "confidence": prob_up if pred_class == 1 else (1 - prob_up),
-            "predicted_return_pct": predicted_return * 100,
+            "predicted_return_pct": predicted_return,
         }
 
     def _predict_lstm(self, model_input_window):
@@ -150,17 +180,18 @@ class PredictionService:
         Run the Multi-Task LSTM on a `(time_steps, n_features)` sliding
         window (the model's two Functional-API heads: `return_output` for
         the continuous % return, `direction_output` for the UP/DOWN
-        probability). Scaled with the LSTM's own StandardScaler -- distinct
-        from the GBM scaler, since the two architectures were fit on
-        differently-split train slices (see config.json `split` section).
+        probability). Scaled with the SAME global_scaler the GBM uses -- both
+        families now share one scaler fit on the unified 0-80% train block
+        (see config.json `split` and _train_pipeline.py).
         """
-        scaled = self.lstm_scaler.transform(model_input_window.values)
+        # Pass the named DataFrame (columns already in model_input_columns()
+        # order) so the scaler validates feature names instead of warning.
+        scaled = self.global_scaler.transform(model_input_window)
         window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
         predicted_return, prob_up = self.lstm_model.predict(window_3d, verbose=0)
-        # The model is trained on the return target in percentage units
-        # (see _train_pipeline.py Section 8), unlike the GBM regressor which
-        # is trained on the raw fraction -- so, unlike _predict_gbm, this
-        # output is NOT multiplied by 100 again.
+        # Both heads are trained on target_return in PERCENT units, so this
+        # output is already a percentage and is symmetric with _predict_gbm
+        # (neither multiplies by 100).
         predicted_return_pct = float(predicted_return.ravel()[0])
         prob_up = float(prob_up.ravel()[0])
         return {
@@ -171,10 +202,13 @@ class PredictionService:
 
     @staticmethod
     def compute_consensus(predictions: dict) -> dict:
-        """Simple committee logic: if every model agrees on direction, average
-        their confidence/return; otherwise defer to whichever model is more
-        confident and flag the disagreement rather than silently averaging
-        across opposite-signed predictions."""
+        """Committee logic with a low-confidence guard. If every model agrees on
+        direction, average their confidence/return -- UNLESS that averaged
+        confidence is strictly below CONFIDENCE_THRESHOLD, in which case the
+        unanimous-but-coin-flip call is downgraded to "MIXED / LOW CONFIDENCE"
+        with agreement=False (a near-chance head must not dictate the ensemble).
+        On genuine disagreement, defer to whichever model is more confident
+        rather than averaging across opposite-signed predictions."""
         directions = {name: p['direction'] for name, p in predictions.items()}
         agreement = len(set(directions.values())) == 1
 
@@ -182,6 +216,11 @@ class PredictionService:
             direction = next(iter(directions.values()))
             confidence = sum(p['confidence'] for p in predictions.values()) / len(predictions)
             predicted_return_pct = sum(p['predicted_return_pct'] for p in predictions.values()) / len(predictions)
+            if confidence < PredictionService.CONFIDENCE_THRESHOLD:
+                # Unanimous direction, but neither head is meaningfully above a
+                # coin flip -- do not advertise this as a confident agreement.
+                agreement = False
+                direction = "MIXED / LOW CONFIDENCE"
         else:
             _, best = max(predictions.items(), key=lambda kv: kv[1]['confidence'])
             direction = best['direction']

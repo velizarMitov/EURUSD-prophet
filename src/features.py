@@ -111,8 +111,16 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     data = compute_features(df)
 
-    # Multi-Task Targets: continuous next-period return + its derived sign
-    data[TARGET_RETURN_COLUMN] = (data['close'].shift(-1) - data['close']) / data['close']
+    # Multi-Task Targets: continuous next-period return (in PERCENT units) + its
+    # derived sign. Percent — not the raw fraction — is the single canonical unit
+    # for BOTH heads. Fractional returns (std ~0.006) give an MSE roughly five
+    # orders of magnitude below the direction head's binary-crossentropy, which
+    # starved the shared LSTM trunk of return-head gradient. Training natively in
+    # percent keeps the two losses on the same scale AND removes the old
+    # asymmetry where the GBM regressor was trained on fractions and rescaled by
+    # *100 only at inference time. The positive scaling does not change the sign,
+    # so target_direction is identical to the fractional formulation.
+    data[TARGET_RETURN_COLUMN] = ((data['close'].shift(-1) - data['close']) / data['close']) * 100
     data[TARGET_DIRECTION_COLUMN] = (data[TARGET_RETURN_COLUMN] > 0).astype(int)
 
     # Clean missing values systematically
