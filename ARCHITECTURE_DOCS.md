@@ -40,14 +40,16 @@ exactly once**, each in an independent `try/except` that appends to
 `self.load_errors` rather than failing fast:
 
 1. **PCA pair** — `lag_scaler.pkl`, `lag_pca.pkl`
-2. **GBM trio** — `best_gbm_eurusd.pkl` (classifier), `best_gbm_regressor_eurusd.pkl`, `scaler_gb_eurusd.pkl`
-3. **LSTM trio** — `lstm_multitask_eurusd.keras`, `scaler_lstm_multitask.pkl`, `lstm_time_steps.pkl`
-4. **Historical context** — `results/eurusd_features.csv` via `load_history()`
+2. **Global scaler** — `global_scaler.pkl` (a single StandardScaler shared by both model families)
+3. **GBM pair** — `best_gbm_eurusd.pkl` (classifier), `best_gbm_regressor_eurusd.pkl`
+4. **LSTM pair** — `lstm_multitask_eurusd.keras`, `lstm_time_steps.pkl`
+5. **Historical context** — `results/eurusd_features.csv` via `load_history()`
 
-Three readiness gates are then computed (`src/inference.py:68-71`):
+Readiness gates are then computed:
 - `pca_ready` = both PCA artifacts present
-- `gbm_ready` = `pca_ready` **and** all three GBM artifacts present
-- `lstm_ready` = `pca_ready` **and** all three LSTM artifacts present
+- `scaler_ready` = the single `global_scaler.pkl` present
+- `gbm_ready` = `pca_ready` **and** `scaler_ready` **and** both GBM models present
+- `lstm_ready` = `pca_ready` **and** `scaler_ready` **and** LSTM model + time_steps present
 - `models_ready` = `(gbm_ready or lstm_ready)` **and** history loaded
 
 > **Design consequence:** the service degrades gracefully. A missing LSTM file
@@ -167,19 +169,26 @@ form a target) **survives**. `add_advanced_features` (`src/features.py:108-120`)
 is the *training-only* variant that additionally builds `target_return` /
 `target_direction` and drops NaNs.
 
-### 2.5 Where the deserialized `StandardScaler` + `PCA` are applied
+### 2.5 Where the deserialized `StandardScaler` + `PCA` are applied (unified 80% split)
+
+Both preprocessing components are fit on the **identical unified train block —
+the first 80%** of history (`train_fraction = 0.80`), and the held-out
+`[80%:100%]` test block is seen by neither fit. This removes the prior
+"non-obvious coupling" where the PCA was fit on 70% while the GBM split at 80%.
 
 | Stage | Object | Fitted in training on | Applied at inference in |
 |---|---|---|---|
-| Lag dim-reduction | `lag_scaler` + `lag_pca` | first **70%** (`lstm_train_fraction`) of history | `apply_lag_pca()` (`src/inference.py:111`) |
-| GBM input scaling | `scaler_gb_eurusd` (StandardScaler) | first **80%** GBM train slice | `_predict_gbm` (`src/inference.py:138`) |
-| LSTM input scaling | `scaler_lstm_multitask` (StandardScaler) | first **70%** LSTM train slice | `_predict_lstm` (`src/inference.py:157`) |
+| Lag dim-reduction | `lag_scaler` + `lag_pca` | unified **0–80%** train block | `apply_lag_pca()` |
+| Global feature scaling | `global_scaler` (one StandardScaler) | unified **0–80%** train block | `_predict_gbm` **and** `_predict_lstm` |
 
 `apply_lag_pca` (`src/features.py:181-194`) drops the 6 raw `LAG_COLUMNS` and
 appends `lag_pca_1..k`. `model_input_columns` (`src/features.py:197-200`)
 re-derives the exact post-PCA column order so training and inference never
-diverge. **GBM and LSTM use separate scalers** because they were fit on
-different train slices (80% vs 70%).
+diverge. **A single `global_scaler` now serves BOTH model families** — the
+former separate `scaler_gb` / `scaler_lstm` are gone. The LSTM's early-stopping
+validation slice `[70%:80%]` sits *inside* the scaler/PCA fit window, but the
+final test block `[80%:100%]` does not, so reported test metrics stay
+leakage-free.
 
 ---
 
@@ -188,14 +197,14 @@ different train slices (80% vs 70%).
 ### 3.1 GBM dual pipeline (tree ensemble)
 
 `_predict_gbm` (`src/inference.py:129-146`) consumes **one flat PCA-reduced row**
-(`window.iloc[-1]`), scales it with `gbm_scaler`, and runs two heads:
+(`window.iloc[-1]`), scales it with the single `global_scaler`, and runs two heads:
 
 - **Classifier** `best_gbm_eurusd.pkl` — `GradientBoostingClassifier`, tuned for
   `roc_auc`. Emits `predict_proba` → `direction` (UP/DOWN) + `confidence`.
 - **Regressor** `best_gbm_regressor_eurusd.pkl` — `GradientBoostingRegressor`,
-  `loss='huber'`, `alpha=0.9`, tuned for MAE. Emits `predicted_return`.
-  **Multiplied by 100** to report percent (`src/inference.py:145`) because the
-  GBM regressor is trained on the **raw fraction**.
+  `loss='huber'`, `alpha=0.9`, tuned for MAE. Emits `predicted_return`
+  **natively in percent** — the regressor is now trained on the percent target
+  produced by `src/features.py`, so there is **no `*100` rescaling** at inference.
 
 ### 3.2 Multi-Task LSTM (sequence model)
 
@@ -211,31 +220,38 @@ Input(time_steps=20, n_features)
 ```
 
 `_predict_lstm` (`src/inference.py:148-170`) consumes a **`(20, n_features)`
-sliding window**, scales with `lstm_scaler`, reshapes to `(1, 20, n_features)`,
-and returns both heads. The return head output is **NOT** multiplied by 100 —
-the LSTM is trained on the target in **percent units** already (`* 100` at
-`_train_pipeline.py:188`), unlike the GBM regressor. This asymmetry is
-intentional and load-bearing; see §4.5.
+sliding window**, scales with the **same `global_scaler`** the GBM uses,
+reshapes to `(1, 20, n_features)`, and returns both heads. The return head
+outputs **percent natively**, exactly like the GBM regressor — both heads are
+trained on the percent target from `src/features.py`, so neither path applies a
+`*100`. The former GBM-fraction / LSTM-percent asymmetry is **resolved**; see
+§4.5.1.
 
 > **Why percent units?** Fractional log-returns (std ≈ 0.006) give MSE ≈ 3e-5,
 > five orders of magnitude below the direction head's BCE (≈ 0.69). At the old
 > loss weights the shared trunk got almost no gradient for the return head
-> (observed: −11% predicted returns with the wrong sign). Training the target in
-> percent rebalances the two losses so `loss_weights` can stay `1.0 / 1.0`.
+> (observed: −11% predicted returns with the wrong sign). Producing the target
+> natively in percent (in `src/features.py`, the single source of truth)
+> rebalances the two losses so `loss_weights` can stay `1.0 / 1.0`.
 
-### 3.3 Committee Consensus
+### 3.3 Committee Consensus (with low-confidence guard)
 
-`compute_consensus` (`src/inference.py:172-196`), static method:
+`compute_consensus` (`src/inference.py`), static method, gated by the class
+constant `CONFIDENCE_THRESHOLD = 0.52`:
 
 - **Agreement** (both heads same direction): average the two confidences and
-  the two predicted returns.
+  the two predicted returns — **unless** that averaged confidence is strictly
+  below `CONFIDENCE_THRESHOLD`. In that case the unanimous-but-coin-flip call is
+  **downgraded**: `agreement` is overridden to `False` and the consensus
+  `direction` becomes the literal flag **`"MIXED / LOW CONFIDENCE"`**. Because
+  the direction heads sit near chance (ROC-AUC ≈ 0.50), this stops a coin-flip
+  agreement from being advertised as a confident ensemble call.
 - **Disagreement:** defer to the **higher-confidence** model and set
   `agreement=False` so the UI can flag it — rather than silently averaging
   across opposite-signed predictions.
 
-The response dict (`src/inference.py:214-233`) carries `as_of_date`,
-`forecasting_date`, `data_source`, `bar_used` (incl. `macro_source`), the
-per-model blocks, and `consensus`.
+The response dict carries `as_of_date`, `forecasting_date`, `data_source`,
+`bar_used` (incl. `macro_source`), the per-model blocks, and `consensus`.
 
 ---
 
@@ -249,15 +265,16 @@ is tuned:
   (`_train_pipeline.py:106-126`), classifier scored on `roc_auc`, regressor on
   `neg_mean_absolute_error`.
 - All train/val/test splits are **chronological fractions** from `config.json`
-  (`gbm_train_fraction=0.8`, `lstm_train_fraction=0.70`, `lstm_val_fraction=0.85`).
-  No shuffling.
+  (`train_fraction=0.80`, `val_fraction=0.10`): the GBM trains on `[0:80%]`, the
+  LSTM on `[0:70%]` with `[70%:80%]` reserved for early-stopping, and **both**
+  test on the identical held-out `[80%:100%]`. No shuffling.
 
 ### 4.2 Validation metrics & where they live
 
 | Metric | Model | Logged to |
 |---|---|---|
 | `direction_accuracy`, `direction_roc_auc` | GBM & LSTM | MLflow (`_train_pipeline.py:154,287`) |
-| `return_mse`, `return_mae` | GBM & LSTM | MLflow (units normalized to fraction for comparability) |
+| `return_mse`, `return_mae` | GBM & LSTM | MLflow (both heads in **percent** units — directly comparable) |
 | Learning curves, confusion matrices, residuals, ACF/PACF | notebook | `results/*.png` |
 | Multi-model CV table | notebook | `results/comparison_table.csv` |
 | FRED ablation | notebook §2C | `results/2C_fred_ablation.csv` |
@@ -269,10 +286,13 @@ is tuned:
   accuracy is **0.499** (below chance). This is consistent with the efficient-
   market difficulty of daily FX direction and should be communicated as such,
   not oversold.
-- The committed LSTM run (notebook §19b output) shows **Direction
-  Accuracy = 0.4911, ROC-AUC = 0.4928** on test — **at/below chance**. The
-  return head is now numerically sane (MAE ≈ 0.003, comparable to GBM) after the
-  percent-units fix, but the **direction head does not beat a coin flip**.
+- The retrained production heads (unified 80% split, percent target) score on
+  the held-out test block: **GBM** Direction Acc = 0.5011, ROC-AUC = 0.5024,
+  Return MAE = 0.296%; **LSTM** Direction Acc = 0.5018, ROC-AUC = 0.4997,
+  Return MAE = 0.304%. The two return heads are now on the **same percent scale**
+  (MAE ≈ 0.30% each) and directly comparable, but the **direction heads still do
+  not beat a coin flip** — the low-confidence consensus guard (§3.3) exists
+  precisely for this.
 
 ### 4.3 FRED feature — ablation shows net-negative effect
 
@@ -306,18 +326,26 @@ academic completeness; its production value is **not yet demonstrated**.
 
 | Risk | Where | Mitigation in place | Residual exposure |
 |---|---|---|---|
-| **SMA_200 warm-up NaN at live edge** | `compute_features` | `dropna(subset=FEATURE_COLUMNS)` keeps latest bar but drops warm-up rows; `_resolve_latest_window` raises if `< time_steps` usable rows (`src/inference.py:104-108`) | Needs ≥ ~220 clean bars; a thin live fetch hard-fails the request |
 | **Stale macro at live edge** | `merge_macro_features` ffill | weekend/holiday gaps inherit last differential | If the live price index is newer than the newest FRED obs, the latest bars carry a *stale* differential (ffill cannot interpolate the future) |
-| **GBM vs LSTM unit asymmetry** | `_predict_gbm` ×100 vs `_predict_lstm` ×1 | comments + matched training units | Any future refactor that "normalizes" one path without the other silently corrupts returns |
-| **LSTM direction at chance** | model quality | — | Consensus can be dragged toward a coin-flip head when it is the more "confident" one |
-| **Dual scalers / dual train fractions** | 70% vs 80% | intentional (separate scalers) | PCA is fit on the 70% slice but reused for the 80%-split GBM; this is a strict subset so **no leakage**, but it is a non-obvious coupling |
+| **LSTM direction at chance** | model quality | low-confidence consensus guard (§3.3) downgrades a coin-flip agreement to `MIXED / LOW CONFIDENCE` | A near-chance head still contributes when averaged confidence ≥ 0.52 |
 | **History CSV legacy schema** | `results/eurusd_features.csv` | `load_history` selects only OHLCV cols (`src/features.py:147-148`) | The CSV's precomputed feature columns are an *older* schema and are ignored — only raw OHLCV is consumed and features are recomputed fresh |
+
+### 4.5.1 Resolved Architectural Risks
+
+These risks, documented in earlier revisions, have been **eliminated** by the
+unified-pipeline refactor:
+
+| Former risk | Resolution | Where |
+|---|---|---|
+| **SMA_200 warm-up hard-fail** — a thin live fetch raised `RuntimeError` | `_resolve_latest_window` now **back-fills** the missing preceding rows from the bundled history (concat + de-dup by index) and proceeds; the data source is tagged `…+history_backfill` | `src/inference.py` `_resolve_latest_window` |
+| **GBM vs LSTM unit asymmetry** — GBM trained on fractions (×100 at inference), LSTM on percent | `target_return` is produced **natively in percent** by `src/features.py`; **both** heads train on and output percent — no `*100` anywhere | `src/features.py`, `src/inference.py` |
+| **Dual scalers / dual train fractions** — separate `scaler_gb` (80%) and `scaler_lstm` (70%); PCA fit on 70% but GBM split at 80% | **One** `global_scaler` **and** the PCA are both fit on the **unified 0–80%** block; serialized as `global_scaler.pkl` | `_train_pipeline.py`, `config.json` |
 
 ### 4.6 Test inventory
 
 | File | Category | Coverage |
 |---|---|---|
-| `tests/test_smoke.py` | Smoke | All 8 model artifacts + `eurusd_features.csv` + `config.json` + `.env.example` exist |
+| `tests/test_smoke.py` | Smoke | All 7 production artifacts (incl. the single `global_scaler.pkl`) + `eurusd_features.csv` + `config.json` + `.env.example` exist |
 | `tests/test_unit.py` | Unit (18 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead**, FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases |
 | `tests/test_integration.py` | Integration | `POST /api/predict` contract (schema, bounds `0≤conf≤1`, direction ∈ {UP,DOWN}, consensus presence), static UI route |
 
@@ -331,14 +359,13 @@ academic completeness; its production value is **not yet demonstrated**.
 
 | File | Type | Produced by |
 |---|---|---|
-| `lag_scaler.pkl` | joblib / StandardScaler | `_train_pipeline.py:166` |
-| `lag_pca.pkl` | joblib / PCA | `_train_pipeline.py:167` |
-| `best_gbm_eurusd.pkl` | joblib / GBClassifier | `_train_pipeline.py:168` |
-| `best_gbm_regressor_eurusd.pkl` | joblib / GBRegressor | `_train_pipeline.py:169` |
-| `scaler_gb_eurusd.pkl` | joblib / StandardScaler | `_train_pipeline.py:170` |
-| `lstm_multitask_eurusd.keras` | Keras native format | `_train_pipeline.py:297` |
-| `scaler_lstm_multitask.pkl` | joblib / StandardScaler | `_train_pipeline.py:298` |
-| `lstm_time_steps.pkl` | joblib / int (20) | `_train_pipeline.py:299` |
+| `lag_scaler.pkl` | joblib / StandardScaler (lag block, pre-PCA) | `_train_pipeline.py` |
+| `lag_pca.pkl` | joblib / PCA | `_train_pipeline.py` |
+| `global_scaler.pkl` | joblib / StandardScaler (**single, shared by both models**) | `_train_pipeline.py` |
+| `best_gbm_eurusd.pkl` | joblib / GBClassifier | `_train_pipeline.py` |
+| `best_gbm_regressor_eurusd.pkl` | joblib / GBRegressor | `_train_pipeline.py` |
+| `lstm_multitask_eurusd.keras` | Keras native format | `_train_pipeline.py` |
+| `lstm_time_steps.pkl` | joblib / int (20) | `_train_pipeline.py` |
 
 **Exploratory (notebook baselines, not loaded in production):**
 `exploratory_gbm_baseline.pkl`, `exploratory_gbm_scaler.pkl`,
@@ -373,12 +400,12 @@ cache).
 {
   "as_of_date": "YYYY-MM-DD",
   "forecasting_date": "YYYY-MM-DD",      // as_of + 1 day (t+1)
-  "data_source": "MT5|yfinance|history_fallback",
+  "data_source": "MT5|yfinance|history_fallback|<src>+history_backfill",
   "bar_used": { "date","open","high","low","close","tick_volume",
                 "yield_differential","macro_source" },
-  "gbm":  { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },
-  "lstm": { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },
-  "consensus": { "direction","agreement":bool,"confidence","predicted_return_pct" }
+  "gbm":  { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+  "lstm": { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+  "consensus": { "direction":"UP|DOWN|MIXED / LOW CONFIDENCE","agreement":bool,"confidence","predicted_return_pct" }
 }
 ```
 
@@ -403,10 +430,9 @@ with live yfinance/FRED still reachable at runtime.
 
 | Symptom | Most likely cause | File |
 |---|---|---|
-| `models_ready == False` at startup | a `models/` artifact missing/corrupt | `src/inference.py:41-71` |
-| `RuntimeError: Insufficient bars after SMA_200/lag warm-up` | live fetch too thin (< ~220 clean rows) | `src/inference.py:104-108` |
+| `models_ready == False` at startup | a `models/` artifact missing/corrupt (incl. `global_scaler.pkl`) | `src/inference.py` `__init__` |
+| Data source tagged `…+history_backfill` | live fetch was thin; preceding rows were back-filled from history to satisfy the SMA_200/lag warm-up — **no longer a hard-fail** (replaces the former `RuntimeError`) | `src/inference.py` `_resolve_latest_window` |
 | `yield_differential` looks frozen on newest bars | live price index newer than FRED cache; ffill can't see the future | `src/features.py:140` |
-| Predicted returns wildly off for one model only | unit asymmetry broken (GBM ×100 vs LSTM ×1) | `src/inference.py:145,164` |
+| Consensus shows `MIXED / LOW CONFIDENCE` | both heads agree but averaged confidence < 0.52 (low-confidence guard) | `src/inference.py` `compute_consensus` |
 | Notebook §20 "tests failed" | (fixed) subprocess `cwd` not set to repo root | notebook cells 20a/20b |
 | `yield_differential.csv` shrank dramatically | (fixed) cache overwrite instead of merge | `src/macro_data.py:80-101` |
-| Consensus follows a bad call | LSTM direction head ≈ chance, occasionally "more confident" | `src/inference.py:185-189` |
