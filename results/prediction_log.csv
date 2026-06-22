@@ -1,0 +1,2 @@
+as_of_date,forecasting_date,as_of_close,pred_direction,pred_return_pct,pred_confidence,gbm_direction,lstm_direction,logged_at
+2026-06-22,2026-06-23,1.14544,UP,0.029396602883934975,0.5342113375663757,DOWN,UP,2026-06-22T04:47:37.462158+00:00

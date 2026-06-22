@@ -344,6 +344,51 @@ def test_feature_engineering_edge_cases():
     }, index=dates)
     
     res = add_advanced_features(df)
-    # The replaced NaN drops mathematically should mean data parses out without hard crashing 
+    # The replaced NaN drops mathematically should mean data parses out without hard crashing
     # the server internally via structural exception throwing.
     assert len(res) == 0 or not res.isnull().any().any(), "Edge case math poisoned matrix evaluation."
+
+
+def _fake_predict_result(as_of, forecast, close, direction, ret):
+    """Minimal PredictionService.predict()-shaped dict for tracking tests."""
+    return {
+        'as_of_date': as_of, 'forecasting_date': forecast,
+        'bar_used': {'close': close},
+        'gbm': {'direction': direction}, 'lstm': {'direction': direction},
+        'consensus': {'direction': direction, 'predicted_return_pct': ret, 'confidence': 0.55},
+    }
+
+
+def test_log_prediction_is_idempotent_per_day(tmp_path):
+    """Re-logging the same as_of_date must replace that day's row, not duplicate
+    it, so the comparison log carries exactly one forecast per trading day."""
+    from src.tracking import log_prediction
+    log = str(tmp_path / 'log.csv')
+
+    log_prediction(_fake_predict_result('2026-06-19', '2026-06-22', 1.146, 'DOWN', -0.02), log)
+    log_prediction(_fake_predict_result('2026-06-19', '2026-06-22', 1.146, 'UP', +0.03), log)  # same day, re-run
+
+    rows = pd.read_csv(log)
+    assert len(rows) == 1, "Same-day re-prediction must overwrite, not append."
+    assert rows.iloc[0]['pred_direction'] == 'UP', "Latest forecast for the day must win."
+
+
+def test_build_history_html_scores_against_actual(tmp_path, monkeypatch):
+    """A logged forecast whose forecast date has closed must be scored UP/DOWN
+    against the realised return and marked correct/wrong; an unresolved one
+    stays pending."""
+    import src.tracking as tracking
+    log = str(tmp_path / 'log.csv')
+    # Predicted UP from a 1.1000 close, forecasting 2026-06-22.
+    tracking.log_prediction(_fake_predict_result('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05), log)
+    # ...and a future-dated one that cannot be resolved yet.
+    tracking.log_prediction(_fake_predict_result('2026-06-22', '2026-06-23', 1.1050, 'DOWN', -0.05), log)
+
+    # Realised market: 2026-06-22 actually closed UP at 1.1080 (so the UP call was correct).
+    actual = pd.DataFrame({'close': [1.1080]}, index=pd.DatetimeIndex(['2026-06-22']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    html = tracking.build_history_html(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'})
+    assert 'correct' in html and "class='hit'" in html, "Correct UP call must be scored as a hit."
+    assert 'pending' in html, "An unresolved future forecast must render as pending."
+    assert '1/1 resolved' in html or '100%' in html, "Hit-rate summary must reflect the single resolved row."

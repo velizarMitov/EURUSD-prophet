@@ -276,4 +276,14 @@ class PredictionService:
         response.update(predictions)
         if predictions:
             response['consensus'] = self.compute_consensus(predictions)
+
+        # Best-effort: log this forecast for the /history prediction-vs-actual
+        # table. Logging must never break a prediction, so swallow any error.
+        try:
+            from .tracking import log_prediction
+            log_path = self.config.get('tracking', {}).get('log_path', 'results/prediction_log.csv')
+            log_prediction(response, os.path.join(self.base_dir, log_path))
+        except Exception:
+            pass
+
         return response

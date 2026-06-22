@@ -25,6 +25,15 @@
         .card .sub-value { margin-top: 0.25rem; font-size: 0.95rem; }
         .meta { font-size: 0.8rem; color: #888; margin-top: 0.75rem; line-height: 1.4; }
         .error { background-color: #fdedec; border-left: 4px solid #e74c3c; color: #c0392b; padding: 1rem; border-radius: 4px; margin-top: 1.5rem; }
+        button.secondary { background-color: #8e44ad; }
+        button.secondary:hover:not(:disabled) { background-color: #7d3c98; }
+        .retrain-status { display: none; margin-top: 1rem; padding: 0.9rem; border-radius: 4px; font-size: 0.9rem; border-left: 4px solid #8e44ad; background: #f5eefb; }
+        .retrain-status.active { display: block; }
+        .retrain-status.done { border-left-color: #27ae60; background: #eafaf1; }
+        .retrain-status.failed { border-left-color: #e74c3c; background: #fdedec; }
+        .retrain-status pre { margin: 0.5rem 0 0; font-size: 0.75rem; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: #555; background: rgba(0,0,0,0.03); padding: 0.5rem; border-radius: 3px; }
+        .links { margin-top: 1rem; text-align: center; font-size: 0.85rem; }
+        .links a { color: #2980b9; text-decoration: none; }
     </style>
 </head>
 <body>
@@ -37,6 +46,11 @@
 
         <div id="dashboard" class="dashboard"></div>
         <div id="errorBox" class="error" style="display:none;"></div>
+
+        <button id="retrainBtn" class="secondary" onclick="startRetrain()">🔁 Retrain Models (runs in background)</button>
+        <div id="retrainStatus" class="retrain-status"></div>
+
+        <div class="links"><a href="/history" target="_blank">📊 View prediction-vs-actual history →</a></div>
     </div>
 
     <script>
@@ -133,6 +147,82 @@
             dashboard.innerHTML = html;
             dashboard.classList.add('active');
         }
+
+        // ── Background retraining ──────────────────────────────────────────
+        let retrainPoll = null;
+
+        async function startRetrain() {
+            const btn = document.getElementById('retrainBtn');
+            const box = document.getElementById('retrainStatus');
+            box.className = 'retrain-status active';
+            box.innerHTML = 'Starting retraining…';
+
+            try {
+                const res = await fetch('/api/retrain', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Could not start retraining');
+                btn.disabled = true;
+                btn.textContent = '⏳ Retraining in progress…';
+                if (retrainPoll) clearInterval(retrainPoll);
+                retrainPoll = setInterval(pollRetrainStatus, 3000);
+                pollRetrainStatus();
+            } catch (err) {
+                box.className = 'retrain-status active failed';
+                box.innerHTML = `Error: ${err.message}`;
+            }
+        }
+
+        async function pollRetrainStatus() {
+            const btn = document.getElementById('retrainBtn');
+            const box = document.getElementById('retrainStatus');
+            try {
+                const res = await fetch('/api/retrain/status');
+                const s = await res.json();
+                const mins = ((s.elapsed_seconds || 0) / 60).toFixed(1);
+                const tail = s.log_tail ? `<pre>${s.log_tail.replace(/</g, '&lt;')}</pre>` : '';
+
+                if (s.state === 'running') {
+                    box.className = 'retrain-status active';
+                    box.innerHTML = `⏳ Training… (${mins} min elapsed). This takes ~15–30 min; you can keep predicting meanwhile.${tail}`;
+                } else if (s.state === 'completed') {
+                    box.className = 'retrain-status active done';
+                    box.innerHTML = `✅ Retraining complete in ${mins} min. New models loaded (models_ready=${s.models_ready}).${tail}`;
+                    stopRetrainPolling();
+                } else if (s.state === 'failed') {
+                    box.className = 'retrain-status active failed';
+                    box.innerHTML = `❌ Retraining failed (exit ${s.returncode}).${tail}`;
+                    stopRetrainPolling();
+                } else {
+                    box.className = 'retrain-status active';
+                    box.innerHTML = 'Idle.';
+                    stopRetrainPolling();
+                }
+            } catch (err) {
+                box.className = 'retrain-status active failed';
+                box.innerHTML = `Status check failed: ${err.message}`;
+                stopRetrainPolling();
+            }
+        }
+
+        function stopRetrainPolling() {
+            if (retrainPoll) { clearInterval(retrainPoll); retrainPoll = null; }
+            const btn = document.getElementById('retrainBtn');
+            btn.disabled = false;
+            btn.textContent = '🔁 Retrain Models (runs in background)';
+        }
+
+        // If a retrain is already running (e.g. page reloaded), resume polling.
+        window.addEventListener('load', async () => {
+            try {
+                const s = await (await fetch('/api/retrain/status')).json();
+                if (s.state === 'running') {
+                    document.getElementById('retrainBtn').disabled = true;
+                    document.getElementById('retrainBtn').textContent = '⏳ Retraining in progress…';
+                    retrainPoll = setInterval(pollRetrainStatus, 3000);
+                    pollRetrainStatus();
+                }
+            } catch (e) { /* ignore */ }
+        });
     </script>
 </body>
 </html>
