@@ -32,7 +32,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-This installs everything: `tensorflow`, `xgboost`, `lightgbm`, `scikit-learn`, `gradio`, `fastapi`, `mlflow`, `MetaTrader5`, etc. The first install takes a few minutes.
+This installs everything: `tensorflow`, `xgboost`, `lightgbm`, `scikit-learn`, `fastapi`, `uvicorn`, `mlflow`, `MetaTrader5`, etc. The first install takes a few minutes.
 
 > **Important:** The trained models (`models/*.pkl`, `*.keras`) and the historical dataset (`results/eurusd_features.csv`) are already committed to the repo. **No training is required** to run the project — it is ready to predict immediately after `pip install`.
 
@@ -65,13 +65,41 @@ Leaving these blank is fine — the system automatically uses the public/fallbac
 
 ## 6. Running the Application
 
-The application has a single entry point: **`api.py`** (a FastAPI web server). Run it with:
+The application has a single entry point: **`api.py`** (a FastAPI web server). There are three equivalent ways to start it — pick whichever is easiest for you.
+
+### Option A — Double-click (simplest, Windows)
+
+Double-click **`start.bat`** in the project folder. It automatically:
+- picks the virtual environment (`.venv` or `venv`) if one exists,
+- sets the UTF-8 console encoding,
+- frees port 8000 if an old server is still holding it,
+- launches the server, and
+- **opens the dashboard in your default browser** (`http://127.0.0.1:8000`) once it has started.
+
+A terminal window opens and stays open while the app runs; close it to stop the server.
+
+You can also run it from a terminal:
+```bash
+start.bat
+```
+
+### Option B — Run the file directly
+
+```bash
+python api.py
+```
+`api.py` now has a `__main__` launcher, so running it directly starts the web server (equivalent to Option C, without auto-reload). You can override the host/port with environment variables, e.g. `set PORT=8001` then `python api.py`.
+
+### Option C — Uvicorn with auto-reload (for development)
 
 ```bash
 python -m uvicorn api:app --reload
 ```
+Use this while editing code — `--reload` restarts the server automatically on file changes.
 
-Then open **http://127.0.0.1:8000** in your browser. Available routes:
+> **Why did `python api.py` do nothing before?** Earlier the file had no `__main__` block, so running it just imported the module and exited without ever starting the server — it *looked* like the project wouldn't start. That is now fixed: `python api.py` (and `start.bat`) launch the server properly.
+
+Whichever option you choose, then open **http://127.0.0.1:8000** in your browser. Available routes:
 
 | Route | What it does |
 |---|---|
@@ -109,7 +137,7 @@ python -m pytest -q -k fetch_yield_differential
 
 | Issue | Cause / Fix |
 |---|---|
-| `OSError: [WinError 10048]` when starting the server | The port is already in use by a previous process. Find it with `netstat -ano \| findstr :8000` and stop it with `taskkill /PID <pid> /F`, or run on a different port: `uvicorn api:app --port 8001` |
+| `OSError: [WinError 10048]` when starting the server | Port 8000 is still held by a previous server. **`start.bat` now frees it automatically before launching.** If starting another way, find the process with `netstat -ano \| findstr :8000` and stop it with `taskkill /PID <pid> /F`, or use a different port: `set PORT=8001` then `python api.py` |
 | `UnicodeEncodeError` when running a Python script with Cyrillic/emoji output | The Windows console uses `cp1252`. Set `set PYTHONIOENCODING=utf-8` before the command |
 | A notebook cell errors out when running the test suite | Pytest must run from the project **root**, not from `notebooks/`. The Section 20 cells already handle this automatically |
 | `pip install -r requirements.txt` fails on Mac/Linux | Expected — `MetaTrader5` has no package for those platforms. This project targets Windows only |
@@ -124,6 +152,8 @@ cd EURUSD-prophet
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-python -m uvicorn api:app --reload
+python api.py
 ```
 → open **http://127.0.0.1:8000** (this runs `api.py` — the full interface with predict, history, and retrain)
+
+Or, on Windows, just **double-click `start.bat`** after the one-time `pip install`.

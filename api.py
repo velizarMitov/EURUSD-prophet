@@ -143,3 +143,15 @@ def prediction_history():
         pass
 
     return HTMLResponse(content=html)
+
+
+if __name__ == "__main__":
+    # Makes this file directly runnable: `python api.py` (or a double-click via
+    # start.bat) launches the server, instead of silently importing the module
+    # and exiting. Equivalent to `python -m uvicorn api:app`.
+    import uvicorn
+
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    print(f"Starting EUR/USD Prophet -> http://{host}:{port}  (Ctrl+C to stop)")
+    uvicorn.run("api:app", host=host, port=port, reload=False)
