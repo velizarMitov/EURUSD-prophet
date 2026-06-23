@@ -14,9 +14,8 @@ python -m pytest -q                                  # full suite (~19 tests)
 python -m pytest -q tests/test_unit.py               # one file
 python -m pytest -q -k fetch_yield_differential      # one test / pattern
 
-# Run the app (serves the SAME PredictionService both ways)
-python app.py                                        # Gradio UI  -> http://127.0.0.1:7860
-python -m uvicorn api:app --reload                   # FastAPI    -> http://127.0.0.1:8000 (POST /api/predict, no body)
+# Run the app (FastAPI is the single entry point; serves dashboard + /api/predict + /history + /api/retrain)
+python -m uvicorn api:app --reload                   # -> http://127.0.0.1:8000
 
 # Retrain & regenerate the production artifacts in models/
 python _train_pipeline.py
@@ -31,10 +30,10 @@ When a script prints non-ASCII (Cyrillic, ✓, →), set `PYTHONIOENCODING=utf-8
 
 ## Architecture: the single-source-of-truth contract
 
-The whole design exists to stop **research-to-production drift**. Training (notebook + `_train_pipeline.py`) and serving (`app.py`/`api.py` → `src/inference.py`) import the **same** `src/features.py` so the feature matrix is byte-identical on both sides.
+The whole design exists to stop **research-to-production drift**. Training (notebook + `_train_pipeline.py`) and serving (`api.py` → `src/inference.py`) import the **same** `src/features.py` so the feature matrix is byte-identical on both sides.
 
 - **`src/features.py`** owns `FEATURE_COLUMNS` (the canonical **24** columns) and `LAG_COLUMNS` (6 autoregressive lags reduced by PCA). `compute_features()` is inference-safe (no target, no dropna → keeps the latest live bar); `add_advanced_features()` is the training variant (adds `target_return`/`target_direction`, drops NaNs).
-- **`src/inference.py` `PredictionService`** loads every artifact once, with graceful-degradation gates (`gbm_ready`/`lstm_ready`/`models_ready`). It is shared by both frontends so they can never diverge.
+- **`src/inference.py` `PredictionService`** loads every artifact once, with graceful-degradation gates (`gbm_ready`/`lstm_ready`/`models_ready`). It is the single serving path behind `api.py`.
 - **Two fallback chains, neither hard-fails:** `src/live_data.py` (MT5 → yfinance → bundled history CSV) and `src/macro_data.py` (FRED API → FRED public CSV → on-disk cache → `None`).
 
 ## Invariants you must preserve (these caused real bugs when broken)

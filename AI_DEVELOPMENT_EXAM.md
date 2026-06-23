@@ -9,7 +9,7 @@
 - Enrich price data with an exogenous macroeconomic signal — the US 10-Year/German 10-Year government bond yield differential — fetched from the FRED economic database, again with a fallback chain (official FRED API → FRED public endpoint → local cache).
 - Engineer a reproducible, leakage-free feature set (24 technical/cyclical/macro features) shared identically between training and live inference, so the two paths can never silently diverge.
 - Train two complementary model families — a Gradient Boosting dual pipeline (direction + return regression) and a Multi-Task LSTM (shared recurrent trunk, two output heads) — using strict chronological (walk-forward) validation to prevent look-ahead bias.
-- Serve predictions through two interchangeable frontends: a Gradio web UI and a FastAPI REST endpoint, both backed by one shared inference service.
+- Serve predictions through a single FastAPI web application (an interactive dashboard plus a REST endpoint) backed by one shared inference service.
 - Track every forecast against the realised market outcome over time, so prediction quality can be audited rather than assumed.
 - Allow on-demand model retraining from the UI without blocking the running service.
 - Validate every layer with an automated test suite (smoke, unit, integration) and document the full data/architecture flow for maintainability.
@@ -26,7 +26,7 @@ The system was decomposed (with AI assistance) into the following technological 
 2. **Feature Engineering & Dimensionality Reduction** — the shared feature contract (`src/features.py`)
 3. **Model Training Pipeline** — GBM + Multi-Task LSTM training (`_train_pipeline.py`, plus a mirrored research notebook)
 4. **Inference Service & Committee Consensus** — prediction logic shared by both frontends (`src/inference.py`)
-5. **Web UI & REST API** — Gradio app and FastAPI service (`app.py`, `api.py`, `static/index.html`)
+5. **Web Application (FastAPI)** — the single serving entry point (`api.py`, `static/index.html`)
 6. **Prediction Tracking & Automated Retraining** — outcome logging, history dashboard, background retraining (`src/tracking.py`, retrain endpoints)
 7. **Testing & Validation Layer** — smoke, unit, and integration tests (`tests/`)
 
@@ -66,11 +66,11 @@ The system was decomposed (with AI assistance) into the following technological 
 
 ---
 
-### 3.5 Web UI & REST API
+### 3.5 Web Application (FastAPI)
 
-**Approach.** Two interchangeable frontends sit on top of one shared service: a Gradio app for local interaction, and a FastAPI REST API serving a static dashboard for programmatic or browser-based use. **Workflow & testing.** Every backend change was verified against the actual running server via direct HTTP requests rather than code review alone. An integration test instantiates a FastAPI `TestClient` against the real application object and asserts the full prediction contract and dashboard availability. **AI tool choice.** Claude Code, operated with direct shell access to launch the server, poll for readiness, and issue real requests — closing the loop between "code changed" and "verified working."
+**Approach.** The application is served by a single FastAPI entry point (`api.py`) exposing both the REST prediction endpoint and an interactive dashboard (`static/index.html`) on top of one shared inference service. An early second frontend (a Gradio prototype) was deliberately consolidated away once the FastAPI layer covered every need — predictions, the history page, and background retraining — removing a redundant entry point and an unnecessary dependency, and leaving a single, unambiguous way to run the app. **Workflow & testing.** Every backend change was verified against the actual running server via direct HTTP requests rather than code review alone; an integration test additionally instantiates a FastAPI `TestClient` against the real application object and asserts the full prediction contract and dashboard availability. The whole project was further validated by a clean-clone smoke test — fresh virtual environment, dependency install, and a live prediction — to confirm it runs end-to-end for a new user. **AI tool choice.** Claude Code, operated with direct shell access to launch the server, poll for readiness, and issue real requests — closing the loop between "code changed" and "verified working."
 
-**Representative directive:** *"Launch the service and confirm the live prediction endpoint returns a complete, correctly-typed response."*
+**Representative directives:** *"Launch the service and confirm the live prediction endpoint returns a complete, correctly-typed response."* · *"Remove the redundant second frontend and verify nothing else depends on it before deleting the file."*
 
 ---
 
@@ -110,7 +110,7 @@ Copilot took me $40 credit and 1 subscription to Pro just dissaapeared for 3 por
 
 ## 5. Working System Evidence
 
-*[SCREENSHOT 1 — placeholder: the running Gradio/FastAPI dashboard after clicking "Fetch Live Market Data & Predict Tomorrow," showing the consensus prediction, individual GBM/LSTM cards, and market data source]*
+*[SCREENSHOT 1 — placeholder: the running FastAPI dashboard (`http://127.0.0.1:8000`) after clicking "Fetch Live Market Data & Predict Tomorrow," showing the consensus prediction, individual GBM/LSTM cards, and market data source]*
 
 *[SCREENSHOT 2 — placeholder: terminal output of `python -m pytest -q` showing the full test suite passing, and/or the `/history` prediction-vs-actual page]*
 

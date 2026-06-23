@@ -19,14 +19,13 @@
 | Feature engineering | `src/features.py` | The 24-column `FEATURE_COLUMNS` contract, PCA on lag block, macro merge. |
 | Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV. |
 | Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
-| Web UI (Gradio) | `app.py` | Zero-input dashboard, port 7860. |
-| Web API (REST) | `api.py` | `POST /api/predict`, serves `static/index.html` at `/`. |
+| Web app (single entry point) | `api.py` | FastAPI server: serves `static/index.html` at `/`, `POST /api/predict`, `GET /history`, `POST /api/retrain`. Port 8000. |
 | Config | `config.json` | All hyperparameters + paths. Single source of truth. |
 | Artifacts | `models/`, `results/`, `mlruns/`, `mlflow.db` | Serialized models, diagnostics, experiment tracking. |
 
-There are **two independent frontends** (`app.py` and `api.py`) that both
-instantiate the *same* `PredictionService`, guaranteeing they can never drift
-apart in prediction logic.
+The web layer is a **single entry point** (`api.py`) on top of one shared
+`PredictionService`. All prediction logic lives in `src/` — `api.py` is only the
+HTTP/dashboard layer.
 
 ---
 
@@ -34,7 +33,7 @@ apart in prediction logic.
 
 ### 1.1 Process initialization (once, at startup)
 
-Both `app.py:21` and `api.py:23` construct `PredictionService(BASE_DIR, CONFIG)`.
+`api.py` constructs `PredictionService(BASE_DIR, CONFIG)` once at startup.
 The constructor (`src/inference.py:21-71`) **eagerly deserializes every artifact
 exactly once**, each in an independent `try/except` that appends to
 `self.load_errors` rather than failing fast:
@@ -53,13 +52,13 @@ Readiness gates are then computed:
 - `models_ready` = `(gbm_ready or lstm_ready)` **and** history loaded
 
 > **Design consequence:** the service degrades gracefully. A missing LSTM file
-> still leaves a servable GBM-only pipeline (and vice versa). The frontend gates
-> on `models_ready` (`app.py:45`, `api.py:35`).
+> still leaves a servable GBM-only pipeline (and vice versa). `api.py` gates
+> on `models_ready` (returns `503` if false).
 
 ### 1.2 Per-request lifecycle (the "today → t+1" cycle)
 
-Triggered by the Gradio button (`app.py:108`) or `POST /api/predict`
-(`api.py:26`). Both call `service.predict()` (`src/inference.py:198-233`):
+Triggered by `POST /api/predict` (`api.py`), which calls `service.predict()`
+(`src/inference.py`):
 
 ```
 predict()
@@ -457,18 +456,18 @@ cache).
 
 Routing:
 
-| Frontend | Entry | Rendering |
+| Layer | Entry | Rendering |
 |---|---|---|
-| **Gradio** `app.py` | `fetch_and_predict()` (`app.py:37`) | Formats dict into 3 textboxes: market state, per-model breakdown, consensus. Launches on **:7860**. |
-| **FastAPI** `api.py` | `POST /api/predict` (`api.py:26`) | Returns the raw dict as JSON; `503` if `models_ready` is false, `400` on pipeline error. |
-| **Static UI** `static/index.html` | `fetch('/api/predict', {method:'POST'})` (`static/index.html:70`) | Mounted at `/` by `api.py:50-57`; client-side JS renders the same fields. |
+| **FastAPI** `api.py` | `POST /api/predict` | Returns the raw dict as JSON; `503` if `models_ready` is false, `400` on pipeline error. |
+| **Static UI** `static/index.html` | `fetch('/api/predict', {method:'POST'})` | Mounted at `/` by `api.py`; client-side JS renders the prediction, plus the retrain button and a link to `/history`. |
 
 ### 5.5 Containerization note
 
-`Dockerfile` builds the **Gradio app only**, strips `MetaTrader5` (Windows-only)
-from requirements, and bakes in `models/` + `results/eurusd_features.csv`. The
-container therefore serves from the **history fallback** tier (no MT5 terminal),
-with live yfinance/FRED still reachable at runtime.
+`Dockerfile` builds the **FastAPI app** (`uvicorn api:app` on port 8000), strips
+`MetaTrader5` (Windows-only) from requirements, and bakes in `api.py` + `src/` +
+`static/` + `models/` + `results/eurusd_features.csv`. With no MT5 terminal the
+container serves live prices from **yfinance** (falling back to the bundled
+history), with FRED still reachable at runtime.
 
 ---
 

@@ -14,8 +14,8 @@ from .macro_data import fetch_yield_differential
 class PredictionService:
     """
     Loads every trained artifact once and serves Multi-Task EURUSD
-    predictions from automatically fetched live market data. Shared by
-    api.py and app.py so the two frontends can never drift apart.
+    predictions from automatically fetched live market data. Used by api.py
+    (the single web entry point) and by the training notebook for evaluation.
     """
 
     # Minimum averaged confidence for a unanimous call to count as a genuine

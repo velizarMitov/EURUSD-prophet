@@ -10,12 +10,11 @@ The pipeline formally implements, evaluates, and contrasts:
 
 ## Project Structure
 * **`notebooks/01_data_preparation.ipynb`**: The primary research environment. Contains mathematical formulations in LaTeX, rigorous exploratory data analysis (EDA / ADF / ACF), PCA dimensionality reduction, explicit Multi-Task model construction logic (GBM dual pipeline + Functional API LSTM), hyperparameter tuning, and evaluation plotting.
-* **`app.py`**: The standalone production-ready UI. Built natively in Gradio, this script securely mounts the serialized mathematical weights and executes inference logic seamlessly.
-* **`api.py`**: The FastAPI REST endpoint serving the same dual-model predictions for programmatic/HTTP clients.
+* **`api.py`**: The FastAPI web server — the application's single entry point. Serves the interactive dashboard (`static/index.html`), the `/api/predict` endpoint, the `/history` prediction-vs-actual page, and the background `/api/retrain` controls.
 * **`config.json`**: Centralized hyperparameters and file paths (PCA variance threshold, GBM/LSTM settings, data paths) loaded dynamically by both the notebook and the production scripts.
 * **`models/`**: Contains the trained joblib/Keras artifacts (GBM classifier+regressor, Multi-Task LSTM, PCA + scalers).
 * **`results/`**: Analytical diagnostic exports including Confusion Matrices, Learning Curves, and the compiled feature subsets.
-* **`Dockerfile`**: Optional container definition for running the Gradio app with strict environment reproducibility (see [Docker Execution](#optional-docker-execution-environment-reproducibility) below).
+* **`Dockerfile`**: Optional container definition for running the FastAPI app with strict environment reproducibility (see [Docker Execution](#optional-docker-execution-environment-reproducibility) below).
 
 ## Installation & Setup
 
@@ -54,17 +53,14 @@ pip install -r requirements.txt
 
 **d. Run the web application:**
 ```bash
-python app.py
+python -m uvicorn api:app --reload
 ```
-*This initiates a local Gradio web server, by default accessible at `http://127.0.0.1:7860`.*
+*This starts the FastAPI server, by default accessible at `http://127.0.0.1:8000` (the dashboard, the `/api/predict` endpoint, `/history`, and the retrain controls).*
 
-Other entry points use the same activated environment:
+The research notebook uses the same activated environment:
 ```bash
 # Research notebook (EDA, PCA, Multi-Task model training)
 jupyter notebook notebooks/01_data_preparation.ipynb
-
-# REST API (FastAPI) instead of the Gradio UI
-python -m uvicorn api:app --reload
 ```
 
 ### 2. Optional: Running via Docker (Environment Reproducibility)
@@ -77,11 +73,11 @@ docker build -t eurusd-prophet .
 
 **b. Run the container:**
 ```bash
-docker run -p 7860:7860 eurusd-prophet
+docker run -p 8000:8000 eurusd-prophet
 ```
-*The Gradio UI is then reachable on the host at `http://127.0.0.1:7860`, identically to the local execution method above.*
+*The dashboard is then reachable on the host at `http://127.0.0.1:8000`, identically to the local execution method above.*
 
-> **Note:** `MetaTrader5` is a Windows-only package used solely by the research notebook's optional live data fetch (Section 2). The Docker image targets the Gradio app, which serves inference from the bundled `results/eurusd_features.csv` history instead, so that dependency is excluded from the containerized build rather than failing on Linux.
+> **Note:** `MetaTrader5` is a Windows-only package and only the first tier of the live-price fallback chain (`src/live_data.py` imports it inside a try/except). The Docker image excludes it and serves inference from Yahoo Finance / the bundled `results/eurusd_features.csv` history instead, so it never fails the Linux build.
 
 ## Deployment Model Card
 * **Primary Methodology Evaluated:** Gradient Boosting Decision Trees.

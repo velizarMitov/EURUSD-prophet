@@ -6,7 +6,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 # Canonical 24-column feature order consumed by the trained GBM/LSTM artifacts.
-# Shared by the notebook (training) and api.py/app.py (inference) so the two
+# Shared by the notebook (training) and api.py (inference) so the two
 # can never silently drift apart.
 #
 # tick_volume is deliberately excluded: MT5's "tick_volume" is a broker-specific
