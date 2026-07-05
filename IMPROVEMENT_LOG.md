@@ -34,9 +34,16 @@ still open. One backlog item = one commit; do not batch items together.
       combos — the gbm-boosting-theory skill's `n_estimators` widening ([100,200] →
       +500,1000) is a separate, not-yet-done follow-up since small `learning_rate`
       needs more trees to converge; left out of this commit to keep it scoped.
-- [ ] Extract and persist GBM `feature_importances_` to
+- [x] Extract and persist GBM `feature_importances_` to
       `results/gbm_feature_importance.csv` after training (gbm-boosting-theory §4) —
       currently never computed anywhere.
+      **Done:** after the artifact `joblib.dump`s in `_train_pipeline.py`, both the
+      direction classifier's and return regressor's `feature_importances_` are
+      captured against `MODEL_INPUT_COLUMNS` (the exact post-PCA column order),
+      written to `results/gbm_feature_importance.csv`, and printed. Smoke-tested
+      the export logic against real fitted XGBoost models. Next retrain will show
+      whether other features are dead weight the way `yield_differential` already
+      is (`results/2C_fred_ablation.csv`) — feeds directly into backlog item 7.
 - [ ] Add a "worst mistakes" pass over `results/prediction_log.csv` (sort by
       abs_error, inspect for systematic patterns vs random noise) per
       ml-practical-methodology Part C.

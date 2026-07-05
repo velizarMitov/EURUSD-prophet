@@ -248,6 +248,18 @@ joblib.dump(best_gbm, 'models/best_gbm_eurusd.pkl')
 joblib.dump(best_gbm_reg, 'models/best_gbm_regressor_eurusd.pkl')
 print("Saved: lag_scaler.pkl, lag_pca.pkl, global_scaler.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl")
 
+# Feature importance (ESL §10.13.1, eq. 10.43 — importance averaged over all M
+# trees, robust to correlated inputs thanks to shrinkage). Never extracted before;
+# directly actionable alongside the FRED ablation (results/2C_fred_ablation.csv)
+# to see whether other features are similarly dead weight before the next retrain.
+feature_importance = pd.DataFrame({
+    "feature": MODEL_INPUT_COLUMNS,
+    "importance_direction_classifier": best_gbm.feature_importances_,
+    "importance_return_regressor": best_gbm_reg.feature_importances_,
+}).sort_values("importance_direction_classifier", ascending=False)
+feature_importance.to_csv("results/gbm_feature_importance.csv", index=False)
+print(f"Saved: results/gbm_feature_importance.csv\n{feature_importance.to_string(index=False)}")
+
 # The former per-model scalers are now superseded by the single global_scaler.
 # Remove any stale copies so inference can never silently load an out-of-date,
 # wrong-unit scaler alongside the freshly retrained artifacts.
