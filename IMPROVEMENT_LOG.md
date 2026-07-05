@@ -44,9 +44,21 @@ still open. One backlog item = one commit; do not batch items together.
       the export logic against real fitted XGBoost models. Next retrain will show
       whether other features are dead weight the way `yield_differential` already
       is (`results/2C_fred_ablation.csv`) — feeds directly into backlog item 7.
-- [ ] Add a "worst mistakes" pass over `results/prediction_log.csv` (sort by
+- [x] Add a "worst mistakes" pass over `results/prediction_log.csv` (sort by
       abs_error, inspect for systematic patterns vs random noise) per
       ml-practical-methodology Part C.
+      **Done:** added `worst_mistakes()` to `src/tracking.py` — reuses
+      `_actual_closes()` (same realised-close join as `build_history_html`) since
+      the log has no `actual_return_pct` column of its own, computes `abs_error`
+      per resolved row, and returns the worst `n` sorted descending. Excludes
+      still-pending rows (undefined error) and MIXED/LOW-CONFIDENCE rows with no
+      numeric `pred_return_pct`. Runnable standalone via `python -m src.tracking`
+      (writes `results/worst_mistakes.csv`). Verified against the real log: the 9
+      resolved forecasts show errors scattered 0.02%–0.47% with no obvious
+      clustering by date — consistent with the irreducible-noise conclusion in
+      `ARCHITECTURE_DOCS.md §4.2.1`, not a fixable pattern. Added
+      `test_worst_mistakes_ranks_by_absolute_error_and_excludes_pending` to
+      `tests/test_unit.py`.
 - [ ] Update `ARCHITECTURE_DOCS.md`: document the H1→Daily ensemble module
       (`src/h1_features.py`, `h1_ready` gate) which currently has zero coverage
       despite being wired into `predict()`; also add the `huber_alpha` adaptive-

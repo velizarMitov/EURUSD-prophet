@@ -155,6 +155,51 @@ def build_history_html(log_path: str, data_cfg: dict,
     return _wrap(title, table, hit_rate)
 
 
+def worst_mistakes(log_path: str, data_cfg: dict, n: int = 20, now=None) -> pd.DataFrame:
+    """
+    "Visualize the worst mistakes" (Goodfellow et al., Ch.11.5, p.437): sort every
+    RESOLVED logged forecast by absolute return error and surface the worst `n`.
+    A systematic pattern here (e.g. clustering right after weekends where
+    yield_differential goes stale per ARCHITECTURE_DOCS.md §4.5, or clustering on
+    thin-liquidity/backfilled sessions) is a fixable data/pipeline problem; random
+    scatter across dates is further evidence of genuine irreducible noise, matching
+    the efficient-market conclusion in ARCHITECTURE_DOCS.md §4.2.1 -- not something
+    to "fix" by tuning the model. `now` is injectable for tests.
+
+    Unlike build_history_html (which renders every row, resolved or pending), this
+    only returns rows whose forecast date has already closed, since abs_error is
+    undefined for a pending prediction.
+    """
+    if not os.path.exists(log_path):
+        return pd.DataFrame(columns=[
+            'as_of_date', 'forecasting_date', 'pred_direction',
+            'pred_return_pct', 'actual_return_pct', 'abs_error',
+        ])
+
+    log = pd.read_csv(log_path)
+    closes = _actual_closes(data_cfg, now=now)
+
+    rows = []
+    for _, r in log.iterrows():
+        actual_close = closes.get(str(r['forecasting_date']))
+        if actual_close is None or pd.isna(r.get('as_of_close')) or pd.isna(r.get('pred_return_pct')):
+            continue  # still pending, or a MIXED/LOW-CONFIDENCE row with no numeric call
+        actual_ret = (actual_close - r['as_of_close']) / r['as_of_close'] * 100
+        rows.append({
+            'as_of_date': r['as_of_date'],
+            'forecasting_date': r['forecasting_date'],
+            'pred_direction': r['pred_direction'],
+            'pred_return_pct': r['pred_return_pct'],
+            'actual_return_pct': actual_ret,
+            'abs_error': abs(actual_ret - r['pred_return_pct']),
+        })
+
+    resolved = pd.DataFrame(rows)
+    if resolved.empty:
+        return resolved
+    return resolved.sort_values('abs_error', ascending=False).head(n).reset_index(drop=True)
+
+
 def _fmt(v):
     return "—" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
 
@@ -199,3 +244,25 @@ def _wrap(title: str, inner: str, summary: str) -> str:
     (near random walk) — see <code>ARCHITECTURE_DOCS.md §4.2.1</code>.
   </p>
 </body></html>"""
+
+
+if __name__ == "__main__":
+    # ml-practical-methodology Part C quick pass: `python -m src.tracking` from the
+    # repo root prints (and saves) the worst-error resolved predictions so far.
+    import json
+
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    with open(os.path.join(base_dir, "config.json")) as f:
+        config = json.load(f)
+
+    worst = worst_mistakes(
+        os.path.join(base_dir, config["tracking"]["log_path"]),
+        config["data"],
+    )
+    if worst.empty:
+        print("No resolved predictions yet -- nothing to analyze.")
+    else:
+        print(worst.to_string(index=False))
+        out_path = os.path.join(base_dir, "results", "worst_mistakes.csv")
+        worst.to_csv(out_path, index=False)
+        print(f"\nSaved: {out_path}")

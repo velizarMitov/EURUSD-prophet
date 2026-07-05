@@ -595,3 +595,30 @@ def test_build_history_html_does_not_score_against_still_forming_today_bar(tmp_p
     assert "class='hit'" not in html and "class='miss'" not in html, \
         "Must not score a forecast against an intraday price that hasn't closed yet."
     assert '1/1 resolved' in html or '100%' in html, "Hit-rate summary must reflect the single resolved row."
+
+
+def test_worst_mistakes_ranks_by_absolute_error_and_excludes_pending(tmp_path, monkeypatch):
+    """worst_mistakes must join each RESOLVED row against the realised return,
+    rank by descending abs_error, and drop any row whose forecast date hasn't
+    closed yet (abs_error is undefined for a pending prediction)."""
+    import src.tracking as tracking
+    log = str(tmp_path / 'log.csv')
+    # Small miss: predicted +0.05%, actual +0.08% (1.1000 -> 1.10088) -> abs_error ~0.03.
+    tracking.log_prediction(_fake_predict_result('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05), log)
+    # Big miss: predicted -0.02%, actual +0.727% (1.1050 -> 1.1130) -> abs_error ~0.747.
+    tracking.log_prediction(_fake_predict_result('2026-06-20', '2026-06-23', 1.1050, 'DOWN', -0.02), log)
+    # Still pending -- no realised close available for this forecast date.
+    tracking.log_prediction(_fake_predict_result('2026-06-23', '2026-06-24', 1.1130, 'UP', +0.01), log)
+
+    actual = pd.DataFrame(
+        {'close': [1.10088, 1.1130]},
+        index=pd.DatetimeIndex(['2026-06-22', '2026-06-23']),
+    )
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    worst = tracking.worst_mistakes(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                                     now=pd.Timestamp('2026-06-25 11:00'))
+
+    assert len(worst) == 2, "Only the two resolved rows should be scored; the pending one is excluded."
+    assert worst.iloc[0]['forecasting_date'] == '2026-06-23', "The larger miss must rank first."
+    assert worst.iloc[0]['abs_error'] > worst.iloc[1]['abs_error'], "Must be sorted descending by abs_error."
