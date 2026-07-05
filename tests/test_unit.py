@@ -219,6 +219,75 @@ def test_compute_consensus_disagreement_defers_to_confident_model():
     assert consensus['predicted_return_pct'] == pytest.approx(0.30)
 
 
+def test_fetch_bar_count_counts_actual_sundays_in_window():
+    """The over-fetch margin must be an exact count of the Sundays inside the
+    real lookback window (plus 1 for today's forming bar), not a flat
+    empirical percentage -- so it must match a hand-computed reference count."""
+    from src.inference import PredictionService
+
+    bars_needed = 250
+    now = pd.Timestamp('2026-06-25 11:00')
+    fetch_bars = PredictionService._fetch_bar_count(bars_needed, now=now)
+
+    HOLIDAY_PAD_DAYS = 10
+    lookback_days = -(-bars_needed * 7 // 5) + HOLIDAY_PAD_DAYS
+    window = pd.date_range(now.normalize() - pd.Timedelta(days=lookback_days), now.normalize(), freq='D')
+    expected_sundays = int((window.weekday == 6).sum())
+
+    assert fetch_bars == bars_needed + expected_sundays + 1
+    # Sanity bound: must be enough to actually contain bars_needed weekday
+    # bars once Sundays and today's forming bar are stripped, with no excess
+    # waste from a flat multiplier.
+    assert bars_needed < fetch_bars < bars_needed * 1.3
+
+
+def test_drop_incomplete_bars_strips_forming_day_and_weekend():
+    """The live feed must be reduced to fully-closed weekday sessions before it
+    can set as_of_date: today's still-forming bar and MT5's partial weekend bar
+    are both out-of-distribution (training history skips weekends and never
+    contains a forming bar) and must be dropped."""
+    from src.inference import PredictionService
+
+    # Fri 19.06, Sat 20.06, Sun 21.06 (MT5 partial), Mon 22.06 (forming "now").
+    idx = pd.to_datetime(['2026-06-19', '2026-06-20', '2026-06-21', '2026-06-22'])
+    df = pd.DataFrame({
+        'open': [1.10, 1.11, 1.115, 1.12],
+        'high': [1.12, 1.12, 1.117, 1.13],
+        'low': [1.09, 1.10, 1.113, 1.11],
+        'close': [1.115, 1.118, 1.116, 1.125],
+        'tick_volume': [50000, 1000, 800, 30000],
+    }, index=idx)
+
+    # Asking on Monday morning -> last completed bar must be Friday 19.06,
+    # not Monday's forming bar nor the partial Sunday bar.
+    trimmed = PredictionService._drop_incomplete_bars(df, now=pd.Timestamp('2026-06-22 09:00'))
+
+    assert list(trimmed.index) == [pd.Timestamp('2026-06-19')], \
+        "Must keep only the last completed weekday bar (Friday), dropping Sat/Sun/forming-Monday."
+
+
+def test_drop_incomplete_bars_strips_only_current_intraday_session():
+    """A weekday fetch at 11:00 must drop the still-forming current-day bar and
+    settle on the previous trading day as the t+1 base (so the forecast targets
+    the current, not the next, day)."""
+    from src.inference import PredictionService
+
+    # Tue..Thu, with Thu (23.04) still forming at 11:00.
+    idx = pd.to_datetime(['2026-04-21', '2026-04-22', '2026-04-23'])
+    df = pd.DataFrame({
+        'open': [1.10, 1.11, 1.12],
+        'high': [1.12, 1.12, 1.13],
+        'low': [1.09, 1.10, 1.11],
+        'close': [1.115, 1.118, 1.125],
+        'tick_volume': [50000, 40000, 12000],
+    }, index=idx)
+
+    trimmed = PredictionService._drop_incomplete_bars(df, now=pd.Timestamp('2026-04-23 11:00'))
+
+    assert list(trimmed.index) == [pd.Timestamp('2026-04-21'), pd.Timestamp('2026-04-22')], \
+        "The forming current-day (23.04) bar must be excluded; 22.04 is the last completed bar."
+
+
 def test_fetch_live_market_data_prefers_mt5(monkeypatch):
     """When a live MT5 terminal session is reachable, it must be used in
     preference to Yahoo Finance, per the requested MT5 -> yfinance fallback order."""
@@ -388,7 +457,32 @@ def test_build_history_html_scores_against_actual(tmp_path, monkeypatch):
     actual = pd.DataFrame({'close': [1.1080]}, index=pd.DatetimeIndex(['2026-06-22']))
     monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
 
-    html = tracking.build_history_html(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'})
+    html = tracking.build_history_html(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                                        now=pd.Timestamp('2026-06-25 11:00'))
     assert 'correct' in html and "class='hit'" in html, "Correct UP call must be scored as a hit."
     assert 'pending' in html, "An unresolved future forecast must render as pending."
+
+
+def test_build_history_html_does_not_score_against_still_forming_today_bar(tmp_path, monkeypatch):
+    """A forecast whose forecast_date is the current, still-open trading
+    session must stay pending -- it must never be scored against today's
+    mid-session price, which can still move before the session actually
+    closes (the bug reported live: a forecast for 2026-06-25 was marked
+    correct/wrong while 25.06 hadn't finished yet)."""
+    import src.tracking as tracking
+    log = str(tmp_path / 'log.csv')
+    # Predicted DOWN from yesterday's close, forecasting TODAY (2026-06-25).
+    tracking.log_prediction(_fake_predict_result('2026-06-24', '2026-06-25', 1.1356, 'DOWN', -0.02), log)
+
+    # The live feed's most recent bar is today's still-forming session --
+    # a real intraday price, but not a closed one.
+    actual = pd.DataFrame({'close': [1.1369]}, index=pd.DatetimeIndex(['2026-06-25']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    html = tracking.build_history_html(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                                        now=pd.Timestamp('2026-06-25 11:00'))
+
+    assert 'pending' in html, "Today's not-yet-closed session must render as pending."
+    assert "class='hit'" not in html and "class='miss'" not in html, \
+        "Must not score a forecast against an intraday price that hasn't closed yet."
     assert '1/1 resolved' in html or '100%' in html, "Hit-rate summary must reflect the single resolved row."

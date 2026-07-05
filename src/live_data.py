@@ -2,6 +2,36 @@ import pandas as pd
 import yfinance as yf
 
 
+def drop_incomplete_bars(ohlcv_df, now=None):
+    """
+    Keep only fully-closed weekday sessions. Shared by PredictionService
+    (so a live forecast never bases itself on a half-formed bar) and
+    tracking.build_history_html (so the realised "actual market" close used
+    to score a forecast is never read off today's still-moving intraday
+    price). Two kinds of bars are stripped from a live feed:
+
+      * The current day's bar while that session is still forming. A fetch
+        at 11:00 on 23.04 exposes a 23.04 bar whose high/low/close are not
+        final yet -- using it (whether as the prediction base or as the
+        "actual" result) is wrong until the session has actually closed.
+      * Any Saturday/Sunday bar. MT5 brokers emit a short partial Sunday
+        (weekend) bar that the yfinance-derived training data never
+        contained, so it is out-of-distribution.
+
+    `now` is injectable for tests; it defaults to the local wall clock.
+    Comparison is on the calendar date (the broker bar timestamps and the
+    local clock are both treated as tz-naive, which is correct for a
+    single-machine Windows/MT5 deployment).
+    """
+    if ohlcv_df is None or len(ohlcv_df) == 0:
+        return ohlcv_df
+    now = pd.Timestamp.now() if now is None else pd.Timestamp(now)
+    today = now.normalize()
+    idx = ohlcv_df.index
+    keep = (idx.normalize() < today) & (idx.weekday < 5)
+    return ohlcv_df[keep]
+
+
 def _fetch_from_mt5(symbol: str, bars: int):
     """Try a live MT5 terminal session first. Returns an OHLCV DataFrame
     (tz-naive, ascending date index) or None if no terminal is reachable."""

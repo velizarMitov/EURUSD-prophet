@@ -1,0 +1,8 @@
+[tool.ruff]
+exclude = ["notebooks/", ".venv/"]
+
+[tool.ruff.lint]
+ignore = ["E402"]  # notebook-style imports in scripts are acceptable
+
+[tool.mypy]
+ignore_missing_imports = true

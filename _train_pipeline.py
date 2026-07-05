@@ -29,8 +29,8 @@ import mlflow.sklearn
 import mlflow.keras
 from dotenv import load_dotenv
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+import xgboost as xgb
 from sklearn.metrics import (
     accuracy_score, roc_auc_score, mean_squared_error, mean_absolute_error
 )
@@ -48,6 +48,15 @@ with open('config.json') as f:
 
 RANDOM_STATE = CONFIG['random_state']
 np.random.seed(RANDOM_STATE)
+
+_XGB_DEVICE = 'cpu'
+try:
+    _probe = xgb.XGBClassifier(device='cuda', n_estimators=1, verbosity=0)
+    _probe.fit(np.array([[1.0, 0.0]]), [0])
+    _XGB_DEVICE = 'cuda'
+    print("XGBoost GPU (CUDA): available — tree training will run on RTX 4070.")
+except Exception as _e:
+    print(f"XGBoost GPU: not available ({_e}). Falling back to CPU.")
 
 mlflow.set_experiment("EURUSD_Prediction")
 
@@ -136,21 +145,26 @@ y_ret_train, y_ret_test = y_return[:train_end], y_return[train_end:]
 print("=== 5. GBM Hyperparameter Tuning ===")
 tscv_gb = TimeSeriesSplit(n_splits=CONFIG['gbm']['cv_splits'])
 param_grid = CONFIG['gbm']['param_grid']
+# With GPU, parallelism is inside XGBoost (CUDA streams). n_jobs=1 avoids
+# spawning competing processes that would each try to claim the same GPU.
+_cv_n_jobs = 1 if _XGB_DEVICE == 'cuda' else -1
 
 with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
-    print("--- Classification head (target_direction) ---")
+    print(f"--- Classification head (target_direction) [device={_XGB_DEVICE}] ---")
     grid_search = GridSearchCV(
-        GradientBoostingClassifier(random_state=RANDOM_STATE),
-        param_grid=param_grid, cv=tscv_gb, scoring='roc_auc', n_jobs=-1
+        xgb.XGBClassifier(device=_XGB_DEVICE, eval_metric='auc',
+                          random_state=RANDOM_STATE, verbosity=0),
+        param_grid=param_grid, cv=tscv_gb, scoring='roc_auc', n_jobs=_cv_n_jobs
     )
     grid_search.fit(X_gb_train_s, y_dir_train)
     best_gbm = grid_search.best_estimator_
     print(f"Best params: {grid_search.best_params_}  CV ROC-AUC: {grid_search.best_score_:.4f}")
 
-    print("--- Regression head (target_return [percent], Huber loss) ---")
+    print(f"--- Regression head (target_return [percent], pseudo-Huber) [device={_XGB_DEVICE}] ---")
     grid_search_reg = GridSearchCV(
-        GradientBoostingRegressor(loss='huber', alpha=CONFIG['gbm']['huber_alpha'], random_state=RANDOM_STATE),
-        param_grid=param_grid, cv=tscv_gb, scoring='neg_mean_absolute_error', n_jobs=-1
+        xgb.XGBRegressor(device=_XGB_DEVICE, objective='reg:pseudohubererror',
+                         random_state=RANDOM_STATE, verbosity=0),
+        param_grid=param_grid, cv=tscv_gb, scoring='neg_mean_absolute_error', n_jobs=_cv_n_jobs
     )
     grid_search_reg.fit(X_gb_train_s, y_ret_train)
     best_gbm_reg = grid_search_reg.best_estimator_
@@ -171,7 +185,8 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     print(f"[Return]    MSE={mse_gb:.6f}  MAE={mae_gb:.6f}  (percent units)")
 
     mlflow.log_params({
-        "model_family": "GradientBoosting_DualPipeline",
+        "model_family": "XGBoost_DualPipeline",
+        "device": _XGB_DEVICE,
         "direction_n_estimators": grid_search.best_params_['n_estimators'],
         "direction_learning_rate": grid_search.best_params_['learning_rate'],
         "direction_max_depth": grid_search.best_params_['max_depth'],
@@ -260,13 +275,22 @@ from tensorflow.keras.layers import Input, LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 
+_tf_gpus = tf.config.list_physical_devices('GPU')
+if _tf_gpus:
+    for _gpu in _tf_gpus:
+        tf.config.experimental.set_memory_growth(_gpu, True)
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
+    print(f"TensorFlow GPU: {len(_tf_gpus)} device(s) detected — mixed_float16 enabled.")
+else:
+    print("TensorFlow: no GPU on native Windows (TF >=2.11 requires WSL2 for CUDA). Training on CPU.")
+
 tf.random.set_seed(RANDOM_STATE)
 
 inputs = Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2]), name="ohlcv_window")
 shared = LSTM(CONFIG['lstm']['units'], name="shared_lstm_trunk")(inputs)
 shared = Dropout(CONFIG['lstm']['dropout'], name="shared_dropout")(shared)
-return_output = Dense(1, activation='linear', name="return_output")(shared)
-direction_output = Dense(1, activation='sigmoid', name="direction_output")(shared)
+return_output = Dense(1, activation='linear', name="return_output", dtype='float32')(shared)
+direction_output = Dense(1, activation='sigmoid', name="direction_output", dtype='float32')(shared)
 
 mt_lstm_model = Model(inputs=inputs, outputs=[return_output, direction_output], name="multitask_lstm_eurusd")
 mt_lstm_model.compile(

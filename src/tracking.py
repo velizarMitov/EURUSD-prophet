@@ -9,7 +9,7 @@ import os
 
 import pandas as pd
 
-from .live_data import fetch_live_market_data
+from .live_data import fetch_live_market_data, drop_incomplete_bars
 
 LOG_COLUMNS = [
     'as_of_date', 'forecasting_date', 'as_of_close',
@@ -50,31 +50,42 @@ def log_prediction(result: dict, log_path: str) -> None:
     log.sort_values('as_of_date').to_csv(log_path, index=False)
 
 
-def _actual_closes(data_cfg: dict, bars: int = 400) -> dict:
-    """date-iso -> realised close, from whichever live source answers first."""
+def _actual_closes(data_cfg: dict, bars: int = 400, now=None) -> dict:
+    """
+    date-iso -> realised close, from whichever live source answers first.
+    Today's still-forming bar (and any stray MT5 weekend bar) is dropped via
+    drop_incomplete_bars so a forecast for the current, not-yet-closed
+    session is never scored against a mid-session price -- it must show as
+    pending until the session has actually closed and the next live fetch
+    sees the day's bar settle into the past. `now` is injectable for tests;
+    it defaults to the local wall clock.
+    """
     df, _ = fetch_live_market_data(
         data_cfg.get('symbol', 'EURUSD'),
         data_cfg.get('live_symbol', 'EURUSD=X'),
         bars=bars,
     )
+    df = drop_incomplete_bars(df, now=now)
     if df is None or df.empty:
         return {}
     return {idx.date().isoformat(): float(close) for idx, close in df['close'].items()}
 
 
 def build_history_html(log_path: str, data_cfg: dict,
-                       title: str = "EUR/USD — Prediction vs. Actual Market") -> str:
+                       title: str = "EUR/USD — Prediction vs. Actual Market", now=None) -> str:
     """
     Render the prediction log as a self-contained HTML page, scoring every row
     whose forecast date has already closed against the realised return/direction.
-    Rows still in the future show as 'pending'. Returns the full HTML string.
+    Rows still in the future -- including today's still-open session -- show
+    as 'pending'. `now` is injectable for tests; it defaults to the local wall
+    clock. Returns the full HTML string.
     """
     if not os.path.exists(log_path):
         return _wrap(title, "<p class='empty'>No predictions logged yet. "
                             "Run a prediction first, then refresh.</p>", "—")
 
     log = pd.read_csv(log_path).sort_values('as_of_date', ascending=False)
-    closes = _actual_closes(data_cfg)
+    closes = _actual_closes(data_cfg, now=now)
 
     body_rows, n_resolved, n_correct = [], 0, 0
     for _, r in log.iterrows():

@@ -60,7 +60,7 @@ def _fetch_via_pandas_datareader(series_ids: dict, start, end):
     return _combine(us, de)
 
 
-def fetch_yield_differential(start, end, series_ids: dict = None, cache_path: str = DEFAULT_CACHE_PATH):
+def fetch_yield_differential(start, end, series_ids: dict | None = None, cache_path: str = DEFAULT_CACHE_PATH):
     """
     US 10Y - DE 10Y government bond yield differential, daily, UTC-indexed.
 

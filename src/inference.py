@@ -7,7 +7,7 @@ from .features import (
     load_history, compute_features, apply_lag_pca, merge_macro_features,
     LAG_COLUMNS, FEATURE_COLUMNS,
 )
-from .live_data import fetch_live_market_data
+from .live_data import fetch_live_market_data, drop_incomplete_bars
 from .macro_data import fetch_yield_differential
 
 
@@ -62,11 +62,20 @@ class PredictionService:
         try:
             self.gbm_classifier = joblib.load(os.path.join(models_dir, 'best_gbm_eurusd.pkl'))
             self.gbm_regressor = joblib.load(os.path.join(models_dir, 'best_gbm_regressor_eurusd.pkl'))
+            # Single-row inference doesn't benefit from GPU; force CPU so the
+            # artifact stays portable to machines without a CUDA-capable device.
+            # get_booster() is XGBoost-specific — safe to call only on XGBoost models.
+            for _m in (self.gbm_classifier, self.gbm_regressor):
+                if hasattr(_m, 'get_booster') and hasattr(_m, 'set_params'):
+                    _m.set_params(device='cpu')
         except Exception as e:
             self.load_errors.append(f"GBM dual pipeline: {e}")
 
         try:
             os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+            import tensorflow as tf
+            for _gpu in tf.config.list_physical_devices('GPU'):
+                tf.config.experimental.set_memory_growth(_gpu, True)
             from tensorflow.keras.models import load_model
             self.lstm_model = load_model(os.path.join(models_dir, 'lstm_multitask_eurusd.keras'))
             self.lstm_time_steps = joblib.load(os.path.join(models_dir, 'lstm_time_steps.pkl'))
@@ -84,10 +93,44 @@ class PredictionService:
         self.lstm_ready = self.pca_ready and self.scaler_ready and None not in (self.lstm_model, self.lstm_time_steps)
         self.models_ready = (self.gbm_ready or self.lstm_ready) and self.history_df is not None
 
+    @staticmethod
+    def _fetch_bar_count(bars_needed: int, now=None) -> int:
+        """
+        Exact replacement for an empirical over-fetch multiplier. MT5 emits
+        one bar per Mon-Fri weekday plus one partial Sunday bar per week,
+        all of which _drop_incomplete_bars later strips except the weekday
+        ones; today's still-forming bar is stripped too. Rather than guess
+        that inflation with a flat percentage, count precisely how many
+        Sundays actually fall inside the calendar window that must contain
+        `bars_needed` weekday sessions (5 weekdays per 7 calendar days), and
+        request exactly that many extra bars plus 1 for today's forming bar.
+
+        The one thing that genuinely cannot be counted exactly from the
+        weekday alone is bank holidays (Christmas, Good Friday, etc.) -- those
+        don't follow a fixed weekly cycle, so a small fixed pad covers them;
+        it only pads holiday weeks, it no longer pads every single week the
+        way the old 1.45x multiplier did.
+        """
+        HOLIDAY_PAD_DAYS = 10
+        now = pd.Timestamp.now() if now is None else pd.Timestamp(now)
+        today = now.normalize()
+        lookback_days = -(-bars_needed * 7 // 5) + HOLIDAY_PAD_DAYS  # ceil(bars_needed * 7/5) + pad
+        window = pd.date_range(today - pd.Timedelta(days=lookback_days), today, freq='D')
+        sundays_in_window = int((window.weekday == 6).sum())
+        forming_today_bar = 1
+        return bars_needed + sundays_in_window + forming_today_bar
+
+    # Kept as a PredictionService-scoped alias (the canonical implementation
+    # now lives in live_data.drop_incomplete_bars so tracking.py can reuse it
+    # too without a circular import -- see that function's docstring).
+    _drop_incomplete_bars = staticmethod(drop_incomplete_bars)
+
     def _resolve_latest_window(self, time_steps: int):
         """
         Automated data pipeline (no manual input ever required): knows
-        "today" implicitly as whatever the live source's most recent bar is.
+        "today" implicitly as whatever the live source's most recent
+        *completed* bar is (today's still-forming bar and MT5's partial
+        weekend bar are dropped up front -- see _drop_incomplete_bars).
 
         Tries a live MT5 terminal session first, then Yahoo Finance, fetching
         exactly enough daily bars to satisfy the SMA_200 warm-up plus the
@@ -98,7 +141,24 @@ class PredictionService:
         mt5_symbol = self.config['data']['symbol']
         yf_symbol = self.config['data'].get('live_symbol', 'EURUSD=X')
 
-        ohlcv_df, data_source = fetch_live_market_data(mt5_symbol, yf_symbol, bars=bars_needed)
+        # Over-fetch so that dropping today's forming bar AND every weekend bar
+        # (below) still leaves at least `bars_needed` completed weekday bars --
+        # otherwise the back-fill path would trigger on every live MT5 call and
+        # mislabel the data_source. _fetch_bar_count counts the actual number
+        # of Sundays in the lookback window instead of guessing with a flat
+        # percentage; yfinance is already weekday-only, so over-fetching there
+        # just yields harmless extra warm-up.
+        fetch_bars = self._fetch_bar_count(bars_needed)
+        ohlcv_df, data_source = fetch_live_market_data(mt5_symbol, yf_symbol, bars=fetch_bars)
+
+        # Restrict the live feed to fully-closed weekday sessions BEFORE any
+        # warm-up/back-fill accounting, so as_of_date can only ever be the last
+        # completed bar. This drops today's still-forming bar and MT5's partial
+        # weekend bar (see _drop_incomplete_bars). The bundled history and the
+        # back-fill rows are already weekday-only and free of a forming bar, so
+        # they need no trimming.
+        if ohlcv_df is not None and len(ohlcv_df) > 0:
+            ohlcv_df = self._drop_incomplete_bars(ohlcv_df)
 
         # Graceful live-edge handling. A live fetch can return fewer bars than
         # the SMA_200 + lag/LSTM warm-up needs (thin session, holiday week, a
@@ -107,9 +167,11 @@ class PredictionService:
         # warm-up is always satisfied, while keeping whatever fresh live bars we
         # did get. Duplicate dates are resolved in favour of the live bar.
         if ohlcv_df is None or len(ohlcv_df) == 0:
+            if self.history_df is None:
+                raise RuntimeError("No live data and no history fallback available.")
             ohlcv_df = self.history_df.tail(bars_needed)
             data_source = "history_fallback"
-        elif len(ohlcv_df) < bars_needed:
+        elif len(ohlcv_df) < bars_needed and self.history_df is not None:
             missing = bars_needed - len(ohlcv_df)
             preceding = self.history_df[self.history_df.index < ohlcv_df.index.min()].tail(missing)
             combined = pd.concat([preceding, ohlcv_df])
@@ -268,7 +330,7 @@ class PredictionService:
             predictions['gbm'] = self._predict_gbm(model_input_window.iloc[-1])
 
         if self.lstm_ready:
-            if len(model_input_window) < self.lstm_time_steps:
+            if self.lstm_time_steps is None or len(model_input_window) < self.lstm_time_steps:
                 response['lstm_error'] = "Not enough historical context for the LSTM sliding window."
             else:
                 predictions['lstm'] = self._predict_lstm(model_input_window.tail(self.lstm_time_steps))
