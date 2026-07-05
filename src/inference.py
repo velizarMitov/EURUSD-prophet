@@ -44,6 +44,10 @@ class PredictionService:
         self.gbm_classifier = self.gbm_regressor = None
         self.lstm_model = self.lstm_time_steps = None
         self.history_df = None
+        # Auxiliary H1->Daily ensemble (loaded independently below).
+        self.h1_xgb = self.h1_rf = self.h1_svm = self.h1_lstm_model = None
+        self.h1_feature_scaler = self.h1_lstm_scaler = None
+        self.h1_feature_columns = self.h1_lstm_config = None
 
         try:
             self.lag_scaler = joblib.load(os.path.join(models_dir, 'lag_scaler.pkl'))
@@ -87,10 +91,35 @@ class PredictionService:
         except Exception as e:
             self.load_errors.append(f"Historical feature context: {e}")
 
+        # Auxiliary H1->Daily predictor: four return regressors + their two
+        # scalers + column/config metadata. Loaded on its own try/except so its
+        # absence never blocks the daily GBM/LSTM service (it is supplementary).
+        try:
+            self.h1_xgb = joblib.load(os.path.join(models_dir, 'h1_xgb_regressor.pkl'))
+            self.h1_rf = joblib.load(os.path.join(models_dir, 'h1_rf_regressor.pkl'))
+            self.h1_svm = joblib.load(os.path.join(models_dir, 'h1_svm_regressor.pkl'))
+            # Force XGBoost to CPU for portable single-row inference (same
+            # rationale as the daily GBM heads above).
+            if hasattr(self.h1_xgb, 'get_booster') and hasattr(self.h1_xgb, 'set_params'):
+                self.h1_xgb.set_params(device='cpu')
+            self.h1_feature_scaler = joblib.load(os.path.join(models_dir, 'h1_feature_scaler.pkl'))
+            self.h1_lstm_scaler = joblib.load(os.path.join(models_dir, 'h1_lstm_scaler.pkl'))
+            self.h1_feature_columns = joblib.load(os.path.join(models_dir, 'h1_feature_columns.pkl'))
+            self.h1_lstm_config = joblib.load(os.path.join(models_dir, 'h1_lstm_config.pkl'))
+            os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+            from tensorflow.keras.models import load_model
+            self.h1_lstm_model = load_model(os.path.join(models_dir, 'h1_lstm.keras'))
+        except Exception as e:
+            self.load_errors.append(f"H1->Daily predictor: {e}")
+
         self.pca_ready = self.lag_scaler is not None and self.lag_pca is not None
         self.scaler_ready = self.global_scaler is not None
         self.gbm_ready = self.pca_ready and self.scaler_ready and None not in (self.gbm_classifier, self.gbm_regressor)
         self.lstm_ready = self.pca_ready and self.scaler_ready and None not in (self.lstm_model, self.lstm_time_steps)
+        self.h1_ready = None not in (
+            self.h1_xgb, self.h1_rf, self.h1_svm, self.h1_lstm_model,
+            self.h1_feature_scaler, self.h1_lstm_scaler, self.h1_feature_columns,
+        )
         self.models_ready = (self.gbm_ready or self.lstm_ready) and self.history_df is not None
 
     @staticmethod
@@ -269,6 +298,65 @@ class PredictionService:
             "predicted_return_pct": predicted_return_pct,
         }
 
+    def _predict_h1(self, now=None):
+        """
+        Run the auxiliary H1->Daily ensemble on the latest COMPLETE trading day.
+
+        Fetches recent H1 bars (MT5 -> yfinance -> cache), engineers that day's
+        flattened features + 24-hour tensor, and runs all four regressors. Each
+        outputs a next-day % return; its direction is that return's sign. The
+        RBF SVM consumes the scaled flat features; the scale-invariant tree
+        models consume the raw ones; the LSTM consumes the per-hour-scaled
+        tensor. Returns (per_model_dict, as_of_date_iso).
+
+        Kept deliberately separate from the daily GBM/LSTM committee
+        (compute_consensus): these are return-only regressors with no calibrated
+        probability, so they carry their own agreement-based consensus
+        (compute_h1_consensus) rather than polluting the probability-tuned daily
+        one.
+        """
+        from .h1_features import build_h1_inference_sample
+
+        h1_cfg = self.config.get('h1', {})
+        cache = os.path.join(self.base_dir, h1_cfg.get('cache_path', 'results/eurusd_h1.csv'))
+        flat_row, seq, as_of = build_h1_inference_sample(cache_path=cache, now=now)
+
+        X_raw = flat_row[self.h1_feature_columns].values   # enforce trained column order
+        X_scaled = self.h1_feature_scaler.transform(X_raw)
+        nf = seq.shape[2]
+        seq_s = self.h1_lstm_scaler.transform(seq.reshape(-1, nf)).reshape(seq.shape).astype('float32')
+
+        raw = {
+            'h1_xgboost': float(self.h1_xgb.predict(X_raw)[0]),
+            'h1_random_forest': float(self.h1_rf.predict(X_raw)[0]),
+            'h1_svm': float(self.h1_svm.predict(X_scaled)[0]),
+            'h1_lstm': float(self.h1_lstm_model.predict(seq_s, verbose=0).ravel()[0]),
+        }
+        per_model = {
+            name: {"direction": "UP" if r > 0 else "DOWN", "predicted_return_pct": r}
+            for name, r in raw.items()
+        }
+        return per_model, as_of.date().isoformat()
+
+    @staticmethod
+    def compute_h1_consensus(per_model: dict) -> dict:
+        """Aggregate the four return-only H1 regressors into one call. Direction
+        is the majority sign; confidence is the fraction of models on that side
+        (a genuine [0.5, 1.0] agreement measure, NOT a probability); predicted
+        return is the mean across all models. agreement=True only on a unanimous
+        sign."""
+        dirs = [p['direction'] for p in per_model.values()]
+        n = len(dirs)
+        up = dirs.count("UP")
+        down = n - up
+        return {
+            "direction": "UP" if up >= down else "DOWN",
+            "agreement": up == n or down == n,
+            "confidence": max(up, down) / n,
+            "predicted_return_pct": sum(p['predicted_return_pct'] for p in per_model.values()) / n,
+            "n_models": n,
+        }
+
     @staticmethod
     def compute_consensus(predictions: dict) -> dict:
         """Committee logic with a low-confidence guard. If every model agrees on
@@ -338,6 +426,21 @@ class PredictionService:
         response.update(predictions)
         if predictions:
             response['consensus'] = self.compute_consensus(predictions)
+
+        # Supplementary H1->Daily ensemble (separate intraday predictor). It has
+        # its own data feed and its own agreement-based consensus, surfaced as a
+        # self-contained block so it never perturbs the daily committee above.
+        # Any failure here (no H1 feed, etc.) degrades to an h1_error note.
+        if self.h1_ready:
+            try:
+                h1_per_model, h1_as_of = self._predict_h1()
+                response['h1'] = {
+                    "as_of_date": h1_as_of,
+                    "predictions": h1_per_model,
+                    "consensus": self.compute_h1_consensus(h1_per_model),
+                }
+            except Exception as e:
+                response['h1_error'] = str(e)
 
         # Best-effort: log this forecast for the /history prediction-vs-actual
         # table. Logging must never break a prediction, so swallow any error.

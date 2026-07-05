@@ -39,6 +39,24 @@
     },
     "huber_alpha": 0.9
   },
+  "h1": {
+    "cache_path": "results/eurusd_h1.csv",
+    "cv_splits": 5,
+    "rf_param_grid": {
+      "n_estimators": [200, 400],
+      "max_depth": [4, 8, null]
+    },
+    "svm_param_grid": {
+      "C": [0.1, 1.0, 10.0],
+      "gamma": ["scale", 0.1]
+    },
+    "lstm_units": 32,
+    "lstm_dropout": 0.2,
+    "lstm_lr": 0.001,
+    "lstm_epochs": 60,
+    "lstm_batch": 32,
+    "lstm_patience": 8
+  },
   "lstm": {
     "time_steps": 20,
     "units": 64,

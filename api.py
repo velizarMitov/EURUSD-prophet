@@ -56,7 +56,8 @@ def read_root():
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return {"message": "API Active. GBM ready: " + str(service.gbm_ready) + ", LSTM ready: " + str(service.lstm_ready)}
+    return {"message": "API Active. GBM ready: " + str(service.gbm_ready) + ", LSTM ready: " +
+            str(service.lstm_ready) + ", H1 ready: " + str(service.h1_ready)}
 
 
 # ── Background retraining ──────────────────────────────────────────────────

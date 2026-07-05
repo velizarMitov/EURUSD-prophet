@@ -360,4 +360,164 @@ mt_lstm_model.save('models/lstm_multitask_eurusd.keras')
 joblib.dump(TIME_STEPS, 'models/lstm_time_steps.pkl')
 print("Saved: lstm_multitask_eurusd.keras, lstm_time_steps.pkl")
 
+# ===========================================================================
+# H1 -> Daily Predictor (auxiliary multi-model ensemble)
+# ===========================================================================
+# ADDITIVE to the daily pipeline above -- it never touches the 7 canonical daily
+# artifacts. It trains XGBoost / RandomForest / SVM on FLATTENED intraday
+# statistics and a sequence-to-vector LSTM on the raw (samples, 24, features)
+# tensor, all forecasting the next-day (t+1) return. Both metrics required by the
+# task are logged: MAE (regression quality) and a directional ROC-AUC derived by
+# scoring the predicted return against the realised up/down label. The whole
+# block is guarded so that H1 data being unavailable degrades gracefully to a
+# warning and leaves production's daily models intact.
+print("\n=== 13. H1 -> Daily Predictor (XGBoost / RandomForest / SVM / LSTM) ===")
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.svm import SVR
+    from src.h1_features import (
+        build_h1_datasets, FLAT_FEATURE_COLUMNS, SEQ_FEATURE_COLUMNS, HOURS_PER_DAY,
+    )
+
+    h1_cfg = CONFIG.get('h1', {})
+    X_flat_df, X_seq, y_ret_h1, y_dir_h1, h1_index = build_h1_datasets(
+        cache_path=h1_cfg.get('cache_path', 'results/eurusd_h1.csv'))
+    print(f"H1 datasets: flat {X_flat_df.shape}, seq {X_seq.shape}, "
+          f"days {h1_index.min().date()} -> {h1_index.max().date()}")
+
+    # Chronological 80/20 split shared by every H1 model -- NO shuffling.
+    n_h1 = len(X_flat_df)
+    h1_train_end = int(n_h1 * CONFIG['split']['train_fraction'])
+    X_flat = X_flat_df.values
+    X_flat_tr, X_flat_te = X_flat[:h1_train_end], X_flat[h1_train_end:]
+    y_ret_tr, y_ret_te = y_ret_h1[:h1_train_end], y_ret_h1[h1_train_end:]
+    y_dir_te = y_dir_h1[h1_train_end:]
+
+    # StandardScaler fit on the TRAIN flattened features only. It is required by
+    # the RBF SVM (distance-based); the tree models are scale-invariant and so
+    # receive the raw features, but the scaler is still serialized for inference.
+    h1_scaler = StandardScaler().fit(X_flat_tr)
+    X_flat_tr_s = h1_scaler.transform(X_flat_tr)
+    X_flat_te_s = h1_scaler.transform(X_flat_te)
+
+    tscv_h1 = TimeSeriesSplit(n_splits=h1_cfg.get('cv_splits', 5))
+
+    def _directional_auc(y_true_dir, pred_return):
+        """ROC-AUC of the predicted return as a score for up(1)/down(0) days.
+        Returns NaN on the degenerate single-class test window."""
+        if len(np.unique(y_true_dir)) < 2:
+            return float('nan')
+        return roc_auc_score(y_true_dir, pred_return)
+
+    h1_results = {}
+
+    with mlflow.start_run(run_name="H1_to_Daily_Ensemble") as h1_run:
+        # --- 1) XGBoost regressor on flattened features (GPU-aware) ---
+        print(f"--- XGBoost [device={_XGB_DEVICE}] ---")
+        xgb_grid = GridSearchCV(
+            xgb.XGBRegressor(device=_XGB_DEVICE, objective='reg:squarederror',
+                             random_state=RANDOM_STATE, verbosity=0),
+            param_grid=CONFIG['gbm']['param_grid'], cv=tscv_h1,
+            scoring='neg_mean_absolute_error', n_jobs=_cv_n_jobs)
+        xgb_grid.fit(X_flat_tr, y_ret_tr)
+        h1_xgb = xgb_grid.best_estimator_
+        _p = h1_xgb.predict(X_flat_te)
+        h1_results['xgboost'] = (mean_absolute_error(y_ret_te, _p), _directional_auc(y_dir_te, _p))
+
+        # --- 2) Random Forest: bagging + random feature subsets -> low variance ---
+        print("--- RandomForest ---")
+        rf_grid = GridSearchCV(
+            RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=-1),
+            param_grid=h1_cfg.get('rf_param_grid',
+                                  {"n_estimators": [200, 400], "max_depth": [4, 8, None]}),
+            cv=tscv_h1, scoring='neg_mean_absolute_error', n_jobs=-1)
+        rf_grid.fit(X_flat_tr, y_ret_tr)
+        h1_rf = rf_grid.best_estimator_
+        _p = h1_rf.predict(X_flat_te)
+        h1_results['random_forest'] = (mean_absolute_error(y_ret_te, _p), _directional_auc(y_dir_te, _p))
+
+        # --- 3) SVM (RBF kernel) on SCALED flattened features ---
+        print("--- SVM (RBF) ---")
+        svm_grid = GridSearchCV(
+            SVR(kernel='rbf'),
+            param_grid=h1_cfg.get('svm_param_grid', {"C": [0.1, 1.0, 10.0], "gamma": ["scale", 0.1]}),
+            cv=tscv_h1, scoring='neg_mean_absolute_error', n_jobs=-1)
+        svm_grid.fit(X_flat_tr_s, y_ret_tr)
+        h1_svm = svm_grid.best_estimator_
+        _p = h1_svm.predict(X_flat_te_s)
+        h1_results['svm_rbf'] = (mean_absolute_error(y_ret_te, _p), _directional_auc(y_dir_te, _p))
+
+        # --- 4) Sequence-to-vector LSTM on the (samples, 24, n_features) tensor ---
+        print("--- Sequence-to-Vector LSTM ---")
+        n_seq_feat = X_seq.shape[2]
+        # Per-hour scaler fit on TRAIN timesteps only, applied across the tensor.
+        seq_scaler = StandardScaler().fit(X_seq[:h1_train_end].reshape(-1, n_seq_feat))
+
+        def _scale_seq(t):
+            return seq_scaler.transform(t.reshape(-1, n_seq_feat)).reshape(t.shape).astype('float32')
+
+        X_seq_s = _scale_seq(X_seq)
+        # Inner chronological validation slice for early stopping (tail of train).
+        val_frac_of_train = CONFIG['split']['val_fraction'] / CONFIG['split']['train_fraction']
+        lstm_val_start = int(h1_train_end * (1 - val_frac_of_train))
+        Xs_tr, Xs_val, Xs_te = X_seq_s[:lstm_val_start], X_seq_s[lstm_val_start:h1_train_end], X_seq_s[h1_train_end:]
+        ys_tr, ys_val = y_ret_h1[:lstm_val_start], y_ret_h1[lstm_val_start:h1_train_end]
+
+        seq_inputs = Input(shape=(HOURS_PER_DAY, n_seq_feat), name="h1_hourly_window")
+        xh = LSTM(h1_cfg.get('lstm_units', 32), name="h1_lstm_trunk")(seq_inputs)
+        xh = Dropout(h1_cfg.get('lstm_dropout', 0.2), name="h1_dropout")(xh)
+        seq_out = Dense(1, activation='linear', name="h1_return", dtype='float32')(xh)
+        h1_lstm = Model(seq_inputs, seq_out, name="h1_seq2vec_lstm")
+        h1_lstm.compile(optimizer=Adam(learning_rate=h1_cfg.get('lstm_lr', 0.001)),
+                        loss='mse', metrics=['mae'])
+        _es = EarlyStopping(monitor='val_loss', patience=h1_cfg.get('lstm_patience', 8),
+                            restore_best_weights=True, verbose=0)
+        h1_lstm.fit(Xs_tr, ys_tr, validation_data=(Xs_val, ys_val),
+                    epochs=h1_cfg.get('lstm_epochs', 60), batch_size=h1_cfg.get('lstm_batch', 32),
+                    callbacks=[_es], verbose=2)
+        _p = h1_lstm.predict(Xs_te, verbose=0).ravel()
+        h1_results['lstm_seq2vec'] = (mean_absolute_error(y_ret_te, _p), _directional_auc(y_dir_te, _p))
+
+        # --- MLflow: log MAE + directional ROC-AUC for every model ---
+        print("\n=== 14. H1 Evaluation (held-out test) ===")
+        for _name, (_mae, _auc) in h1_results.items():
+            print(f"[H1:{_name:14s}] MAE={_mae:.4f}%  directional ROC-AUC={_auc:.4f}")
+            mlflow.log_metric(f"{_name}_mae", _mae)
+            if not np.isnan(_auc):
+                mlflow.log_metric(f"{_name}_roc_auc", _auc)
+        mlflow.log_params({
+            "predictor": "H1_to_Daily",
+            "models": "xgboost,random_forest,svm_rbf,lstm_seq2vec",
+            "n_flat_features": len(FLAT_FEATURE_COLUMNS),
+            "seq_shape": f"({HOURS_PER_DAY},{n_seq_feat})",
+            "seq_features": ",".join(SEQ_FEATURE_COLUMNS),
+            "n_days": n_h1,
+            "train_fraction": CONFIG['split']['train_fraction'],
+            "target_unit": "percent",
+            "device": _XGB_DEVICE,
+        })
+        mlflow.sklearn.log_model(h1_xgb, artifact_path="h1_xgboost")
+        mlflow.sklearn.log_model(h1_rf, artifact_path="h1_random_forest")
+        mlflow.sklearn.log_model(h1_svm, artifact_path="h1_svm")
+        mlflow.keras.log_model(h1_lstm, artifact_path="h1_lstm")
+        print(f"MLflow run logged: run_id={h1_run.info.run_id}")
+
+    print("\n=== 15. Persisting H1 -> Daily artifacts ===")
+    joblib.dump(h1_xgb, 'models/h1_xgb_regressor.pkl')
+    joblib.dump(h1_rf, 'models/h1_rf_regressor.pkl')
+    joblib.dump(h1_svm, 'models/h1_svm_regressor.pkl')
+    joblib.dump(h1_scaler, 'models/h1_feature_scaler.pkl')
+    joblib.dump(seq_scaler, 'models/h1_lstm_scaler.pkl')
+    joblib.dump(list(FLAT_FEATURE_COLUMNS), 'models/h1_feature_columns.pkl')
+    joblib.dump({"hours": HOURS_PER_DAY, "seq_features": list(SEQ_FEATURE_COLUMNS)},
+                'models/h1_lstm_config.pkl')
+    h1_lstm.save('models/h1_lstm.keras')
+    print("Saved H1 artifacts: h1_xgb_regressor.pkl, h1_rf_regressor.pkl, h1_svm_regressor.pkl, "
+          "h1_feature_scaler.pkl, h1_lstm_scaler.pkl, h1_lstm.keras, h1_feature_columns.pkl, h1_lstm_config.pkl")
+except Exception as _h1_err:
+    import traceback
+    print(f"WARNING: H1 -> Daily predictor section skipped ({_h1_err}). "
+          f"Daily production artifacts are unaffected.")
+    traceback.print_exc()
+
 print("\n=== DONE ===")

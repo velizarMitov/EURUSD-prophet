@@ -418,6 +418,115 @@ def test_feature_engineering_edge_cases():
     assert len(res) == 0 or not res.isnull().any().any(), "Edge case math poisoned matrix evaluation."
 
 
+def _synthetic_h1(day_closes, hours=24, start='2026-03-02'):
+    """Build a UTC-indexed H1 OHLCV frame of len(day_closes) days x `hours`
+    bars, where each day's LAST hourly close is exactly day_closes[i] -- so the
+    daily close series is known and the shift(-1) target can be checked by hand."""
+    frames = []
+    days = pd.date_range(start, periods=len(day_closes), freq='D', tz='UTC')
+    for d, close in zip(days, day_closes):
+        idx = pd.date_range(d, periods=hours, freq='h', tz='UTC')
+        c = np.linspace(close - 0.002, close, hours)  # ramp that ends exactly at `close`
+        frames.append(pd.DataFrame({
+            'open': c, 'high': c + 0.001, 'low': c - 0.001, 'close': c,
+            'tick_volume': np.arange(1, hours + 1) * 10.0,
+        }, index=idx))
+    return pd.concat(frames)
+
+
+def test_h1_target_is_strict_next_day_shift_no_lookahead():
+    """The H1->Daily target must be exactly the t+1 daily return via shift(-1):
+    row t carries the return realised on t+1, the final (unresolved) day is NaN,
+    and build_h1_datasets drops it from every aligned representation."""
+    from src.h1_features import aggregate_daily_features, build_daily_target, build_h1_datasets
+
+    closes = [1.10, 1.11, 1.09, 1.12, 1.13]
+    h1 = _synthetic_h1(closes)
+    feats, daily_close = aggregate_daily_features(h1)
+    target = build_daily_target(daily_close)
+
+    # The recovered daily close series must equal the known per-day last closes.
+    assert list(np.round(daily_close.values, 5)) == closes
+
+    # target[t] == 100*ln(close[t+1]/close[t]) -- strictly the *next* day's return.
+    for t in range(len(closes) - 1):
+        expected = 100 * np.log(closes[t + 1] / closes[t])
+        assert target.iloc[t] == pytest.approx(expected), f"target[{t}] must be the t+1 return."
+    # No future beyond the last day -> its shifted target must be undefined.
+    assert np.isnan(target.iloc[-1]), "Last day's shift(-1) target must be NaN (nothing to leak)."
+
+    # The unresolved last row must be dropped from ALL representations, aligned.
+    Xf, Xs, yr, yd, idx = build_h1_datasets(h1=h1)
+    assert len(Xf) == len(closes) - 1 == len(yr) == Xs.shape[0] == len(idx)
+    assert not np.isnan(yr).any(), "Resolved targets must contain no NaN after the last-day drop."
+
+
+def test_h1_features_do_not_depend_on_future_days():
+    """A day's flattened feature row must be identical whether or not later days
+    exist in the frame -- a strong guarantee that features never peek forward."""
+    from src.h1_features import aggregate_daily_features
+
+    closes = [1.10, 1.11, 1.09, 1.12, 1.13]
+    h1_full = _synthetic_h1(closes)
+    feats_full, _ = aggregate_daily_features(h1_full)
+
+    cutoff = feats_full.index[2] + pd.Timedelta(days=1)   # keep days 0..2 only
+    feats_trunc, _ = aggregate_daily_features(h1_full[h1_full.index < cutoff])
+
+    pd.testing.assert_series_equal(feats_full.iloc[1], feats_trunc.iloc[1])
+
+
+def test_h1_inference_sample_drops_forming_current_day():
+    """Live H1 inference must ignore the still-forming current UTC session and
+    settle on the previous completed day, mirroring drop_incomplete_bars."""
+    from src.h1_features import build_h1_inference_sample, SEQ_FEATURE_COLUMNS, HOURS_PER_DAY
+
+    closes = [1.10, 1.11, 1.12]   # 03-02, 03-03, 03-04
+    h1 = _synthetic_h1(closes, start='2026-03-02')
+
+    # Mid-session on the last day (03-04) -> it is forming and must be excluded.
+    flat_row, seq, as_of = build_h1_inference_sample(h1=h1, now=pd.Timestamp('2026-03-04 11:00', tz='UTC'))
+
+    assert as_of == pd.Timestamp('2026-03-03', tz='UTC'), "Must settle on the last COMPLETED day."
+    assert flat_row.shape[0] == 1
+    assert seq.shape == (1, HOURS_PER_DAY, len(SEQ_FEATURE_COLUMNS))
+
+
+def test_compute_h1_consensus_majority_and_agreement():
+    """A 3-1 split must yield the majority direction, confidence = agreeing
+    fraction (0.75), agreement=False, and the mean return across ALL models."""
+    from src.inference import PredictionService
+
+    per_model = {
+        'h1_xgboost':      {'direction': 'UP',   'predicted_return_pct': 0.10},
+        'h1_random_forest': {'direction': 'UP',   'predicted_return_pct': 0.20},
+        'h1_svm':          {'direction': 'UP',   'predicted_return_pct': 0.00},
+        'h1_lstm':         {'direction': 'DOWN', 'predicted_return_pct': -0.40},
+    }
+    c = PredictionService.compute_h1_consensus(per_model)
+
+    assert c['direction'] == 'UP'
+    assert c['agreement'] is False
+    assert c['confidence'] == pytest.approx(0.75)
+    assert c['predicted_return_pct'] == pytest.approx((0.10 + 0.20 + 0.00 - 0.40) / 4)
+    assert c['n_models'] == 4
+
+
+def test_compute_h1_consensus_unanimous_sets_agreement_true():
+    """When all four regressors agree on sign, agreement is True and confidence
+    saturates at 1.0."""
+    from src.inference import PredictionService
+
+    per_model = {k: {'direction': 'DOWN', 'predicted_return_pct': v}
+                 for k, v in {'h1_xgboost': -0.10, 'h1_random_forest': -0.05,
+                              'h1_svm': -0.20, 'h1_lstm': -0.15}.items()}
+    c = PredictionService.compute_h1_consensus(per_model)
+
+    assert c['direction'] == 'DOWN'
+    assert c['agreement'] is True
+    assert c['confidence'] == pytest.approx(1.0)
+
+
 def _fake_predict_result(as_of, forecast, close, direction, ret):
     """Minimal PredictionService.predict()-shaped dict for tracking tests."""
     return {
