@@ -196,6 +196,18 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     mae_gb = mean_absolute_error(y_ret_test, y_pred_ret)
     print(f"[Return]    MSE={mse_gb:.6f}  MAE={mae_gb:.6f}  (percent units)")
 
+    # Train-set direction metrics -- NOT for model selection (that stays purely on
+    # the held-out test block), but a diagnostic control. Per ml-practical-methodology
+    # (Goodfellow Ch.11.3): if train_roc_auc is ALSO ~0.50, that is independent
+    # confirmation of a Bayes-error floor (efficient market), not a bug; if train is
+    # noticeably higher (e.g. 0.65+) while test stays at chance, that is classic
+    # overfitting and reopens the bias-variance investigation instead.
+    y_prob_dir_train = best_gbm.predict_proba(X_gb_train_s)[:, 1]
+    acc_gb_train = accuracy_score(y_dir_train, best_gbm.predict(X_gb_train_s))
+    auc_gb_train = roc_auc_score(y_dir_train, y_prob_dir_train)
+    print(f"[Direction:TRAIN] Accuracy={acc_gb_train:.4f}  ROC-AUC={auc_gb_train:.4f}  "
+          f"(train-test ROC-AUC gap={auc_gb_train - auc_gb:+.4f})")
+
     mlflow.log_params({
         "model_family": "XGBoost_DualPipeline",
         "device": _XGB_DEVICE,
@@ -220,6 +232,8 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
         "direction_roc_auc": auc_gb,
         "return_mse": mse_gb,
         "return_mae": mae_gb,
+        "train_direction_accuracy": acc_gb_train,
+        "train_direction_roc_auc": auc_gb_train,
     })
     _safe_log_model(mlflow.sklearn.log_model, best_gbm, "gbm_direction_classifier")
     _safe_log_model(mlflow.sklearn.log_model, best_gbm_reg, "gbm_return_regressor")
@@ -339,6 +353,17 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
     print(f"[Return]    MSE={mse_lstm:.6f}  MAE={mae_lstm:.6f}  (percent units, comparable to GBM)")
     print(f"[Direction] Accuracy={acc_lstm:.4f}  ROC-AUC={auc_lstm:.4f}")
 
+    # Train-set control (see ml-practical-methodology / GBM section above for the
+    # rationale): lets us tell a Bayes-error floor (train≈test≈0.50) apart from a
+    # bug or genuine overfitting (train materially above test).
+    _, y_prob_dir_lstm_train = mt_lstm_model.predict(X_train_seq, verbose=0)
+    y_prob_dir_lstm_train = y_prob_dir_lstm_train.ravel()
+    y_pred_dir_lstm_train = (y_prob_dir_lstm_train >= 0.5).astype(int)
+    acc_lstm_train = accuracy_score(y_dir_train_seq, y_pred_dir_lstm_train)
+    auc_lstm_train = roc_auc_score(y_dir_train_seq, y_prob_dir_lstm_train)
+    print(f"[Direction:TRAIN] Accuracy={acc_lstm_train:.4f}  ROC-AUC={auc_lstm_train:.4f}  "
+          f"(train-test ROC-AUC gap={auc_lstm_train - auc_lstm:+.4f})")
+
     mlflow.log_params({
         "model_family": "MultiTask_LSTM_FunctionalAPI",
         "units": CONFIG['lstm']['units'],
@@ -363,6 +388,8 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
         "return_mae": mae_lstm,
         "direction_accuracy": acc_lstm,
         "direction_roc_auc": auc_lstm,
+        "train_direction_accuracy": acc_lstm_train,
+        "train_direction_roc_auc": auc_lstm_train,
     })
     _safe_log_model(mlflow.keras.log_model, mt_lstm_model, "multitask_lstm")
     print(f"MLflow run logged: run_id={lstm_run.info.run_id}")
