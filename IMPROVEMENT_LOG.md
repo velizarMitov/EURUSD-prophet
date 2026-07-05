@@ -24,8 +24,16 @@ still open. One backlog item = one commit; do not batch items together.
       <0.55 "weak" flag, and logged to MLflow as `multitask_sign_agreement`. If it
       comes back near 50% on the next retrain, the shared trunk isn't earning its
       keep and two single-task models should be A/B'd against it.
-- [ ] Add `subsample` to `config.json`'s `gbm.param_grid` (currently defaults to 1.0 —
+- [x] Add `subsample` to `config.json`'s `gbm.param_grid` (currently defaults to 1.0 —
       stochastic gradient boosting per gbm-boosting-theory §3 is missing).
+      **Done:** added `"subsample": [0.5, 0.8, 1.0]` (gbm-boosting-theory §3's own
+      suggested values) to `config.json → gbm.param_grid`; applies to both the
+      XGBClassifier and XGBRegressor grids in `_train_pipeline.py` with no code
+      change needed (XGBoost's sklearn API already accepts `subsample`). Verified
+      with a smoke-fit. Note: this 3x's the grid size on top of the existing 12
+      combos — the gbm-boosting-theory skill's `n_estimators` widening ([100,200] →
+      +500,1000) is a separate, not-yet-done follow-up since small `learning_rate`
+      needs more trees to converge; left out of this commit to keep it scoped.
 - [ ] Extract and persist GBM `feature_importances_` to
       `results/gbm_feature_importance.csv` after training (gbm-boosting-theory §4) —
       currently never computed anywhere.
