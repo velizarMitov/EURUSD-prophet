@@ -140,10 +140,14 @@ only ever carries a *past* value forward — never a future value backward — s
 
 ### 2.3 Merge & timezone alignment — `merge_macro_features`
 
-`src/features.py:123-142`: left-joins `yield_differential` onto the OHLCV index.
-The OHLCV index is localized/converted to UTC for the join, the differential is
-`ffill()`-ed across weekend FX bars and bond holidays, then the **original index
-is restored**. Zero look-ahead regardless of calendar offset.
+`src/features.py:123-142`: left-joins `yield_differential` (the raw US10Y−DE10Y
+**level**) onto the OHLCV index. The OHLCV index is localized/converted to UTC for
+the join, the differential is `ffill()`-ed across weekend FX bars and bond
+holidays, then the **original index is restored**. Zero look-ahead regardless of
+calendar offset. This function is unchanged by §4.3's feature revision below — it
+still produces the raw level, used for the dashboard's human-readable display;
+the model-facing transform (`yield_differential_delta`) is derived downstream in
+`compute_features` (§2.4), not here.
 
 ### 2.4 Feature transformation — `compute_features`
 
@@ -161,7 +165,7 @@ is restored**. Zero look-ahead regardless of calendar offset.
 | Cyclical time | `day_sin, day_cos, month_sin, month_cos` | sin/cos encoding (wrap-around preserved) |
 | Range | `ATR_14` | True Range, 14-period EWM (`com=13`) |
 | Bands | `BB_width` | `4·std / mid` (normalized Bollinger width) |
-| Exogenous macro | `yield_differential` | passthrough (must be pre-merged) |
+| Exogenous macro | `yield_differential_delta` | `yield_differential.diff(1)` — the raw level (pre-merged, passthrough) stationarized exactly like `log_return` is derived from `close`; see §4.3 |
 
 **Critical live-edge property:** `compute_features` does **not** compute targets
 and does **not** `dropna`, so the most-recent bar (which has no future bar to
@@ -438,19 +442,37 @@ this target would be **overfitting noise and lying about its certainty**. The
 practical implication (also noted in §4.5): `predicted_return_pct` should be read
 as near-noise, not as a tradeable magnitude.
 
-### 4.3 FRED feature — ablation shows net-negative effect
+### 4.3 FRED feature — raw level was net-negative; the stationarized delta flips it positive
 
-`results/2C_fred_ablation.csv`:
+`results/2C_fred_ablation.csv` (methodology: notebook §2C's quick GBM classifier,
+no grid search, same chronological 80/20 split, `WITHOUT` vs `WITH` the feature):
 
 | Variant | Accuracy | ROC-AUC |
 |---|---|---|
-| WITHOUT `yield_differential` | 0.5040 | 0.5071 |
-| WITH `yield_differential` | 0.5002 | 0.5050 |
-| **Δ (FRED effect)** | **−0.0039** | **−0.0021** |
+| WITHOUT the FRED feature | 0.5040 | 0.5071 |
+| WITH `yield_differential` (raw level — **superseded**) | 0.5002 | 0.5050 |
+| Δ (raw-level FRED effect) | **−0.0039** | **−0.0021** |
+| WITH `yield_differential_delta` (diff(1) — **current production feature**) | 0.5069 | 0.5103 |
+| Δ (delta-feature FRED effect) | **+0.0029** | **+0.0032** |
 
-The macro feature is fully wired through training and inference, but on this
-target it **slightly hurts** test metrics. It is retained for architectural/
-academic completeness; its production value is **not yet demonstrated**.
+**Root cause and fix.** The raw level is a slow-trending, highly persistent
+series (bond yields move in multi-month trends) — feeding it directly to a
+next-day model is the same class of mistake the project already avoids
+elsewhere: `log_return` is used instead of raw `close`, `bar_dynamics` instead
+of raw `high`/`low`, because a next-day model should see *change*, not *level*.
+Re-running the identical ablation with `yield_differential.diff(1)` (§2.4) in
+place of the raw level flips the effect from net-negative to net-positive on
+both metrics — small, consistent with everything else on this near-efficient
+target (§4.2.1), but real and in the theory-predicted direction. The raw level
+is still merged and displayed on the dashboard (`bar_used.yield_differential`,
+unchanged) — only the **model-facing** feature changed.
+
+**Follow-up not yet done:** the notebook's own §2C ablation cell computes this
+same comparison dynamically (it imports `FEATURE_COLUMNS`/`merge_macro_features`/
+`compute_features` from `src/features.py`, so it will pick up the new delta
+feature automatically on its next execution) but its markdown narrative still
+describes the old raw-level result and has not been re-run to confirm the
+notebook environment reproduces the same numbers as this standalone check.
 
 ### 4.4 Known defects — fixed in this branch
 
@@ -470,7 +492,7 @@ academic completeness; its production value is **not yet demonstrated**.
 
 | Risk | Where | Mitigation in place | Residual exposure |
 |---|---|---|---|
-| **Stale macro at live edge** | `merge_macro_features` ffill | weekend/holiday gaps inherit last differential | If the live price index is newer than the newest FRED obs, the latest bars carry a *stale* differential (ffill cannot interpolate the future) |
+| **Stale macro at live edge** | `merge_macro_features` ffill | weekend/holiday gaps inherit last differential | If the live price index is newer than the newest FRED obs, the latest bars carry a *stale* differential (ffill cannot interpolate the future). Since §4.3, the model actually consumes `yield_differential_delta` (diff of the ffilled level) — a run of stale/repeated level values now correctly diffs to `0` ("no new information"), which is arguably a more honest signal than a stale level pretending to be current |
 | **LSTM direction at chance** | model quality | low-confidence consensus guard (§3.3) downgrades a coin-flip agreement to `MIXED / LOW CONFIDENCE` | A near-chance head still contributes when averaged confidence ≥ 0.52 |
 | **History CSV legacy schema** | `results/eurusd_features.csv` | `load_history` selects only OHLCV cols (`src/features.py:147-148`) | The CSV's precomputed feature columns are an *older* schema and are ignored — only raw OHLCV is consumed and features are recomputed fresh |
 
@@ -490,7 +512,7 @@ unified-pipeline refactor:
 | File | Category | Coverage |
 |---|---|---|
 | `tests/test_smoke.py` | Smoke | All 7 production artifacts (incl. the single `global_scaler.pkl`) + `eurusd_features.csv` + `config.json` + `.env.example` exist |
-| `tests/test_unit.py` | Unit (28 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead**, FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes` |
+| `tests/test_unit.py` | Unit (29 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead** (both the raw level and the derived `yield_differential_delta`), FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes` |
 | `tests/test_integration.py` | Integration | `POST /api/predict` contract (schema, bounds `0≤conf≤1`, direction ∈ {UP,DOWN}, consensus presence), static UI route |
 
 ---

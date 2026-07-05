@@ -1,4 +1,6 @@
 ,Accuracy,ROC-AUC
 WITHOUT yield_differential,0.504,0.5071
-WITH yield_differential,0.5002,0.505
-Δ  (FRED effect),-0.0039,-0.0021
+WITH yield_differential (raw level -- superseded),0.5002,0.505
+Delta (raw-level FRED effect -- net negative),-0.0039,-0.0021
+WITH yield_differential_delta (diff(1) -- current production feature),0.5069,0.5103
+Delta (delta-feature FRED effect -- net positive),0.0029,0.0032

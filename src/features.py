@@ -22,13 +22,24 @@ from sklearn.preprocessing import StandardScaler
 # passthrough column like tick_volume: it must already be present on the
 # DataFrame passed into compute_features()/add_advanced_features() -- see
 # merge_macro_features() below -- since it is exogenous macro data, not
-# something derivable from OHLCV alone.
+# something derivable from OHLCV alone. It is NOT fed to the model directly --
+# see yield_differential_delta below.
+#
+# yield_differential_delta = yield_differential.diff(1), computed in
+# compute_features() exactly like log_return is derived from close. The raw
+# LEVEL is highly persistent/non-stationary (bond yields trend for months) and
+# results/2C_fred_ablation.csv showed it net-HURTS the GBM direction classifier
+# (Accuracy -0.0039, ROC-AUC -0.0021 vs without). A quick re-ablation
+# (day-over-day change, mirroring why the model uses log_return instead of raw
+# close) flips the sign: Accuracy +0.0029, ROC-AUC +0.0032 vs without. The raw
+# level is still merged and kept (unchanged) for the dashboard's human-readable
+# "US10Y-DE10Y Yield Differential" display -- only the MODEL feature changed.
 FEATURE_COLUMNS = [
     'open', 'high', 'low', 'close', 'log_return',
     'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20',
     'bar_dynamics', 'return_lag_1', 'dynamics_lag_1', 'return_lag_2',
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos',
-    'month_sin', 'month_cos', 'ATR_14', 'BB_width', 'yield_differential',
+    'month_sin', 'month_cos', 'ATR_14', 'BB_width', 'yield_differential_delta',
 ]
 
 # The 6 autoregressive lag columns are the most mutually correlated block in
@@ -51,7 +62,8 @@ DEFAULT_HISTORY_PATH = os.path.join(
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute the 24 FEATURE_COLUMNS from raw OHLCV (+ yield_differential, if
-    already merged in via merge_macro_features). Unlike add_advanced_features,
+    already merged in via merge_macro_features -- the model consumes its
+    diff(1), yield_differential_delta, derived here). Unlike add_advanced_features,
     this does NOT compute targets or drop rows, so the most recent bar (which
     has no future bar to derive a target from) survives — required for live
     inference on the latest available row.
@@ -60,6 +72,13 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # 1. Log return (Stationarity)
     data['log_return'] = np.log(data['close'] / data['close'].shift(1))
+
+    # 1b. Yield differential DELTA (stationarity, same rationale as log_return
+    # above): the raw level is a slow-moving trend, not something a next-day
+    # model should read directly. diff(1) uses only the current and immediately
+    # preceding (already-ffilled) rows, so this introduces no look-ahead beyond
+    # what merge_macro_features's own ffill already guarantees.
+    data['yield_differential_delta'] = data['yield_differential'].diff(1)
 
     # 2. Simple Moving Averages
     for period in [21, 50, 100, 200]:

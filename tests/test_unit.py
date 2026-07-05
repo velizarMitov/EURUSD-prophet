@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from src.features import (
-    add_advanced_features, build_live_features, merge_macro_features, FEATURE_COLUMNS, TARGET_RETURN_COLUMN,
-    TARGET_DIRECTION_COLUMN, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
+    add_advanced_features, build_live_features, merge_macro_features, compute_features, FEATURE_COLUMNS,
+    TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
 )
 
 def test_feature_engineering_success():
@@ -121,6 +121,34 @@ def test_merge_macro_features_no_lookahead_on_weekend_gap():
     assert merged.loc[ohlcv_dates[2], 'yield_differential'] == pytest.approx(1.50), "Sunday must inherit Friday's value."
     assert merged.loc[ohlcv_dates[3], 'yield_differential'] == pytest.approx(1.80), "Monday must use its own value, not Friday's."
     assert list(merged.index) == list(ohlcv_dates), "merge_macro_features must preserve the caller's original index labels."
+
+
+def test_yield_differential_delta_no_lookahead_on_weekend_gap():
+    """The MODEL-facing feature is yield_differential_delta = diff(1) of the
+    (already ffilled) level, computed in compute_features. A Saturday/Sunday
+    delta must be derived only from Friday's ffilled level -- never from
+    Monday's future print -- exactly the same no-look-ahead guarantee the raw
+    level enjoys via merge_macro_features's ffill."""
+    ohlcv_dates = pd.to_datetime(['2026-06-18', '2026-06-19', '2026-06-20', '2026-06-21', '2026-06-22'])  # Thu..Mon
+    ohlcv = pd.DataFrame({
+        'open': [1.1] * 5, 'high': [1.1] * 5, 'low': [1.1] * 5, 'close': [1.1] * 5, 'tick_volume': [1] * 5,
+    }, index=ohlcv_dates)
+
+    macro = pd.DataFrame(
+        {'yield_differential': [1.40, 1.50, 1.80]},
+        index=pd.DatetimeIndex(['2026-06-18', '2026-06-19', '2026-06-22'], tz='UTC'),
+    )
+
+    merged = merge_macro_features(ohlcv, macro)
+    engineered = compute_features(merged)
+    delta = engineered['yield_differential_delta']
+
+    assert delta.loc[ohlcv_dates[1]] == pytest.approx(0.10), "Friday: 1.50 - 1.40 (own value vs prior day)."
+    assert delta.loc[ohlcv_dates[2]] == pytest.approx(0.0), \
+        "Saturday must diff against Friday's ffilled level (1.50-1.50=0), never Monday's future 1.80."
+    assert delta.loc[ohlcv_dates[3]] == pytest.approx(0.0), \
+        "Sunday must diff against Saturday's ffilled level (1.50-1.50=0), never Monday's future 1.80."
+    assert delta.loc[ohlcv_dates[4]] == pytest.approx(0.30), "Monday: 1.80 - 1.50 (own new value vs weekend ffill)."
 
 
 def test_fetch_yield_differential_prefers_fred_api(monkeypatch, tmp_path):
