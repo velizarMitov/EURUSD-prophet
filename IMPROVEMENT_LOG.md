@@ -24,6 +24,9 @@ still open. One backlog item = one commit; do not batch items together.
       <0.55 "weak" flag, and logged to MLflow as `multitask_sign_agreement`. If it
       comes back near 50% on the next retrain, the shared trunk isn't earning its
       keep and two single-task models should be A/B'd against it.
+      **Retrain result:** 0.7249 ("shared signal present") — well above the 0.55
+      threshold. The shared `lstm_trunk` is empirically justified; no need to A/B
+      against two single-task models at this time.
 - [x] Add `subsample` to `config.json`'s `gbm.param_grid` (currently defaults to 1.0 —
       stochastic gradient boosting per gbm-boosting-theory §3 is missing).
       **Done:** added `"subsample": [0.5, 0.8, 1.0]` (gbm-boosting-theory §3's own
@@ -78,14 +81,47 @@ still open. One backlog item = one commit; do not batch items together.
       `GradientBoostingClassifier`/`GBClassifier`/`GBRegressor` labels in §3.1 and
       §5.1 to the real `xgb.XGBClassifier`/`xgb.XGBRegressor`, and the test count
       (18 → 28, `worst_mistakes` + 5 H1 tests already existed but were uncounted).
-- [ ] Revisit the FRED `yield_differential` feature — `results/2C_fred_ablation.csv`
+- [x] Revisit the FRED `yield_differential` feature — `results/2C_fred_ablation.csv`
       shows it's net-negative (-0.0039 acc). Decide: drop it, or replace with a
       momentum/delta version instead of raw level.
+      **Done:** replaced the raw-level model feature with `yield_differential_delta`
+      (`diff(1)`, derived in `compute_features` exactly like `log_return` is
+      derived from `close` — same stationarity rationale). The raw level merge
+      (`merge_macro_features`) is untouched and still feeds the dashboard's human-
+      readable display (`bar_used.yield_differential`); only the model-facing
+      feature changed. Standalone ablation (notebook §2C's exact quick-GBM
+      methodology, same split): raw level was net-negative (acc −0.0039, auc
+      −0.0021); the delta flips both positive (acc +0.0029, auc +0.0032) —
+      confirmed by a **full retrain**: `yield_differential_delta` ranks 22/24 by
+      Gini importance (0.0358, comparable to other mid-pack features, not dead
+      weight). Added `test_yield_differential_delta_no_lookahead_on_weekend_gap`
+      proving the diff never leaks a future Monday value into a ffilled
+      Sat/Sun. Updated `results/2C_fred_ablation.csv` (kept the old raw-level row
+      for the before/after record) and `ARCHITECTURE_DOCS.md` §2.3/§2.4/§4.3/§4.5.
+      End-to-end verified: `bar_used.yield_differential` still shows the raw level
+      (1.4335) post-retrain, confirming display/model decoupling. All 32 tests pass.
 - [ ] (Stretch) Add probability calibration (`CalibratedClassifierCV`) to the GBM
       classifier so `CONFIDENCE_THRESHOLD=0.52` in `src/inference.py` is judging a
       calibrated probability, not a raw `predict_proba`.
 - [ ] (Stretch) Add a simple backtest with transaction costs on the held-out test
       block to see if any edge survives spread/slippage.
+- [ ] **NEW (discovered via item 1's train-set diagnostic):** the GBM direction
+      classifier shows train ROC-AUC=0.7798 vs test ROC-AUC=0.5059 (gap +0.2740) on
+      the item-7 retrain — this is **not** the efficient-market floor documented in
+      `ARCHITECTURE_DOCS.md §4.2.1` (train≈test≈0.50), it's classic high-variance
+      overfitting per the model-tuning-bias-variance decision tree. Selected
+      hyperparameters this run: `max_depth=5, n_estimators=100, subsample=1.0` (grid
+      did NOT pick a subsample <1.0 despite item 3's new axis). The LSTM shows the
+      same pattern but far milder (train 0.59 vs test 0.4993, gap +0.0907 — its
+      Dropout is doing real regularization work the GBM lacks). Since train-set
+      logging never existed before this session, it's unknown whether this gap is
+      new or has always been there, silently. Action for next pass: constrain
+      `max_depth` lower (e.g. `[2, 3]` instead of `[3, 5]`) and/or force
+      `subsample <= 0.8` in `config.json → gbm.param_grid`, then re-check the gap on
+      a retrain — per model-tuning-bias-variance, do not conclude "efficient
+      market" for the GBM head until this is addressed. Also worth updating
+      `ARCHITECTURE_DOCS.md §4.2`'s "Honest performance reality" table, which
+      currently only reports test-side numbers for the daily heads.
 
 ## Working rules
 
