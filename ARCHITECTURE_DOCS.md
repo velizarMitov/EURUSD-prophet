@@ -442,6 +442,49 @@ this target would be **overfitting noise and lying about its certainty**. The
 practical implication (also noted in §4.5): `predicted_return_pct` should be read
 as near-noise, not as a tradeable magnitude.
 
+### 4.2.2 Probability calibration — evaluated, not adopted
+
+A natural follow-up question: is the GBM classifier's `predict_proba` a genuinely
+**calibrated** probability, or just a raw score `compute_consensus`'s
+`CONFIDENCE_THRESHOLD=0.52` guard (§3.3) treats as one? This was tested directly —
+wrapping the tuned classifier in `sklearn.calibration.CalibratedClassifierCV`
+(Platt/sigmoid scaling, `TimeSeriesSplit` folds, same held-out test block) — and
+**deliberately not adopted**, for the same reason §4.2.1's Huber shrinkage is a
+feature rather than a defect: there is essentially no calibration gap to close on
+this target.
+
+| Predictor | Brier score (test) |
+|---|---|
+| Trivial **"always predict the base rate"** baseline (train-set mean, `ŷ = 0.4892`) | **0.25013** |
+| Raw tuned GBM `predict_proba` (uncalibrated) | 0.25063 (**worse** than the trivial baseline) |
+| + `CalibratedClassifierCV(method='sigmoid')` | 0.25025 |
+| + `CalibratedClassifierCV(method='isotonic')` | 0.25038 |
+
+The raw classifier's probabilities are, by Brier score, *indistinguishable from —
+in fact microscopically worse than* — a constant that always predicts the
+training-set base rate. Both calibration variants pull the score closer to that
+same trivial baseline (which is literally what Platt/isotonic scaling does when a
+model carries near-zero real signal), but the "improvement" is entirely calibration
+correctly discounting a classifier that has nothing to calibrate. This is the
+classification-side twin of §4.2.1's `MAE 0.2959% vs baseline 0.2958%` regression
+finding — the same efficient-market conclusion, now confirmed via a second, unrelated
+metric (Brier score vs baseline) and a second, unrelated model family test (binary
+calibration vs regression shrinkage).
+
+**Why it was not shipped despite the (tiny) Brier improvement:** sigmoid calibration
+collapses the predicted-probability range from `[0.333, 0.672]` (raw) to
+`[0.461, 0.513]` — under `CONFIDENCE_THRESHOLD=0.52`, this means the GBM head would
+almost **never** cross the confidence guard again, silently changing
+`compute_consensus`'s real-world behavior (near-permanent `MIXED / LOW CONFIDENCE`)
+for a Brier gain of `0.00050 → 0.00012` (both already within noise of the trivial
+baseline). Isotonic keeps a wider range (`[0.395, 0.610]`) but the same
+near-baseline Brier finding holds. Adopting calibration here would trade a real,
+visible behavior change for a statistically negligible accuracy-of-belief gain —
+the same "honest shrinkage over confident-looking noise" principle §4.2.1 already
+establishes, just evaluated and rejected on the classification side instead of
+silently assumed. If a future retrain shows the raw classifier's ROC-AUC pull away
+from chance, this decision should be revisited.
+
 ### 4.3 FRED feature — raw level was net-negative; the stationarized delta flips it positive
 
 `results/2C_fred_ablation.csv` (methodology: notebook §2C's quick GBM classifier,

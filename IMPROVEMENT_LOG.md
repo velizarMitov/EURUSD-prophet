@@ -100,9 +100,31 @@ still open. One backlog item = one commit; do not batch items together.
       for the before/after record) and `ARCHITECTURE_DOCS.md` §2.3/§2.4/§4.3/§4.5.
       End-to-end verified: `bar_used.yield_differential` still shows the raw level
       (1.4335) post-retrain, confirming display/model decoupling. All 32 tests pass.
-- [ ] (Stretch) Add probability calibration (`CalibratedClassifierCV`) to the GBM
+- [x] (Stretch) Add probability calibration (`CalibratedClassifierCV`) to the GBM
       classifier so `CONFIDENCE_THRESHOLD=0.52` in `src/inference.py` is judging a
       calibrated probability, not a raw `predict_proba`.
+      **Evaluated, NOT adopted** (a real decision, not a no-op): implemented
+      `CalibratedClassifierCV(method='sigmoid', cv=TimeSeriesSplit)` in
+      `_train_pipeline.py`, smoke-tested it end-to-end (joblib round-trip,
+      `hasattr(_, 'get_booster')` device-guard compatibility confirmed), then ran a
+      quick standalone check against the real project data before committing to a
+      full retrain: Brier score barely moves (raw 0.25063 -> sigmoid 0.25025 ->
+      isotonic 0.25038), and a **trivial "always predict the train base rate"**
+      baseline already scores 0.25013 -- the raw classifier's probabilities are
+      already statistically indistinguishable from (microscopically worse than)
+      that constant baseline, so there is essentially nothing for calibration to
+      fix. Sigmoid's tiny Brier "improvement" comes entirely from collapsing the
+      predicted-probability range from `[0.333,0.672]` to `[0.461,0.513]`, which
+      would push `CONFIDENCE_THRESHOLD=0.52` to almost never trigger again --
+      trading a real, user-visible behavior change (dashboard defaults to
+      `MIXED / LOW CONFIDENCE` almost permanently) for a negligible accuracy-of-
+      belief gain. **Reverted the code change** (confirmed via `git diff` showing
+      zero diff on `_train_pipeline.py` against the item-7 commit) rather than
+      ship it. Documented the full evidence trail as new `ARCHITECTURE_DOCS.md`
+      §4.2.2, mirroring §4.2.1's "predict the mean" framing — this is the
+      classification-side twin of that same efficient-market finding. If a future
+      retrain shows the raw classifier pulling meaningfully away from chance
+      ROC-AUC, this decision should be revisited.
 - [ ] (Stretch) Add a simple backtest with transaction costs on the held-out test
       block to see if any edge survives spread/slippage.
 - [ ] **NEW (discovered via item 1's train-set diagnostic):** the GBM direction
