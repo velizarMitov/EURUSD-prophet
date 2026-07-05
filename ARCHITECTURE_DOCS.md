@@ -17,7 +17,8 @@
 | Standalone trainer | `_train_pipeline.py` | Headless reproduction of the notebook's training sections; writes `models/` + MLflow. |
 | Inference core | `src/inference.py` | `PredictionService` — loads artifacts once, serves t+1 predictions. **Shared by both frontends.** |
 | Feature engineering | `src/features.py` | The 24-column `FEATURE_COLUMNS` contract, PCA on lag block, macro merge. |
-| Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV. |
+| Auxiliary intraday feature engineering | `src/h1_features.py` | H1→Daily feature module for the auxiliary ensemble (§3.4) — flattened daily stats + 24h tensor, both including `Trend_vs_SMA504`/`RSI_24`. Independent of `src/features.py`. |
+| Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV (also `fetch_h1_market_data` for the H1 stream). |
 | Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
 | Web app (single entry point) | `api.py` | FastAPI server: serves `static/index.html` at `/`, `POST /api/predict`, `GET /history`, `POST /api/retrain`. Port 8000. |
 | Config | `config.json` | All hyperparameters + paths. Single source of truth. |
@@ -198,12 +199,35 @@ leakage-free.
 `_predict_gbm` (`src/inference.py:129-146`) consumes **one flat PCA-reduced row**
 (`window.iloc[-1]`), scales it with the single `global_scaler`, and runs two heads:
 
-- **Classifier** `best_gbm_eurusd.pkl` — `GradientBoostingClassifier`, tuned for
+- **Classifier** `best_gbm_eurusd.pkl` — `xgb.XGBClassifier`, tuned for
   `roc_auc`. Emits `predict_proba` → `direction` (UP/DOWN) + `confidence`.
-- **Regressor** `best_gbm_regressor_eurusd.pkl` — `GradientBoostingRegressor`,
-  `loss='huber'`, `alpha=0.9`, tuned for MAE. Emits `predicted_return`
-  **natively in percent** — the regressor is now trained on the percent target
-  produced by `src/features.py`, so there is **no `*100` rescaling** at inference.
+- **Regressor** `best_gbm_regressor_eurusd.pkl` — `XGBRegressor(objective='reg:pseudohubererror')`,
+  tuned for MAE. Emits `predicted_return` **natively in percent** — the regressor
+  is now trained on the percent target produced by `src/features.py`, so there is
+  **no `*100` rescaling** at inference.
+
+  **Why a Huber-family loss, not squared error (ESL §10.6):** daily EUR/USD
+  returns are a long-tailed, occasionally outlier-prone target (quiet noise most
+  days, occasional large jumps around macro releases) — exactly the scenario ESL
+  cites as squared-error's weak point ("its performance severely degrades for
+  long-tailed error distributions and especially for grossly mis-measured
+  y-values"). A Huber-family loss trades squared-error's sensitivity near zero for
+  a linear (robust) penalty on large residuals.
+
+  **Known doc/config drift on `huber_alpha`:** `config.json → gbm.huber_alpha`
+  (`0.9`) is logged to MLflow as a record of intent but is **never passed to the
+  `XGBRegressor` constructor** — it does not control anything at training time.
+  sklearn's `GradientBoostingRegressor(loss='huber', alpha=0.9)` (which the name
+  and the `0.9` value evoke) would set its `δ` threshold *adaptively per boosting
+  iteration* to the 90th-percentile of current absolute residuals — but this repo
+  trains `xgb.XGBRegressor`, whose pseudo-Huber objective instead exposes a fixed
+  `huber_slope` hyperparameter (default `1.0`, unset here), not an adaptive
+  quantile. In short: the `huber_alpha` name and value currently describe a
+  mechanism (sklearn's adaptive-quantile Huber) that is **not the one actually
+  running** (XGBoost's fixed-slope pseudo-Huber). This is a documentation/naming
+  gap, not a correctness bug — training still proceeds with a sensible default —
+  but wiring `huber_slope=CONFIG['gbm']['huber_alpha']` explicitly (or renaming the
+  config key to avoid the implied sklearn semantics) is an open follow-up.
 
 ### 3.2 Multi-Task LSTM (sequence model)
 
@@ -251,6 +275,81 @@ constant `CONFIDENCE_THRESHOLD = 0.52`:
 
 The response dict carries `as_of_date`, `forecasting_date`, `data_source`,
 `bar_used` (incl. `macro_source`), the per-model blocks, and `consensus`.
+
+### 3.4 Auxiliary H1→Daily Ensemble (XGBoost / RandomForest / SVM / LSTM)
+
+A second, **fully independent** predictor sits alongside the daily GBM+LSTM
+committee above. It answers the same next-day question from a different data
+source — hourly (H1) OHLCV collapsed into daily statistics — rather than from the
+daily bar history `src/features.py` consumes. It is additive: it never touches
+the 7 canonical daily artifacts, has its own readiness gate, and degrades
+independently if its data or models are unavailable.
+
+**Data & features — `src/h1_features.py`:** `load_h1_frame` reads (or fetches, via
+`src/live_data.py::fetch_h1_market_data`, MT5 → yfinance → cache) a UTC-indexed H1
+OHLCV stream. Two aligned representations are built from it, sharing one daily
+index and one `shift(-1)` next-day target (`build_daily_target`, percent, same
+no-look-ahead contract as `src/features.py`):
+
+| Representation | Shape | Consumers | Columns |
+|---|---|---|---|
+| Flattened daily stats | `(n_days, 11)` | XGBoost / RandomForest / SVM | `Intraday_Volatility`, `Intraday_Momentum`, `Daily_Range`, `H1_Moving_Average`, `H1_Volume_Mean`, `H1_Return_Skew`, `H1_Max_Abs_Return`, `First_Half_Return`, `Second_Half_Return`, `Trend_vs_SMA504`, `RSI_24` |
+| 24h tensor | `(n_days, 24, 5)` | LSTM (seq2vec) | `log_return`, `hl_range`, `co_change`, `volume`, `rsi_24` per hour |
+
+`Trend_vs_SMA504` (`close / SMA504 − 1`, a 504-H1-bar ≈ 21-trading-day trend
+baseline) and `RSI_24`/`rsi_24` (a 24-period RSI, i.e. one trading day of hourly
+momentum) are computed on the **continuous hourly stream** with trailing-only
+windows (`_rsi`, `_enrich_hourly`), so they carry cross-day context without
+violating the no-look-ahead invariant — verified by
+`test_h1_features_do_not_depend_on_future_days`.
+
+**Training — `_train_pipeline.py` Section 13:** additive to the daily pipeline;
+refreshes the H1 cache (`fetch_h1_market_data`, live → existing-cache fallback) and
+retrains all four models on a chronological 80/20 split of the flattened dataset,
+scored with `TimeSeriesSplit`, mirroring the daily invariants (§ above) but on its
+own split and its own scalers (`h1_feature_scaler.pkl`, `h1_lstm_scaler.pkl` — kept
+fully separate from the daily `global_scaler.pkl`).
+
+**Serving — `src/inference.py`:** `PredictionService` loads the 8 H1 artifacts
+(`h1_xgb_regressor.pkl`, `h1_rf_regressor.pkl`, `h1_svm_regressor.pkl`,
+`h1_feature_scaler.pkl`, `h1_lstm_scaler.pkl`, `h1_feature_columns.pkl`,
+`h1_lstm_config.pkl`, `h1_lstm.keras`) independently of the daily 7, gated by
+`h1_ready` (all 8 present). `predict()` only attempts `_predict_h1()` if
+`h1_ready`; any failure there (thin H1 feed, feature-shape mismatch after a
+feature-set change not yet retrained, etc.) is caught and surfaced as
+`response['h1_error']` — it **never** fails the daily prediction. `_predict_h1`
+runs on the latest **complete** trading day (`build_h1_inference_sample` drops the
+still-forming current UTC day), and each of the four models is a **return-only
+regressor** — direction is derived from the sign of the predicted return, there is
+no calibrated probability.
+
+`compute_h1_consensus` (static method) aggregates the four regressors
+independently of the daily committee's `compute_consensus`: direction is the
+majority sign, `confidence` is the **fraction of models agreeing** (a genuine
+[0.5, 1.0] agreement measure — **not** a calibrated probability, unlike the daily
+consensus's `confidence`), and `predicted_return_pct` is the mean across all four.
+`agreement=True` only on a unanimous sign.
+
+```jsonc
+"h1": {
+  "as_of_date": "YYYY-MM-DD",
+  "predictions": {
+    "h1_xgboost":       { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_random_forest":  { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_svm":            { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_lstm":           { "direction": "UP|DOWN", "predicted_return_pct": float }
+  },
+  "consensus": { "direction": "UP|DOWN", "agreement": bool, "confidence": 0.5-1.0, "predicted_return_pct": float, "n_models": 4 }
+}
+// or, on any failure: "h1_error": "<message>"
+```
+
+`src/tracking.py::log_prediction` also logs the H1 consensus (`h1_direction`,
+`h1_return_pct`, `h1_agreement`) alongside the daily forecast, and
+`build_history_html` scores it against the same realised close in its own
+"H1 ensemble" column with its own hit-rate — independent of the daily
+committee's hit-rate. The static UI (`static/index.html`) renders the H1 block as
+a separate "Auxiliary Intraday Ensemble" section below the daily cards.
 
 ---
 
@@ -391,7 +490,7 @@ unified-pipeline refactor:
 | File | Category | Coverage |
 |---|---|---|
 | `tests/test_smoke.py` | Smoke | All 7 production artifacts (incl. the single `global_scaler.pkl`) + `eurusd_features.csv` + `config.json` + `.env.example` exist |
-| `tests/test_unit.py` | Unit (18 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead**, FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases |
+| `tests/test_unit.py` | Unit (28 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead**, FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes` |
 | `tests/test_integration.py` | Integration | `POST /api/predict` contract (schema, bounds `0≤conf≤1`, direction ∈ {UP,DOWN}, consensus presence), static UI route |
 
 ---
@@ -407,10 +506,23 @@ unified-pipeline refactor:
 | `lag_scaler.pkl` | joblib / StandardScaler (lag block, pre-PCA) | `_train_pipeline.py` |
 | `lag_pca.pkl` | joblib / PCA | `_train_pipeline.py` |
 | `global_scaler.pkl` | joblib / StandardScaler (**single, shared by both models**) | `_train_pipeline.py` |
-| `best_gbm_eurusd.pkl` | joblib / GBClassifier | `_train_pipeline.py` |
-| `best_gbm_regressor_eurusd.pkl` | joblib / GBRegressor | `_train_pipeline.py` |
+| `best_gbm_eurusd.pkl` | joblib / `xgb.XGBClassifier` | `_train_pipeline.py` |
+| `best_gbm_regressor_eurusd.pkl` | joblib / `xgb.XGBRegressor` (`reg:pseudohubererror`) | `_train_pipeline.py` |
 | `lstm_multitask_eurusd.keras` | Keras native format | `_train_pipeline.py` |
 | `lstm_time_steps.pkl` | joblib / int (20) | `_train_pipeline.py` |
+
+**Auxiliary H1→Daily ensemble (§3.4, loaded independently — gated by `h1_ready`):**
+
+| File | Type | Produced by |
+|---|---|---|
+| `h1_xgb_regressor.pkl` | joblib / `xgb.XGBRegressor` | `_train_pipeline.py` §13 |
+| `h1_rf_regressor.pkl` | joblib / `RandomForestRegressor` | `_train_pipeline.py` §13 |
+| `h1_svm_regressor.pkl` | joblib / `SVR` (RBF) | `_train_pipeline.py` §13 |
+| `h1_feature_scaler.pkl` | joblib / StandardScaler (flat features) | `_train_pipeline.py` §13 |
+| `h1_lstm_scaler.pkl` | joblib / StandardScaler (24h tensor) | `_train_pipeline.py` §13 |
+| `h1_feature_columns.pkl` | joblib / list[str] (`FLAT_FEATURE_COLUMNS` order) | `_train_pipeline.py` §13 |
+| `h1_lstm_config.pkl` | joblib / dict (`hours`, `seq_features`) | `_train_pipeline.py` §13 |
+| `h1_lstm.keras` | Keras native format | `_train_pipeline.py` §13 |
 
 **Exploratory (notebook baselines, not loaded in production):**
 `exploratory_gbm_baseline.pkl`, `exploratory_gbm_scaler.pkl`,
@@ -481,3 +593,5 @@ history), with FRED still reachable at runtime.
 | Consensus shows `MIXED / LOW CONFIDENCE` | both heads agree but averaged confidence < 0.52 (low-confidence guard) | `src/inference.py` `compute_consensus` |
 | Notebook §20 "tests failed" | (fixed) subprocess `cwd` not set to repo root | notebook cells 20a/20b |
 | `yield_differential.csv` shrank dramatically | (fixed) cache overwrite instead of merge | `src/macro_data.py:80-101` |
+| `h1_ready == False` / response carries `h1_error` instead of `h1` | one of the 8 H1 artifacts missing/corrupt, **or** a feature-set change (e.g. new flat/seq columns) not yet followed by a retrain — the saved scalers expect the old column count and raise a shape mismatch | `src/inference.py` `_predict_h1` (§3.4); never fails the daily prediction |
+| H1 `feature_importances_`/scaler shape error right after editing `src/h1_features.py` | `FLAT_FEATURE_COLUMNS`/`SEQ_FEATURE_COLUMNS` changed but `models/h1_*` weren't regenerated | run `_train_pipeline.py` (§13 refreshes the H1 cache and retrains all four) |

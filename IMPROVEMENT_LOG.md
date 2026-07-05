@@ -59,10 +59,25 @@ still open. One backlog item = one commit; do not batch items together.
       `ARCHITECTURE_DOCS.md §4.2.1`, not a fixable pattern. Added
       `test_worst_mistakes_ranks_by_absolute_error_and_excludes_pending` to
       `tests/test_unit.py`.
-- [ ] Update `ARCHITECTURE_DOCS.md`: document the H1→Daily ensemble module
+- [x] Update `ARCHITECTURE_DOCS.md`: document the H1→Daily ensemble module
       (`src/h1_features.py`, `h1_ready` gate) which currently has zero coverage
       despite being wired into `predict()`; also add the `huber_alpha` adaptive-
       quantile clarification from gbm-boosting-theory §1.
+      **Done:** added new §3.4 (data/features/training/serving/response-shape for
+      the H1 ensemble), a Component Map row for `src/h1_features.py`, an H1
+      artifacts table in §5.1, an H1 row in §4.6 test inventory, and two Appendix A
+      failure-mode rows (`h1_ready==False`, post-feature-change shape mismatch).
+      **Also found and corrected while there:** §3.1 said the return regressor
+      uses sklearn's `GradientBoostingRegressor(loss='huber', alpha=0.9)` with the
+      adaptive-quantile semantics gbm-boosting-theory describes — but the actual
+      code trains `xgb.XGBRegressor(objective='reg:pseudohubererror')`, and
+      `config.json`'s `huber_alpha` is **only logged to MLflow, never passed to the
+      constructor** (XGBoost's real threshold knob is `huber_slope`, unset, default
+      `1.0`). Documented this as an open doc/config drift rather than silently
+      "fixing" model behavior in a docs-only commit — also corrected the stale
+      `GradientBoostingClassifier`/`GBClassifier`/`GBRegressor` labels in §3.1 and
+      §5.1 to the real `xgb.XGBClassifier`/`xgb.XGBRegressor`, and the test count
+      (18 → 28, `worst_mistakes` + 5 H1 tests already existed but were uncounted).
 - [ ] Revisit the FRED `yield_differential` feature — `results/2C_fred_ablation.csv`
       shows it's net-negative (-0.0039 acc). Decide: drop it, or replace with a
       momentum/delta version instead of raw level.
