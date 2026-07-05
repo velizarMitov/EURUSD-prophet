@@ -35,6 +35,7 @@ from sklearn.metrics import (
     accuracy_score, roc_auc_score, mean_squared_error, mean_absolute_error
 )
 
+from src.backtest import backtest_table
 from src.features import (
     add_advanced_features, merge_macro_features, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
     FEATURE_COLUMNS, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
@@ -195,6 +196,17 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
     mse_gb = mean_squared_error(y_ret_test, y_pred_ret)
     mae_gb = mean_absolute_error(y_ret_test, y_pred_ret)
     print(f"[Return]    MSE={mse_gb:.6f}  MAE={mae_gb:.6f}  (percent units)")
+
+    # Backtest: does the direction signal's apparent edge survive a realistic
+    # spread? Simple daily long/short strategy on the SAME held-out test block,
+    # scored against the REAL realised return (y_ret_test), costed only on
+    # position changes (src/backtest.py). 1-2 pips is a representative retail
+    # EURUSD round-trip spread; 0 pips is the gross (no-cost) reference row.
+    backtest = backtest_table(y_ret_test, y_pred_dir, cost_scenarios_pips={"1 pip spread": 1.0, "2 pip spread": 2.0})
+    print("\n=== Backtest: GBM direction signal vs realistic transaction costs ===")
+    print(backtest.to_string(index=False))
+    backtest.to_csv("results/backtest_transaction_costs.csv", index=False)
+    print("Saved: results/backtest_transaction_costs.csv")
 
     # Train-set direction metrics -- NOT for model selection (that stays purely on
     # the held-out test block), but a diagnostic control. Per ml-practical-methodology

@@ -555,12 +555,44 @@ unified-pipeline refactor:
 | File | Category | Coverage |
 |---|---|---|
 | `tests/test_smoke.py` | Smoke | All 7 production artifacts (incl. the single `global_scaler.pkl`) + `eurusd_features.csv` + `config.json` + `.env.example` exist |
-| `tests/test_unit.py` | Unit (29 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead** (both the raw level and the derived `yield_differential_delta`), FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes` |
+| `tests/test_unit.py` | Unit (31 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead** (both the raw level and the derived `yield_differential_delta`), FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes`, **backtest cost-on-flip-only logic** (2 tests) |
 | `tests/test_integration.py` | Integration | `POST /api/predict` contract (schema, bounds `0≤conf≤1`, direction ∈ {UP,DOWN}, consensus presence), static UI route |
 
----
+### 4.7 Backtest — does the direction edge survive transaction costs?
 
-## 5. Output & Artifact Locations
+`src/backtest.py::simulate_strategy` runs a minimal daily long/short strategy
+driven by the GBM direction signal, scored on the **same held-out test block**
+against the **actually realised** `target_return` — no position sizing, no
+compounding (returns are simply summed, not geometrically chained), no slippage
+beyond a flat per-trade spread cost. The point is a sanity check on whether the
+model's apparent statistical edge (§4.2) would survive contact with a real
+market, not a trading system. Cost is charged only when the signal's sign
+actually **changes** (a flat→long/short entry, or a long↔short flip) — holding
+an unchanged position overnight incurs no fresh spread — via `EURUSD_PIP_TO_PCT`
+(`0.0001 / 1.10 * 100 ≈ 0.0091%`, a representative EUR/USD level converting pips
+to a round-trip percent cost).
+
+`_train_pipeline.py` runs this immediately after GBM test evaluation and saves
+`results/backtest_transaction_costs.csv`. On the current production artifacts
+(test block: 3,103 days, ≈12 years):
+
+| Scenario | Round-trip cost | Trades | Hit rate | Gross return (total) | Net return (total) |
+|---|---|---|---|---|---|
+| Gross (no costs) | 0 pips | 1,337 | 0.5021 | **+29.08%** | +29.08% |
+| Realistic (tight) | 1 pip | 1,337 | 0.5021 | +29.08% | **+16.93%** |
+| Realistic (typical retail) | 2 pips | 1,337 | 0.5021 | +29.08% | **+4.77%** |
+
+**Reading this honestly:** the *gross* (frictionless, unrealistic) edge is already
+razor-thin — a 0.5021 hit rate over ≈12 years compounds to only +29% *simple-summed*
+return, not even geometric growth. A realistic 1-pip spread more than **halves**
+it; a typical retail 2-pip spread leaves **+4.77% over 12 years** (≈0.4%/year) —
+economically negligible once financing costs, occasional slippage beyond the quoted
+spread, and any position-sizing risk are considered. This is the third independent
+confirmation of the same efficient-market conclusion in this document (§4.2.1's
+"predict the mean" regression finding, §4.2.2's Brier-vs-baseline classification
+finding, and now a P&L-denominated backtest) — each using an unrelated metric on the
+same near-chance direction signal, all converging on the same answer: whatever
+weak edge exists is not *tradeable*, not a modeling defect to "fix".
 
 ### 5.1 Trained model artifacts — `models/`
 

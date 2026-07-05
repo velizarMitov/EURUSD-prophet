@@ -125,8 +125,23 @@ still open. One backlog item = one commit; do not batch items together.
       classification-side twin of that same efficient-market finding. If a future
       retrain shows the raw classifier pulling meaningfully away from chance
       ROC-AUC, this decision should be revisited.
-- [ ] (Stretch) Add a simple backtest with transaction costs on the held-out test
+- [x] (Stretch) Add a simple backtest with transaction costs on the held-out test
       block to see if any edge survives spread/slippage.
+      **Done:** added `src/backtest.py::simulate_strategy`/`backtest_table` — a
+      minimal daily long/short strategy on the GBM direction signal, scored
+      against the realised `target_return` on the SAME held-out test block, cost
+      charged only on position-change days (not every day). Wired into
+      `_train_pipeline.py` right after GBM test evaluation, saving
+      `results/backtest_transaction_costs.csv`. Added 2 unit tests (hand-computed
+      cost-on-flip-only math, wrong-signal negative-return sanity check).
+      **Real result** (current production artifacts, test block = 3,103 days ≈12
+      years): gross (no cost) = **+29.08%** total (hit rate 0.5021, barely above
+      chance); 1-pip spread more than halves it to **+16.93%**; a typical retail
+      2-pip spread leaves **+4.77%** (~0.4%/year) — economically negligible.
+      Documented as `ARCHITECTURE_DOCS.md` §4.7, framed as the third independent
+      confirmation (after §4.2.1's regression-MAE finding and §4.2.2's
+      Brier-vs-baseline finding) of the same efficient-market conclusion, now in
+      P&L terms.
 - [ ] **NEW (discovered via item 1's train-set diagnostic):** the GBM direction
       classifier shows train ROC-AUC=0.7798 vs test ROC-AUC=0.5059 (gap +0.2740) on
       the item-7 retrain — this is **not** the efficient-market floor documented in

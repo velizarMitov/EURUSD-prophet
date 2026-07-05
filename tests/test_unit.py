@@ -650,3 +650,31 @@ def test_worst_mistakes_ranks_by_absolute_error_and_excludes_pending(tmp_path, m
     assert len(worst) == 2, "Only the two resolved rows should be scored; the pending one is excluded."
     assert worst.iloc[0]['forecasting_date'] == '2026-06-23', "The larger miss must rank first."
     assert worst.iloc[0]['abs_error'] > worst.iloc[1]['abs_error'], "Must be sorted descending by abs_error."
+
+
+def test_simulate_strategy_charges_cost_only_on_position_change():
+    """Transaction costs must be charged only when the signal actually flips
+    (or on day 0, entering from flat) -- not on every day a position is held
+    -- and gross/net returns must match a hand-computed reference exactly."""
+    from src.backtest import simulate_strategy
+
+    y_true_return_pct = [0.5, -0.3, 0.2, 0.1]   # actual realised next-day returns
+    y_pred_direction = [1, 0, 1, 1]              # UP, DOWN, UP, UP -> signal [+1,-1,+1,+1]
+
+    result = simulate_strategy(y_true_return_pct, y_pred_direction, cost_pct_per_trade=0.05)
+
+    assert result['n_trades'] == 3, "Day 0 (flat->long) + day 1 (long->short) + day 2 (short->long) flip; day 3 holds."
+    assert result['gross_return_pct_total'] == pytest.approx(1.1)
+    assert result['net_return_pct_total'] == pytest.approx(1.1 - 3 * 0.05)
+    assert result['hit_rate'] == pytest.approx(1.0), "Every day's signal matches the realised direction here."
+
+
+def test_simulate_strategy_wrong_calls_produce_negative_gross_return():
+    """A signal that's wrong every day must show a negative gross return and a
+    0% hit rate -- confirms sign(y_true) vs signal comparison isn't inverted."""
+    from src.backtest import simulate_strategy
+
+    result = simulate_strategy(y_true_return_pct=[0.4, 0.3], y_pred_direction=[0, 0], cost_pct_per_trade=0.0)
+
+    assert result['hit_rate'] == pytest.approx(0.0)
+    assert result['gross_return_pct_total'] == pytest.approx(-0.7)
