@@ -60,6 +60,18 @@ except Exception as _e:
 
 mlflow.set_experiment("EURUSD_Prediction")
 
+
+def _safe_log_model(log_fn, model, artifact_path):
+    """MLflow model-artifact logging is observability only -- the real serving
+    artifacts are written via joblib/keras.save below. A tracking-layer failure
+    (e.g. the skops 'untrusted types' guard rejecting XGBoost boosters on some
+    mlflow versions) must never abort training, so swallow it with a warning."""
+    try:
+        log_fn(model, artifact_path=artifact_path)
+    except Exception as _e:
+        print(f"[mlflow] skipped logging '{artifact_path}': {_e}")
+
+
 print("=== 1. Loading historical OHLCV ===")
 raw_df = pd.read_csv(CONFIG['data']['history_csv_path'], index_col='time', parse_dates=True)
 raw_df = raw_df[['open', 'high', 'low', 'close', 'tick_volume']]
@@ -209,8 +221,8 @@ with mlflow.start_run(run_name="GBM_dual_pipeline") as gbm_run:
         "return_mse": mse_gb,
         "return_mae": mae_gb,
     })
-    mlflow.sklearn.log_model(best_gbm, artifact_path="gbm_direction_classifier")
-    mlflow.sklearn.log_model(best_gbm_reg, artifact_path="gbm_return_regressor")
+    _safe_log_model(mlflow.sklearn.log_model, best_gbm, "gbm_direction_classifier")
+    _safe_log_model(mlflow.sklearn.log_model, best_gbm_reg, "gbm_return_regressor")
     print(f"MLflow run logged: run_id={gbm_run.info.run_id}")
 
 print("\n=== 7. Persisting GBM + PCA + global scaler artifacts ===")
@@ -352,7 +364,7 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
         "direction_accuracy": acc_lstm,
         "direction_roc_auc": auc_lstm,
     })
-    mlflow.keras.log_model(mt_lstm_model, artifact_path="multitask_lstm")
+    _safe_log_model(mlflow.keras.log_model, mt_lstm_model, "multitask_lstm")
     print(f"MLflow run logged: run_id={lstm_run.info.run_id}")
 
 print("\n=== 12. Persisting LSTM artifacts ===")
@@ -380,8 +392,21 @@ try:
     )
 
     h1_cfg = CONFIG.get('h1', {})
-    X_flat_df, X_seq, y_ret_h1, y_dir_h1, h1_index = build_h1_datasets(
-        cache_path=h1_cfg.get('cache_path', 'results/eurusd_h1.csv'))
+    h1_cache = h1_cfg.get('cache_path', 'results/eurusd_h1.csv')
+
+    # Refresh the H1 cache with fresh bars (MT5 -> yfinance) before training so a
+    # retrain actually learns from new data. fetch_h1_market_data writes the CSV
+    # itself; if every live source is unreachable it falls back to the existing
+    # cache, so an offline retrain degrades to the last-known data rather than
+    # aborting the whole H1 section.
+    try:
+        from src.live_data import fetch_h1_market_data
+        _df, _src = fetch_h1_market_data(cache_path=h1_cache)
+        print(f"H1 cache refreshed from {_src}: {0 if _df is None else len(_df)} bars.")
+    except Exception as e:
+        print(f"H1 cache refresh skipped ({e}); training on existing cache.")
+
+    X_flat_df, X_seq, y_ret_h1, y_dir_h1, h1_index = build_h1_datasets(cache_path=h1_cache)
     print(f"H1 datasets: flat {X_flat_df.shape}, seq {X_seq.shape}, "
           f"days {h1_index.min().date()} -> {h1_index.max().date()}")
 
@@ -496,10 +521,10 @@ try:
             "target_unit": "percent",
             "device": _XGB_DEVICE,
         })
-        mlflow.sklearn.log_model(h1_xgb, artifact_path="h1_xgboost")
-        mlflow.sklearn.log_model(h1_rf, artifact_path="h1_random_forest")
-        mlflow.sklearn.log_model(h1_svm, artifact_path="h1_svm")
-        mlflow.keras.log_model(h1_lstm, artifact_path="h1_lstm")
+        _safe_log_model(mlflow.sklearn.log_model, h1_xgb, "h1_xgboost")
+        _safe_log_model(mlflow.sklearn.log_model, h1_rf, "h1_random_forest")
+        _safe_log_model(mlflow.sklearn.log_model, h1_svm, "h1_svm")
+        _safe_log_model(mlflow.keras.log_model, h1_lstm, "h1_lstm")
         print(f"MLflow run logged: run_id={h1_run.info.run_id}")
 
     print("\n=== 15. Persisting H1 -> Daily artifacts ===")

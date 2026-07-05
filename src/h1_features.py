@@ -26,6 +26,9 @@ import pandas as pd
 HOURS_PER_DAY = 24
 MIN_HOURS = 12  # drop half-empty sessions (holidays / partial Fridays)
 
+SMA_TREND_PERIOD = 504  # 504 H1 bars ~= 21 trading days: a slow trend baseline
+RSI_PERIOD = 24         # one trading day of hourly momentum
+
 # Flattened daily features consumed by XGBoost / RandomForest / SVM.
 FLAT_FEATURE_COLUMNS = [
     "Intraday_Volatility",   # std of the day's H1 log returns
@@ -37,10 +40,12 @@ FLAT_FEATURE_COLUMNS = [
     "H1_Max_Abs_Return",     # largest single-hour move (intraday tail risk)
     "First_Half_Return",     # summed log return over the first half of the day
     "Second_Half_Return",    # summed log return over the second half of the day
+    "Trend_vs_SMA504",       # day-end close / 504h SMA - 1 (position vs slow trend)
+    "RSI_24",                # day-end 24-period RSI (intraday momentum, 0-100)
 ]
 
 # Per-hour features fed to the LSTM at each of the 24 timesteps.
-SEQ_FEATURE_COLUMNS = ["log_return", "hl_range", "co_change", "volume"]
+SEQ_FEATURE_COLUMNS = ["log_return", "hl_range", "co_change", "volume", "rsi_24"]
 
 DEFAULT_H1_CACHE = "results/eurusd_h1.csv"
 
@@ -66,14 +71,32 @@ def load_h1_frame(cache_path: str = DEFAULT_H1_CACHE, allow_fetch: bool = True) 
     return df[['open', 'high', 'low', 'close', 'tick_volume']].astype(float)
 
 
+def _rsi(close: pd.Series, period: int) -> pd.Series:
+    """Classic RSI over a trailing ``period`` window (past bars only -> no
+    look-ahead). Pure uptrend (no losses) -> 100; a flat/empty window -> a
+    neutral 50 rather than NaN."""
+    delta = close.diff()
+    avg_gain = delta.clip(lower=0.0).rolling(period).mean()
+    avg_loss = (-delta.clip(upper=0.0)).rolling(period).mean()
+    rsi = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)   # avg_loss==0 -> +inf -> 100
+    return rsi.mask((avg_gain == 0) & (avg_loss == 0), 50.0)
+
+
 def _enrich_hourly(h1: pd.DataFrame) -> pd.DataFrame:
     """Add the per-hour derived columns used by both representations and a
-    ``date`` bucket (UTC midnight) for chronological grouping."""
+    ``date`` bucket (UTC midnight) for chronological grouping. Trend/RSI are
+    computed on the *continuous* hourly stream with trailing windows, so they
+    carry cross-day context without leaking the future."""
     h1 = h1.copy()
     h1['log_return'] = np.log(h1['close'] / h1['close'].shift(1)).fillna(0.0)
     h1['hl_range'] = h1['high'] - h1['low']
     h1['co_change'] = h1['close'] - h1['open']
     h1['volume'] = h1['tick_volume']
+
+    sma504 = h1['close'].rolling(SMA_TREND_PERIOD).mean()
+    h1['trend_vs_sma504'] = (h1['close'] / sma504 - 1.0).fillna(0.0)  # 0 = at/undefined trend
+    h1['rsi_24'] = _rsi(h1['close'], RSI_PERIOD).fillna(50.0)
+
     h1['date'] = h1.index.normalize()
     return h1
 
@@ -98,6 +121,8 @@ def aggregate_daily_features(h1: pd.DataFrame):
         "H1_Max_Abs_Return":   g['log_return'].apply(lambda s: s.abs().max()),
         "First_Half_Return":   g['log_return'].apply(lambda s: s.iloc[:len(s) // 2].sum()),
         "Second_Half_Return":  g['log_return'].apply(lambda s: s.iloc[len(s) // 2:].sum()),
+        "Trend_vs_SMA504":     g['trend_vs_sma504'].last(),   # day-end trend position
+        "RSI_24":              g['rsi_24'].last(),            # day-end momentum
         "hours_in_day":        g.size(),
     })
     feats = feats[feats['hours_in_day'] >= MIN_HOURS].drop(columns='hours_in_day')

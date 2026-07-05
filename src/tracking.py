@@ -14,7 +14,8 @@ from .live_data import fetch_live_market_data, drop_incomplete_bars
 LOG_COLUMNS = [
     'as_of_date', 'forecasting_date', 'as_of_close',
     'pred_direction', 'pred_return_pct', 'pred_confidence',
-    'gbm_direction', 'lstm_direction', 'logged_at',
+    'gbm_direction', 'lstm_direction',
+    'h1_direction', 'h1_return_pct', 'h1_agreement', 'logged_at',
 ]
 
 
@@ -27,6 +28,7 @@ def log_prediction(result: dict, log_path: str) -> None:
     """
     cons = result.get('consensus', {})
     bar = result.get('bar_used', {})
+    h1_cons = result.get('h1', {}).get('consensus', {})   # auxiliary intraday ensemble
     row = {
         'as_of_date': result.get('as_of_date'),
         'forecasting_date': result.get('forecasting_date'),
@@ -36,6 +38,9 @@ def log_prediction(result: dict, log_path: str) -> None:
         'pred_confidence': cons.get('confidence'),
         'gbm_direction': result.get('gbm', {}).get('direction'),
         'lstm_direction': result.get('lstm', {}).get('direction'),
+        'h1_direction': h1_cons.get('direction'),
+        'h1_return_pct': h1_cons.get('predicted_return_pct'),
+        'h1_agreement': h1_cons.get('confidence'),   # fraction of H1 models agreeing, NOT a probability
         'logged_at': pd.Timestamp.utcnow().isoformat(),
     }
 
@@ -88,6 +93,7 @@ def build_history_html(log_path: str, data_cfg: dict,
     closes = _actual_closes(data_cfg, now=now)
 
     body_rows, n_resolved, n_correct = [], 0, 0
+    n_h1_resolved, n_h1_correct = 0, 0
     for _, r in log.iterrows():
         actual_close = closes.get(str(r['forecasting_date']))
         resolved = actual_close is not None and pd.notna(r.get('as_of_close'))
@@ -104,24 +110,46 @@ def build_history_html(log_path: str, data_cfg: dict,
         else:
             css, status, actual_cell = 'pending', '⏳ pending', '—'
 
+        # H1 auxiliary ensemble, scored against the SAME realised session (it
+        # forecasts the same next-day close). Absent on rows logged before H1
+        # tracking existed -> shown as an em-dash rather than counted.
+        h1_dir = r.get('h1_direction')
+        has_h1 = isinstance(h1_dir, str) and h1_dir in ('UP', 'DOWN')
+        if has_h1:
+            h1_pred_cell = f"{h1_dir} ({_pct(r.get('h1_return_pct'))})"
+            if resolved:
+                h1_correct = h1_dir == actual_dir
+                n_h1_resolved += 1
+                n_h1_correct += int(h1_correct)
+                h1_status = '✅' if h1_correct else '❌'
+            else:
+                h1_status = '⏳'
+        else:
+            h1_pred_cell, h1_status = '—', '—'
+
         body_rows.append(
             f"<tr class='{css}'>"
             f"<td>{r['as_of_date']}</td>"
             f"<td>{r['forecasting_date']}</td>"
             f"<td>{_fmt(r.get('pred_direction'))} ({_pct(r.get('pred_return_pct'))})</td>"
             f"<td>{_conf(r.get('pred_confidence'))}</td>"
+            f"<td>{h1_pred_cell} {h1_status}</td>"
             f"<td>{actual_cell}</td>"
             f"<td>{status}</td>"
             f"</tr>"
         )
 
-    hit_rate = (f"{n_correct}/{n_resolved} resolved &nbsp;·&nbsp; "
-                f"<b>{n_correct / n_resolved:.0%}</b> directional hit-rate"
-                if n_resolved else "no resolved predictions yet")
+    daily_rate = (f"{n_correct}/{n_resolved} resolved &nbsp;·&nbsp; "
+                  f"<b>{n_correct / n_resolved:.0%}</b> daily-committee hit-rate"
+                  if n_resolved else "no resolved predictions yet")
+    h1_rate = (f" &nbsp;|&nbsp; H1 ensemble: {n_h1_correct}/{n_h1_resolved} &nbsp;·&nbsp; "
+               f"<b>{n_h1_correct / n_h1_resolved:.0%}</b>"
+               if n_h1_resolved else "")
+    hit_rate = daily_rate + h1_rate
     table = (
         "<table><thead><tr>"
-        "<th>Data as of</th><th>Forecast for</th><th>Predicted</th>"
-        "<th>Confidence</th><th>Actual market</th><th>Result</th>"
+        "<th>Data as of</th><th>Forecast for</th><th>Daily predicted</th>"
+        "<th>Confidence</th><th>H1 ensemble</th><th>Actual market</th><th>Result</th>"
         "</tr></thead><tbody>" + "".join(body_rows) + "</tbody></table>"
     )
     return _wrap(title, table, hit_rate)

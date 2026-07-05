@@ -39,7 +39,7 @@
 <body>
     <div class="container">
         <h1>EURUSD Directional Extrapolator</h1>
-        <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs both production models. No manual input, no date picker.</p>
+        <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs the daily GBM + LSTM committee plus the auxiliary H1→Daily intraday ensemble (XGBoost, Random Forest, SVM, LSTM). No manual input, no date picker.</p>
 
         <button id="predictBtn" onclick="fetchAndPredict()">Fetch Live Market Data &amp; Predict Tomorrow</button>
         <div id="spinner" class="spinner"></div>
@@ -144,8 +144,55 @@
             if (data.lstm) html += modelCard('Multi-Task LSTM', data.lstm);
             if (data.lstm_error) html += `<div class="meta">LSTM: ${data.lstm_error}</div>`;
 
+            // --- Auxiliary Intraday (H1 -> Daily) ensemble ---
+            if (data.h1) html += renderH1(data.h1);
+            else if (data.h1_error) html += `<div class="meta">H1 ensemble unavailable: ${data.h1_error}</div>`;
+
             dashboard.innerHTML = html;
             dashboard.classList.add('active');
+        }
+
+        // H1 regressors are return-only (no calibrated probability), so they get
+        // their own card shape: direction + predicted return, no confidence %.
+        const H1_MODEL_LABELS = {
+            h1_xgboost: 'H1 &rarr; Daily &middot; XGBoost',
+            h1_random_forest: 'H1 &rarr; Daily &middot; Random Forest',
+            h1_svm: 'H1 &rarr; Daily &middot; SVM (RBF)',
+            h1_lstm: 'H1 &rarr; Daily &middot; LSTM (24h sequence)',
+        };
+
+        function h1ModelCard(title, pred) {
+            const cls = pred.direction === 'UP' ? 'up' : 'down';
+            const arrow = pred.direction === 'UP' ? '📈' : '📉';
+            return `<div class="card ${cls}">
+                <h3>${title}</h3>
+                <div class="value">${pred.direction} ${arrow}</div>
+                <div class="sub-value">Predicted next-day return: ${pred.predicted_return_pct.toFixed(4)}%</div>
+            </div>`;
+        }
+
+        function renderH1(h1) {
+            const c = h1.consensus;
+            const cls = c.direction === 'UP' ? 'up' : 'down';
+            const arrow = c.direction === 'UP' ? '📈' : '📉';
+            const agree = c.agreement
+                ? `✅ All ${c.n_models} intraday models agree`
+                : `⚠️ ${Math.round(c.confidence * 100)}% of models on the majority side`;
+
+            let html = `<div class="card" style="background:#eef2f7; border-left-color:#34495e;">
+                <h3>Auxiliary Intraday Ensemble (H1 &rarr; Daily) &mdash; Data 'As Of' ${h1.as_of_date}</h3>
+                <div class="sub-value">Four next-day return regressors built from the last complete session's 24 hourly bars.</div>
+            </div>`;
+            html += `<div class="card ${cls}" style="border-left-width:6px;">
+                <h3>H1 Ensemble Consensus</h3>
+                <div class="value">${c.direction} ${arrow} &mdash; ${Math.round(c.confidence * 100)}% model agreement</div>
+                <div class="sub-value">Averaged predicted return: ${c.predicted_return_pct.toFixed(4)}%</div>
+                <div class="meta">${agree}</div>
+            </div>`;
+            for (const [key, pred] of Object.entries(h1.predictions)) {
+                html += h1ModelCard(H1_MODEL_LABELS[key] || key, pred);
+            }
+            return html;
         }
 
         // ── Background retraining ──────────────────────────────────────────
