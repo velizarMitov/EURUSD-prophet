@@ -16,9 +16,14 @@ still open. One backlog item = one commit; do not batch items together.
       printed train-test ROC-AUC gap. Next retrain will show whether the gap is near
       zero (efficient-market floor, matches `ARCHITECTURE_DOCS.md §4.2.1`) or large
       (real overfitting).
-- [ ] Add a sign-agreement check between the LSTM's `return_output` and
+- [x] Add a sign-agreement check between the LSTM's `return_output` and
       `direction_output` heads on the test block, to verify the shared multi-task
       trunk is actually justified (ml-practical-methodology Part B).
+      **Done:** added `sign_agreement_lstm` computed on `X_test_seq` (comparing
+      `sign(return_output)` vs `direction_output`'s call), printed with a
+      <0.55 "weak" flag, and logged to MLflow as `multitask_sign_agreement`. If it
+      comes back near 50% on the next retrain, the shared trunk isn't earning its
+      keep and two single-task models should be A/B'd against it.
 - [ ] Add `subsample` to `config.json`'s `gbm.param_grid` (currently defaults to 1.0 —
       stochastic gradient boosting per gbm-boosting-theory §3 is missing).
 - [ ] Extract and persist GBM `feature_importances_` to

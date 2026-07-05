@@ -353,6 +353,17 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
     print(f"[Return]    MSE={mse_lstm:.6f}  MAE={mae_lstm:.6f}  (percent units, comparable to GBM)")
     print(f"[Direction] Accuracy={acc_lstm:.4f}  ROC-AUC={auc_lstm:.4f}")
 
+    # Multi-task trunk justification check (ml-practical-methodology Part B /
+    # Goodfellow Ch.7.7): the shared_lstm_trunk only earns its generalization
+    # benefit if the factors predicting return magnitude and direction actually
+    # overlap. Measure how often the return head's sign agrees with the direction
+    # head's call on the SAME held-out test block -- barely above 50% would mean
+    # the two heads are not pulling from a shared signal, and two single-task
+    # models should be tried instead.
+    sign_agreement_lstm = (np.sign(y_pred_ret_lstm) == np.where(y_pred_dir_lstm == 1, 1, -1)).mean()
+    print(f"[Multi-task check] Return-sign vs direction-head agreement: {sign_agreement_lstm:.4f} "
+          f"({'weak -- shared trunk may not be justified' if sign_agreement_lstm < 0.55 else 'shared signal present'})")
+
     # Train-set control (see ml-practical-methodology / GBM section above for the
     # rationale): lets us tell a Bayes-error floor (train≈test≈0.50) apart from a
     # bug or genuine overfitting (train materially above test).
@@ -390,6 +401,7 @@ with mlflow.start_run(run_name="MultiTask_LSTM") as lstm_run:
         "direction_roc_auc": auc_lstm,
         "train_direction_accuracy": acc_lstm_train,
         "train_direction_roc_auc": auc_lstm_train,
+        "multitask_sign_agreement": sign_agreement_lstm,
     })
     _safe_log_model(mlflow.keras.log_model, mt_lstm_model, "multitask_lstm")
     print(f"MLflow run logged: run_id={lstm_run.info.run_id}")
