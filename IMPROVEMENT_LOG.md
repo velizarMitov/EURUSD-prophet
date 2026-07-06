@@ -265,7 +265,14 @@ retroactively to what's already been tested.
       meaningful — the ledger is meant to accumulate over months before it can
       arbitrate production-worthiness. Added 3 unit tests (direction/cost sign,
       pending-exclusion, drawdown/cumulative math). 46 tests pass.
-- [ ] Step 4 — Document the new methodology (ARCHITECTURE_DOCS.md + CLAUDE.md).
+- [x] Step 4 — Document the new methodology. Added a prominent **Production
+      Methodology (post-defense)** section to `ARCHITECTURE_DOCS.md` (right after
+      the Component Map) stating (a) the test block is spent for feature search,
+      (b) all new claims clear the Bonferroni bar, (c) the paper-trading ledger is
+      the primary production-worthiness signal — plus a "methodology superseded"
+      banner on §4.3.1, new Component-Map / §5.3 / §5.4 rows for the three new
+      modules and endpoints. Mirrored the three rules into `CLAUDE.md` as a
+      governing section. Docs-only; 46 tests still pass.
 
 ## Working rules
 

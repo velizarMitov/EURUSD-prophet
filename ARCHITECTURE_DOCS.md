@@ -21,12 +21,59 @@
 | Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV (also `fetch_h1_market_data` for the H1 stream). |
 | Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
 | Web app (single entry point) | `api.py` | FastAPI server: serves `static/index.html` at `/`, `POST /api/predict`, `GET /history`, `POST /api/retrain`. Port 8000. |
+| Feature-ablation harness | `src/ablation.py` | Validation-only KEEP/DROP arbiter + Bonferroni-corrected significance bar (see *Production Methodology*). |
+| Forward paper-trading | `src/paper_trading.py` | Simulated cost-net P&L ledger from the prediction log; the primary going-forward arbiter. |
 | Config | `config.json` | All hyperparameters + paths. Single source of truth. |
 | Artifacts | `models/`, `results/`, `mlruns/`, `mlflow.db` | Serialized models, diagnostics, experiment tracking. |
 
 The web layer is a **single entry point** (`api.py`) on top of one shared
 `PredictionService`. All prediction logic lives in `src/` — `api.py` is only the
 HTTP/dashboard layer.
+
+---
+
+## Production Methodology (post-defense) — governs all new feature/model claims
+
+The academic phase is over (defended, graded); the system now **trades real
+money**. A false positive here is live capital risk, not a lost exam point, so
+the methodology bar is raised for everything from **2026-07-06** forward. Three
+rules override the older validation narrative below wherever they conflict:
+
+**(a) The historical test block `[80%:100%]` is SPENT for feature search.**
+Feature KEEP/DROP decisions were iteratively scored against that same fixed
+~1,700-row block (the original `yield_differential` + the three macro features).
+Reusing one held-out block as a repeated search criterion is data-snooping — with
+enough features tried, one crosses a naive 0.05 bar by chance. From now on every
+feature ablation is decided on the **validation slice `[70%:80%]`** via
+`src/ablation.py` (PCA/scaler/model fit on `[0:70%]` only; the test block is
+never indexed there). The test block reverts to a **one-shot final report**
+produced by `_train_pipeline.py`, never a knob. Re-running the four
+already-tested features on the clean validation arbiter
+(`results/feature_ablation_validation.csv`) leaves **all four KEEP-provisional** —
+the test-block "positive point estimates" do not survive the move.
+
+**(b) Every KEEP must clear a Bonferroni-corrected bar, not a flat 0.05.**
+`results/feature_hypothesis_log.csv` is the running family count of every feature
+hypothesis ever spent (seeded retroactively with the 4 already tried). The bar in
+force is `alpha = 0.05 / family_size` (currently **0.05 / 4 = 0.0125**), printed
+in the header of every `src/ablation.py` report so it can never be silently
+forgotten. A genuinely new feature grows the family and tightens the bar for all.
+At the current bar all four features stay **KEEP-provisional** (smallest McNemar
+p = 0.56, ~45× the bar).
+
+**(c) The forward paper-trading ledger is the primary production-worthiness
+signal — not historical ablation.** `src/paper_trading.py` accumulates a
+simulated, cost-net position ledger (`results/paper_trading_log.csv`, surfaced at
+`/paper-trading` and `/api/paper-trading`) from each day's live committee call as
+new sessions settle. Whether the system deserves real capital should be judged by
+this ledger showing a **genuine, cost-net edge over months** (win rate, Sharpe-
+like, cumulative net pips, max drawdown), not by any further re-analysis of the
+spent test block. It is **simulated only** — there is deliberately no broker,
+order-execution, position-sizing, or stop-loss code anywhere; real execution is a
+separate, larger risk-management conversation that should happen only *after* this
+ledger demonstrates a supported edge.
+
+See `IMPROVEMENT_LOG.md` → "Production methodology hardening" for the commit trail.
 
 ---
 
@@ -558,6 +605,17 @@ notebook environment reproduces the same numbers as this standalone check.
 
 ### 4.3.1 Three added macro features — kept provisionally, not statistically proven
 
+> **⚠ Methodology superseded (2026-07-06).** The significance numbers in this
+> section were computed on the **held-out test block** `[80%:100%]` — the same
+> block used repeatedly for feature search, which is data-snooping (see
+> *Production Methodology* at the top of this doc). The KEEP decisions have since
+> been re-run on the clean **validation slice** `[70%:80%]` via `src/ablation.py`
+> and judged against a **Bonferroni-corrected** bar
+> (`results/feature_ablation_validation.csv`, `results/feature_hypothesis_log.csv`).
+> The conclusion is unchanged — **all four features stay KEEP-provisional** — but
+> the validation table there, not the test-block table below, is the governing
+> record. The numbers below are retained only as the before/after audit trail.
+
 Three more FRED macro features were added (`usd_index_return`,
 `policy_rate_differential`, `inflation_differential` — see §2.4/§2.6). Each was
 ablated individually (WITH vs WITHOUT, one feature toggled, all other columns and
@@ -726,7 +784,10 @@ PNGs (`01_price_sma`, `02_learning_curves`, `03_tscv_folds`,
 `09_lstm_learning_curve`, `10_lstm_evaluation`, `GBM_*`, `2C_fred_*`) and CSVs
 (`comparison_table.csv`, `2C_fred_ablation.csv`, `2C_fred_table.csv`,
 `eurusd_features.csv` = bundled OHLCV history, `yield_differential.csv` = FRED
-cache).
+cache). Post-defense methodology exports (see *Production Methodology*):
+`feature_ablation_validation.csv` = validation-slice KEEP/DROP re-run,
+`feature_hypothesis_log.csv` = running Bonferroni family count,
+`paper_trading_log.csv` = simulated forward P&L ledger.
 
 ### 5.4 Prediction output structure & UI/API routing
 
@@ -751,6 +812,8 @@ Routing:
 |---|---|---|
 | **FastAPI** `api.py` | `POST /api/predict` | Returns the raw dict as JSON; `503` if `models_ready` is false, `400` on pipeline error. |
 | **Static UI** `static/index.html` | `fetch('/api/predict', {method:'POST'})` | Mounted at `/` by `api.py`; client-side JS renders the prediction, plus the retrain button and a link to `/history`. |
+| **Prediction history** `api.py` | `GET /history` | `src/tracking.build_history_html` — every logged forecast scored against the realised close; cross-links `/paper-trading`. |
+| **Forward paper-trading** `api.py` | `GET /paper-trading` (HTML), `GET /api/paper-trading` (JSON) | `src/paper_trading` — simulated cost-net ledger + scorecard (cum. net pips/%, win rate, Sharpe-like, max drawdown). Simulated only, no orders. |
 
 ### 5.5 Containerization note
 

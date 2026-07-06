@@ -53,6 +53,14 @@ Changing any of these requires updating `config.json`, `_train_pipeline.py`, not
 
 The 7 production artifacts (`lag_scaler`, `lag_pca`, `global_scaler`, `best_gbm_eurusd`, `best_gbm_regressor_eurusd`, `lstm_multitask_eurusd.keras`, `lstm_time_steps`) are produced by `_train_pipeline.py` and notebook Section 19, and loaded by `PredictionService`. `test_smoke.py` asserts they exist.
 
+## Production Methodology (post-defense — the project now trades REAL money)
+
+The exam is passed; a false-positive feature is now live capital risk. These rules govern **all new feature/model claims** and override the older test-block narrative where they conflict (full detail: `ARCHITECTURE_DOCS.md` → *Production Methodology*, `IMPROVEMENT_LOG.md` → *Production methodology hardening*):
+
+1. **The historical test block `[80%:100%]` is SPENT for feature search.** It was reused as a repeated KEEP/DROP criterion (data-snooping). All feature ablation now runs on the **validation slice `[70%:80%]`** via `src/ablation.py` (fit on `[0:70%]` only; test block never indexed). The test block is a **one-shot final report** from `_train_pipeline.py`, never a search knob. Do **not** add or judge a feature by scoring it on the test block.
+2. **Every KEEP clears a Bonferroni-corrected bar, not a flat 0.05.** `results/feature_hypothesis_log.csv` counts every feature hypothesis ever spent; the bar is `alpha = 0.05 / family_size` (now `0.05/4 = 0.0125`), printed in every `src/ablation.py` report. Register a genuinely new feature (it tightens the bar for all). All 4 current features are **KEEP-provisional** — no proven edge.
+3. **The forward paper-trading ledger is the primary production-worthiness signal.** `src/paper_trading.py` (`results/paper_trading_log.csv`, `/paper-trading` + `/api/paper-trading`) accumulates a **simulated**, cost-net P&L ledger from live calls as sessions settle. Real capital worthiness is judged by a genuine cost-net edge **over months**, not by re-analyzing the spent test block. It is **simulated only** — do **not** add broker/order-execution/position-sizing/stop-loss code; real execution is a separate risk-management conversation, only after the ledger shows a supported edge.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.
