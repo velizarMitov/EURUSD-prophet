@@ -56,8 +56,8 @@ def read_root():
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return {"message": "API Active. GBM ready: " + str(service.gbm_ready) + ", LSTM ready: " +
-            str(service.lstm_ready) + ", H1 ready: " + str(service.h1_ready)}
+    return {"message": "API Active. Baseline (price-only) ready: " + str(service.baseline_ready) +
+            ", With-macro ready: " + str(service.macro_ready) + ", H1 ready: " + str(service.h1_ready)}
 
 
 # ── Background retraining ──────────────────────────────────────────────────
@@ -148,36 +148,43 @@ def prediction_history():
 
 @app.get("/api/paper-trading")
 def paper_trading_summary():
-    """JSON scorecard + ledger for the simulated forward paper-trading harness.
-    Rebuilt live from the prediction log joined to realised closes, and the CSV
-    is refreshed on each call. Simulated only — no broker orders are placed."""
-    from src.paper_trading import build_and_save
+    """JSON scorecards + ledgers for the simulated forward paper-trading
+    harness — ONE ledger PER MODEL VARIANT (baseline price-only vs with_macro),
+    both driven by the same prediction log. Rebuilt live from the log joined to
+    realised closes; the per-variant CSVs are refreshed on each call. Simulated
+    only — no broker orders are placed."""
+    from src.paper_trading import build_all_ledgers
 
     pt_cfg = CONFIG.get('paper_trading', {})
     log_path = os.path.join(BASE_DIR, CONFIG.get('tracking', {}).get('log_path', 'results/prediction_log.csv'))
-    out_path = os.path.join(BASE_DIR, pt_cfg.get('log_path', 'results/paper_trading_log.csv'))
     spread_pips = pt_cfg.get('spread_pips', 1.5)
 
-    ledger, summary = build_and_save(log_path, CONFIG['data'], out_path, spread_pips=spread_pips)
-    return {"spread_pips": spread_pips, "summary": summary,
-            "ledger": ledger.to_dict(orient='records')}
+    all_ledgers = build_all_ledgers(log_path, CONFIG['data'], pt_cfg, base_dir=BASE_DIR)
+    return {
+        "spread_pips": spread_pips,
+        "variants": {
+            name: {"summary": blk['summary'], "ledger": blk['ledger'].to_dict(orient='records')}
+            for name, blk in all_ledgers.items()
+        },
+    }
 
 
 @app.get("/paper-trading", response_class=HTMLResponse)
 def paper_trading_page():
-    """Render the simulated paper-trading ledger + running scorecard (cumulative
-    net P&L, win rate, Sharpe-like ratio, max drawdown), net of a realistic
-    retail spread. This forward ledger is the primary production-worthiness
-    arbiter going forward (ARCHITECTURE_DOCS.md Production Methodology)."""
-    from src.paper_trading import build_and_save, render_html
+    """Render BOTH variants' simulated paper-trading ledgers + running
+    scorecards (cumulative net P&L, win rate, Sharpe-like ratio, max drawdown),
+    net of a realistic retail spread. Whichever variant nets better cost-
+    adjusted P&L over a meaningful forward window is the honest winner — these
+    ledgers are the primary production-worthiness arbiter going forward
+    (ARCHITECTURE_DOCS.md Production Methodology)."""
+    from src.paper_trading import build_all_ledgers, render_html
 
     pt_cfg = CONFIG.get('paper_trading', {})
     log_path = os.path.join(BASE_DIR, CONFIG.get('tracking', {}).get('log_path', 'results/prediction_log.csv'))
-    out_path = os.path.join(BASE_DIR, pt_cfg.get('log_path', 'results/paper_trading_log.csv'))
     spread_pips = pt_cfg.get('spread_pips', 1.5)
 
-    ledger, summary = build_and_save(log_path, CONFIG['data'], out_path, spread_pips=spread_pips)
-    return HTMLResponse(content=render_html(ledger, summary, spread_pips))
+    all_ledgers = build_all_ledgers(log_path, CONFIG['data'], pt_cfg, base_dir=BASE_DIR)
+    return HTMLResponse(content=render_html(all_ledgers, spread_pips))
 
 
 if __name__ == "__main__":

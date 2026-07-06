@@ -6,7 +6,7 @@
     <title>EURUSD Prediction Core</title>
     <style>
         body { font-family: -apple-system, system-ui, sans-serif; background-color: #f4f7f6; padding: 2rem; color: #333; }
-        .container { max-width: 640px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .container { max-width: 960px; margin: 0 auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { font-size: 1.5rem; color: #2c3e50; border-bottom: 2px solid #ecf0f1; padding-bottom: 0.5rem; }
         p.sub { color: #666; font-size: 0.9rem; margin-top: 0.5rem; }
         button { width: 100%; padding: 0.9rem; background-color: #3498db; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background 0.3s; margin-top: 1rem; }
@@ -34,12 +34,28 @@
         .retrain-status pre { margin: 0.5rem 0 0; font-size: 0.75rem; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: #555; background: rgba(0,0,0,0.03); padding: 0.5rem; border-radius: 3px; }
         .links { margin-top: 1rem; text-align: center; font-size: 0.85rem; }
         .links a { color: #2980b9; text-decoration: none; }
+        /* ── Dual-variant comparison layout ─────────────────────────────── */
+        .variant-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.75rem; }
+        @media (max-width: 720px) { .variant-grid { grid-template-columns: 1fr; } }
+        .variant-panel { border: 1px solid #e3e8ea; border-radius: 6px; padding: 0.9rem; background: #fbfcfc; }
+        .variant-panel.agree { border-color: #a9dfbf; }
+        .variant-panel.disagree { border-color: #f5b7b1; }
+        .panel-title { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.75rem 0; font-size: 0.95rem; color: #2c3e50; }
+        .badge { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+                 padding: 0.15rem 0.45rem; border-radius: 3px; cursor: help; }
+        .badge.experimental { background: #fdebd0; color: #9c640c; border: 1px solid #f5cba7; }
+        .badge.price-only { background: #d6eaf8; color: #1f618d; border: 1px solid #aed6f1; }
+        .agreement-banner { margin-top: 0.75rem; padding: 0.8rem 1rem; border-radius: 4px; font-size: 0.95rem; font-weight: 600; }
+        .agreement-banner.agree { background: #eafaf1; border-left: 4px solid #27ae60; color: #1e8449; }
+        .agreement-banner.disagree { background: #fdedec; border-left: 4px solid #e74c3c; color: #c0392b; }
+        .agreement-banner.unknown { background: #f4f6f6; border-left: 4px solid #95a5a6; color: #666; }
+        .panel-note { font-size: 0.72rem; color: #9c640c; margin: 0 0 0.6rem 0; line-height: 1.35; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>EURUSD Directional Extrapolator</h1>
-        <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs the daily GBM + LSTM committee plus the auxiliary H1→Daily intraday ensemble (XGBoost, Random Forest, SVM, LSTM). No manual input, no date picker.</p>
+        <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs <b>two model variants side by side</b>: a price-only baseline and an experimental with-macro-features variant (each a GBM + LSTM committee), plus the auxiliary H1→Daily intraday ensemble (XGBoost, Random Forest, SVM, LSTM). No manual input, no date picker.</p>
 
         <button id="predictBtn" onclick="fetchAndPredict()">Fetch Live Market Data &amp; Predict Tomorrow</button>
         <div id="spinner" class="spinner"></div>
@@ -50,7 +66,10 @@
         <button id="retrainBtn" class="secondary" onclick="startRetrain()">🔁 Retrain Models (runs in background)</button>
         <div id="retrainStatus" class="retrain-status"></div>
 
-        <div class="links"><a href="/history" target="_blank">📊 View prediction-vs-actual history →</a></div>
+        <div class="links">
+            <a href="/history" target="_blank">📊 Prediction-vs-actual history →</a> &nbsp;·&nbsp;
+            <a href="/paper-trading" target="_blank">📒 Paper-trading ledgers (baseline vs macro) →</a>
+        </div>
     </div>
 
     <script>
@@ -126,23 +145,25 @@
                 <div class="meta">US10Y&minus;DE10Y Yield Differential: ${yieldDiff} (${macroLabel})</div>
             </div>`;
 
-            // --- Prediction for Next Period (Committee Consensus) ---
-            if (data.consensus) {
-                const c = data.consensus;
-                const cls = c.direction === 'UP' ? 'up' : 'down';
-                const arrow = c.direction === 'UP' ? '📈' : '📉';
-                const agreement = c.agreement ? '✅ Models agree' : '⚠️ Models disagree — showing the higher-confidence call';
-                html += `<div class="card ${cls}" style="border-left-width: 6px;">
-                    <h3>Prediction for Next Period &mdash; Forecasting Date ${data.forecasting_date}</h3>
-                    <div class="value">${c.direction} ${arrow} &mdash; ${(c.confidence * 100).toFixed(2)}% confidence</div>
-                    <div class="sub-value">Averaged predicted return: ${c.predicted_return_pct.toFixed(4)}%</div>
-                    <div class="meta">${agreement}</div>
-                </div>`;
-            }
+            // --- Variant agreement banner (the most informative comparison signal:
+            // a disagreement is direct evidence the unproven macro block is actually
+            // changing the decision) ---
+            html += agreementBanner(data);
 
-            if (data.gbm) html += modelCard('GBM &mdash; Gradient Boosting', data.gbm);
-            if (data.lstm) html += modelCard('Multi-Task LSTM', data.lstm);
-            if (data.lstm_error) html += `<div class="meta">LSTM: ${data.lstm_error}</div>`;
+            // --- Side-by-side variant comparison: price-only vs with-macro ---
+            const agreeCls = data.variant_agreement === true ? 'agree'
+                           : data.variant_agreement === false ? 'disagree' : '';
+            html += `<div class="variant-grid">`;
+            html += variantPanel('Price-Only Model', data.baseline, data.forecasting_date, {
+                badge: '<span class="badge price-only" title="Trained on the 23 price-derived features only — no FRED macro inputs.">baseline</span>',
+                agreeCls,
+            });
+            html += variantPanel('With Macro Features', data.with_macro, data.forecasting_date, {
+                badge: '<span class="badge experimental" title="The 4 FRED macro features showed NO statistically significant edge: every one is KEEP-provisional under the Bonferroni-corrected validation bar (see ARCHITECTURE_DOCS.md, Production Methodology). Treat this variant as experimental, not equally validated.">⚠ experimental / unproven</span>',
+                agreeCls,
+                note: 'Macro features are statistically unproven in rigorous testing — kept under evaluation via the forward paper-trading ledgers.',
+            });
+            html += `</div>`;
 
             // --- Auxiliary Intraday (H1 -> Daily) ensemble ---
             if (data.h1) html += renderH1(data.h1);
@@ -150,6 +171,46 @@
 
             dashboard.innerHTML = html;
             dashboard.classList.add('active');
+        }
+
+        function agreementBanner(data) {
+            if (data.variant_agreement === true) {
+                return `<div class="agreement-banner agree">✅ Both model variants agree on direction — the macro features are not changing today's decision.</div>`;
+            }
+            if (data.variant_agreement === false) {
+                return `<div class="agreement-banner disagree">⚠️ Models disagree on direction — the (unproven) macro features ARE changing today's decision. Read both panels below before trusting either.</div>`;
+            }
+            return `<div class="agreement-banner unknown">ℹ️ Variant agreement unavailable — one of the two variants did not produce a consensus this run.</div>`;
+        }
+
+        // One variant's full committee panel: consensus card + per-model cards.
+        function variantPanel(title, block, forecastingDate, opts) {
+            opts = opts || {};
+            let inner = '';
+            if (!block || block.error) {
+                inner = `<div class="meta">Variant unavailable: ${(block && block.error) || 'no data returned'}</div>`;
+            } else {
+                if (block.consensus) {
+                    const c = block.consensus;
+                    const cls = c.direction === 'UP' ? 'up' : 'down';
+                    const arrow = c.direction === 'UP' ? '📈' : c.direction === 'DOWN' ? '📉' : '↔️';
+                    const agreement = c.agreement ? '✅ Committee members agree' : '⚠️ Committee split — showing the higher-confidence call';
+                    inner += `<div class="card ${cls}" style="border-left-width: 6px;">
+                        <h3>Consensus &mdash; Forecasting ${forecastingDate}</h3>
+                        <div class="value">${c.direction} ${arrow} &mdash; ${(c.confidence * 100).toFixed(2)}% confidence</div>
+                        <div class="sub-value">Predicted return: ${c.predicted_return_pct.toFixed(4)}%</div>
+                        <div class="meta">${agreement}</div>
+                    </div>`;
+                }
+                if (block.gbm) inner += modelCard('GBM &mdash; Gradient Boosting', block.gbm);
+                if (block.lstm) inner += modelCard('Multi-Task LSTM', block.lstm);
+                if (block.lstm_error) inner += `<div class="meta">LSTM: ${block.lstm_error}</div>`;
+            }
+            const note = opts.note ? `<p class="panel-note">${opts.note}</p>` : '';
+            return `<div class="variant-panel ${opts.agreeCls || ''}">
+                <h3 class="panel-title">${title} ${opts.badge || ''}</h3>
+                ${note}${inner}
+            </div>`;
         }
 
         // H1 regressors are return-only (no calibrated probability), so they get

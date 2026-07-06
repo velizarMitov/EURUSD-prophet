@@ -1,5 +1,6 @@
 {
   "random_state": 42,
+  "variants": ["baseline", "with_macro"],
   "data": {
     "symbol": "EURUSD",
     "timeframe": "D1",
@@ -34,8 +35,17 @@
     "html_path": "results/prediction_history.html"
   },
   "paper_trading": {
-    "log_path": "results/paper_trading_log.csv",
-    "spread_pips": 1.5
+    "spread_pips": 1.5,
+    "ledgers": {
+      "baseline": {
+        "direction_column": "baseline_direction",
+        "log_path": "results/paper_trading_log_baseline.csv"
+      },
+      "with_macro": {
+        "direction_column": "pred_direction",
+        "log_path": "results/paper_trading_log_macro.csv"
+      }
+    }
   },
   "pca": {
     "variance_threshold": 0.95,

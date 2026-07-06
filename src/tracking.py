@@ -15,6 +15,8 @@ LOG_COLUMNS = [
     'as_of_date', 'forecasting_date', 'as_of_close',
     'pred_direction', 'pred_return_pct', 'pred_confidence',
     'gbm_direction', 'lstm_direction',
+    'baseline_direction', 'baseline_return_pct', 'baseline_confidence',
+    'variant_agreement',
     'h1_direction', 'h1_return_pct', 'h1_agreement', 'logged_at',
 ]
 
@@ -25,8 +27,17 @@ def log_prediction(result: dict, log_path: str) -> None:
     CSV at `log_path`. Idempotent per as_of_date: re-predicting the same day
     overwrites that day's row rather than duplicating it. The predicted side is
     all that is stored here; the realised side is computed live at render time.
+
+    Dual-variant schema: the historical `pred_*` columns carry the WITH_MACRO
+    committee (the lineage of every pre-dual row, so the macro paper-trading
+    ledger stays continuous), and the `baseline_*` columns carry the price-only
+    committee. Rows logged before the dual era simply have no baseline_* values
+    -- the baseline ledger starts accumulating from the first dual prediction.
     """
-    cons = result.get('consensus', {})
+    macro_block = result.get('with_macro', {})
+    baseline_block = result.get('baseline', {})
+    cons = macro_block.get('consensus', {})
+    base_cons = baseline_block.get('consensus', {})
     bar = result.get('bar_used', {})
     h1_cons = result.get('h1', {}).get('consensus', {})   # auxiliary intraday ensemble
     row = {
@@ -36,8 +47,12 @@ def log_prediction(result: dict, log_path: str) -> None:
         'pred_direction': cons.get('direction'),
         'pred_return_pct': cons.get('predicted_return_pct'),
         'pred_confidence': cons.get('confidence'),
-        'gbm_direction': result.get('gbm', {}).get('direction'),
-        'lstm_direction': result.get('lstm', {}).get('direction'),
+        'gbm_direction': macro_block.get('gbm', {}).get('direction'),
+        'lstm_direction': macro_block.get('lstm', {}).get('direction'),
+        'baseline_direction': base_cons.get('direction'),
+        'baseline_return_pct': base_cons.get('predicted_return_pct'),
+        'baseline_confidence': base_cons.get('confidence'),
+        'variant_agreement': result.get('variant_agreement'),
         'h1_direction': h1_cons.get('direction'),
         'h1_return_pct': h1_cons.get('predicted_return_pct'),
         'h1_agreement': h1_cons.get('confidence'),   # fraction of H1 models agreeing, NOT a probability

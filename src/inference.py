@@ -5,7 +5,7 @@ import pandas as pd
 
 from .features import (
     load_history, compute_features, apply_lag_pca, merge_macro_features,
-    LAG_COLUMNS, FEATURE_COLUMNS,
+    LAG_COLUMNS, FEATURE_COLUMNS, variant_feature_columns,
 )
 from .live_data import fetch_live_market_data, drop_incomplete_bars
 from .macro_data import fetch_macro_features
@@ -13,9 +13,20 @@ from .macro_data import fetch_macro_features
 
 class PredictionService:
     """
-    Loads every trained artifact once and serves Multi-Task EURUSD
-    predictions from automatically fetched live market data. Used by api.py
-    (the single web entry point) and by the training notebook for evaluation.
+    Loads every trained artifact once and serves Multi-Task EURUSD predictions
+    from automatically fetched live market data. Used by api.py (the single web
+    entry point) and by the training notebook for evaluation.
+
+    Dual-variant architecture (see ARCHITECTURE_DOCS.md): TWO complete daily
+    model families are loaded and served side by side on every prediction —
+    'baseline' (price-only, no macro features) and 'with_macro' (the full
+    27-column set whose macro features remain statistically unproven, KEEP-
+    provisional under the Bonferroni bar). Each variant has an independent
+    readiness gate (baseline_ready / macro_ready) following the existing
+    graceful-degradation pattern: a missing/broken variant never crashes the
+    other. predict() returns both variants' committees plus a
+    `variant_agreement` flag — a disagreement is direct evidence the macro
+    block is actually changing the decision.
     """
 
     # Minimum averaged confidence for a unanimous call to count as a genuine
@@ -25,66 +36,31 @@ class PredictionService:
 
     def __init__(self, base_dir: str, config: dict):
         """
-        Load every serialized artifact (PCA, the single global feature scaler,
-        both GBM heads, the Multi-Task LSTM + its time_steps, and the bundled
-        historical OHLCV CSV) exactly once at process start-up. Each load is
-        independently try/excepted into self.load_errors rather than failing
-        fast, so e.g. a missing LSTM file still leaves the GBM pipeline (or
-        vice versa) servable -- see self.gbm_ready/self.lstm_ready/
-        self.models_ready below for how callers should gate on this. Both model
-        families share ONE global_scaler (no per-model scalers anymore).
+        Load every serialized artifact exactly once at process start-up: for
+        EACH variant its own PCA, global feature scaler, both GBM heads and
+        Multi-Task LSTM (+ time_steps) from models/<variant>/, plus the shared
+        bundled historical OHLCV CSV and the shared H1 ensemble. Each load is
+        independently try/excepted into self.load_errors (prefixed with the
+        variant name) rather than failing fast, so e.g. a broken with_macro
+        LSTM still leaves the baseline committee fully servable.
         """
         self.config = config
         self.base_dir = base_dir
         models_dir = os.path.join(base_dir, 'models')
         self.load_errors = []
 
-        self.lag_scaler = self.lag_pca = None
-        self.global_scaler = None
-        self.gbm_classifier = self.gbm_regressor = None
-        self.lstm_model = self.lstm_time_steps = None
+        self.variant_names = config.get('variants', ['baseline', 'with_macro'])
+        self.variants = {
+            name: self._load_variant_artifacts(os.path.join(models_dir, name), name)
+            for name in self.variant_names
+        }
+
         self.history_df = None
-        # Auxiliary H1->Daily ensemble (loaded independently below).
+        # Auxiliary H1->Daily ensemble (shared across variants — it is price-only
+        # by construction and independent of the daily feature sets).
         self.h1_xgb = self.h1_rf = self.h1_svm = self.h1_lstm_model = None
         self.h1_feature_scaler = self.h1_lstm_scaler = None
         self.h1_feature_columns = self.h1_lstm_config = None
-
-        try:
-            self.lag_scaler = joblib.load(os.path.join(models_dir, 'lag_scaler.pkl'))
-            self.lag_pca = joblib.load(os.path.join(models_dir, 'lag_pca.pkl'))
-        except Exception as e:
-            self.load_errors.append(f"PCA lag reduction: {e}")
-
-        # Single global StandardScaler shared by BOTH model families (replaces
-        # the former separate scaler_gb / scaler_lstm). Fitted once in
-        # _train_pipeline.py on the unified 0-80% train block.
-        try:
-            self.global_scaler = joblib.load(os.path.join(models_dir, 'global_scaler.pkl'))
-        except Exception as e:
-            self.load_errors.append(f"Global feature scaler: {e}")
-
-        try:
-            self.gbm_classifier = joblib.load(os.path.join(models_dir, 'best_gbm_eurusd.pkl'))
-            self.gbm_regressor = joblib.load(os.path.join(models_dir, 'best_gbm_regressor_eurusd.pkl'))
-            # Single-row inference doesn't benefit from GPU; force CPU so the
-            # artifact stays portable to machines without a CUDA-capable device.
-            # get_booster() is XGBoost-specific — safe to call only on XGBoost models.
-            for _m in (self.gbm_classifier, self.gbm_regressor):
-                if hasattr(_m, 'get_booster') and hasattr(_m, 'set_params'):
-                    _m.set_params(device='cpu')
-        except Exception as e:
-            self.load_errors.append(f"GBM dual pipeline: {e}")
-
-        try:
-            os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-            import tensorflow as tf
-            for _gpu in tf.config.list_physical_devices('GPU'):
-                tf.config.experimental.set_memory_growth(_gpu, True)
-            from tensorflow.keras.models import load_model
-            self.lstm_model = load_model(os.path.join(models_dir, 'lstm_multitask_eurusd.keras'))
-            self.lstm_time_steps = joblib.load(os.path.join(models_dir, 'lstm_time_steps.pkl'))
-        except Exception as e:
-            self.load_errors.append(f"Multi-Task LSTM: {e}")
 
         try:
             self.history_df = load_history(os.path.join(base_dir, config['data']['history_csv_path']))
@@ -93,13 +69,13 @@ class PredictionService:
 
         # Auxiliary H1->Daily predictor: four return regressors + their two
         # scalers + column/config metadata. Loaded on its own try/except so its
-        # absence never blocks the daily GBM/LSTM service (it is supplementary).
+        # absence never blocks the daily variants (it is supplementary).
         try:
             self.h1_xgb = joblib.load(os.path.join(models_dir, 'h1_xgb_regressor.pkl'))
             self.h1_rf = joblib.load(os.path.join(models_dir, 'h1_rf_regressor.pkl'))
             self.h1_svm = joblib.load(os.path.join(models_dir, 'h1_svm_regressor.pkl'))
             # Force XGBoost to CPU for portable single-row inference (same
-            # rationale as the daily GBM heads above).
+            # rationale as the daily GBM heads).
             if hasattr(self.h1_xgb, 'get_booster') and hasattr(self.h1_xgb, 'set_params'):
                 self.h1_xgb.set_params(device='cpu')
             self.h1_feature_scaler = joblib.load(os.path.join(models_dir, 'h1_feature_scaler.pkl'))
@@ -112,15 +88,75 @@ class PredictionService:
         except Exception as e:
             self.load_errors.append(f"H1->Daily predictor: {e}")
 
-        self.pca_ready = self.lag_scaler is not None and self.lag_pca is not None
-        self.scaler_ready = self.global_scaler is not None
-        self.gbm_ready = self.pca_ready and self.scaler_ready and None not in (self.gbm_classifier, self.gbm_regressor)
-        self.lstm_ready = self.pca_ready and self.scaler_ready and None not in (self.lstm_model, self.lstm_time_steps)
         self.h1_ready = None not in (
             self.h1_xgb, self.h1_rf, self.h1_svm, self.h1_lstm_model,
             self.h1_feature_scaler, self.h1_lstm_scaler, self.h1_feature_columns,
         )
-        self.models_ready = (self.gbm_ready or self.lstm_ready) and self.history_df is not None
+        # Independent per-variant readiness gates (the names the API surfaces).
+        self.baseline_ready = self._variant_ready('baseline')
+        self.macro_ready = self._variant_ready('with_macro')
+        # Servable at all: at least one variant can predict and history loaded.
+        self.models_ready = (
+            any(self._variant_ready(n) for n in self.variant_names)
+            and self.history_df is not None
+        )
+
+    def _load_variant_artifacts(self, variant_dir: str, name: str) -> dict:
+        """Load one variant's full artifact set from models/<variant>/ into a
+        self-contained dict with per-family readiness flags. Every failure is
+        recorded as '[<variant>] ...' in self.load_errors and leaves the other
+        families of this variant (and the other variant entirely) untouched."""
+        v = {
+            'feature_columns': variant_feature_columns(name),
+            'lag_scaler': None, 'lag_pca': None, 'global_scaler': None,
+            'gbm_classifier': None, 'gbm_regressor': None,
+            'lstm_model': None, 'lstm_time_steps': None,
+        }
+
+        try:
+            v['lag_scaler'] = joblib.load(os.path.join(variant_dir, 'lag_scaler.pkl'))
+            v['lag_pca'] = joblib.load(os.path.join(variant_dir, 'lag_pca.pkl'))
+        except Exception as e:
+            self.load_errors.append(f"[{name}] PCA lag reduction: {e}")
+
+        try:
+            v['global_scaler'] = joblib.load(os.path.join(variant_dir, 'global_scaler.pkl'))
+        except Exception as e:
+            self.load_errors.append(f"[{name}] Global feature scaler: {e}")
+
+        try:
+            v['gbm_classifier'] = joblib.load(os.path.join(variant_dir, 'best_gbm_eurusd.pkl'))
+            v['gbm_regressor'] = joblib.load(os.path.join(variant_dir, 'best_gbm_regressor_eurusd.pkl'))
+            # Single-row inference doesn't benefit from GPU; force CPU so the
+            # artifact stays portable to machines without a CUDA-capable device.
+            for _m in (v['gbm_classifier'], v['gbm_regressor']):
+                if hasattr(_m, 'get_booster') and hasattr(_m, 'set_params'):
+                    _m.set_params(device='cpu')
+        except Exception as e:
+            self.load_errors.append(f"[{name}] GBM dual pipeline: {e}")
+
+        try:
+            os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+            import tensorflow as tf
+            for _gpu in tf.config.list_physical_devices('GPU'):
+                tf.config.experimental.set_memory_growth(_gpu, True)
+            from tensorflow.keras.models import load_model
+            v['lstm_model'] = load_model(os.path.join(variant_dir, 'lstm_multitask_eurusd.keras'))
+            v['lstm_time_steps'] = joblib.load(os.path.join(variant_dir, 'lstm_time_steps.pkl'))
+        except Exception as e:
+            self.load_errors.append(f"[{name}] Multi-Task LSTM: {e}")
+
+        v['pca_ready'] = v['lag_scaler'] is not None and v['lag_pca'] is not None
+        v['scaler_ready'] = v['global_scaler'] is not None
+        v['gbm_ready'] = v['pca_ready'] and v['scaler_ready'] and None not in (v['gbm_classifier'], v['gbm_regressor'])
+        v['lstm_ready'] = v['pca_ready'] and v['scaler_ready'] and None not in (v['lstm_model'], v['lstm_time_steps'])
+        return v
+
+    def _variant_ready(self, name: str) -> bool:
+        """A variant is servable when at least one of its model families
+        (GBM committee member or LSTM) loaded completely."""
+        v = self.variants.get(name)
+        return bool(v) and (v['gbm_ready'] or v['lstm_ready'])
 
     @staticmethod
     def _fetch_bar_count(bars_needed: int, now=None) -> int:
@@ -165,6 +201,11 @@ class PredictionService:
         exactly enough daily bars to satisfy the SMA_200 warm-up plus the
         LSTM's sliding window. Only falls back to the bundled historical CSV
         tail if neither live source is reachable at all.
+
+        Returns the RAW engineered feature window over the SUPERSET
+        FEATURE_COLUMNS (27 cols) — predict() then selects each variant's own
+        column subset and applies that variant's PCA/scaler, so one data fetch
+        serves both variants.
         """
         bars_needed = max(self.config['data'].get('live_fetch_bars', 250), 200 + time_steps)
         mt5_symbol = self.config['data']['symbol']
@@ -214,7 +255,8 @@ class PredictionService:
         )
         # merge_macro_features + compute_features neutralize any entirely-missing
         # macro column, so an empty frame here (every feed unreachable) degrades
-        # gracefully rather than failing the prediction.
+        # gracefully rather than failing the prediction. The baseline variant
+        # never consumes these columns at all, so it is immune either way.
         ohlcv_df = merge_macro_features(
             ohlcv_df, macro_df if macro_df is not None else pd.DataFrame(index=ohlcv_df.index)
         )
@@ -227,7 +269,6 @@ class PredictionService:
             )
 
         feature_window = engineered[FEATURE_COLUMNS].tail(time_steps)
-        model_input_window = apply_lag_pca(feature_window, self.lag_scaler, self.lag_pca, lag_columns=LAG_COLUMNS)
 
         as_of_date = engineered.index[-1]
         last_row = ohlcv_df.loc[as_of_date]
@@ -260,43 +301,43 @@ class PredictionService:
         days_ahead = {4: 3, 5: 2}.get(weekday, 1)  # Fri->Mon, Sat->Mon, else +1
         forecasting_date = (as_of_date + pd.Timedelta(days=days_ahead)).date().isoformat()
 
-        return model_input_window, data_source, bar_used, as_of_date.date().isoformat(), forecasting_date
+        return feature_window, data_source, bar_used, as_of_date.date().isoformat(), forecasting_date
 
-    def _predict_gbm(self, model_input_row):
+    @staticmethod
+    def _predict_gbm(v: dict, model_input_row):
         """
-        Run the GBM dual pipeline on a single flat feature row (no sliding
-        window -- tree ensembles consume one observation at a time, unlike
-        the LSTM). `model_input_row` must already be PCA-reduced and in
-        FEATURE_COLUMNS/model_input_columns() order; it is scaled here with
-        the single global_scaler (the same instance the LSTM uses) before
-        either head sees it.
+        Run one variant's GBM dual pipeline on a single flat feature row (no
+        sliding window -- tree ensembles consume one observation at a time,
+        unlike the LSTM). `model_input_row` must already be PCA-reduced with
+        THAT variant's lag_pca and in its model_input_columns() order; it is
+        scaled here with the variant's global_scaler (the same instance its
+        LSTM uses) before either head sees it.
         """
-        scaled = self.global_scaler.transform(model_input_row.to_frame().T)
-        prob_up = float(self.gbm_classifier.predict_proba(scaled)[0, 1])
-        pred_class = int(self.gbm_classifier.predict(scaled)[0])
-        # The regressor is now trained on target_return in PERCENT units (see
+        scaled = v['global_scaler'].transform(model_input_row.to_frame().T)
+        prob_up = float(v['gbm_classifier'].predict_proba(scaled)[0, 1])
+        pred_class = int(v['gbm_classifier'].predict(scaled)[0])
+        # The regressor is trained on target_return in PERCENT units (see
         # src/features.py), so its output is already a percentage -- no *100.
-        predicted_return = float(self.gbm_regressor.predict(scaled)[0])
+        predicted_return = float(v['gbm_regressor'].predict(scaled)[0])
         return {
             "direction": "UP" if pred_class == 1 else "DOWN",
             "confidence": prob_up if pred_class == 1 else (1 - prob_up),
             "predicted_return_pct": predicted_return,
         }
 
-    def _predict_lstm(self, model_input_window):
+    @staticmethod
+    def _predict_lstm(v: dict, model_input_window):
         """
-        Run the Multi-Task LSTM on a `(time_steps, n_features)` sliding
-        window (the model's two Functional-API heads: `return_output` for
-        the continuous % return, `direction_output` for the UP/DOWN
-        probability). Scaled with the SAME global_scaler the GBM uses -- both
-        families now share one scaler fit on the unified 0-80% train block
-        (see config.json `split` and _train_pipeline.py).
+        Run one variant's Multi-Task LSTM on a `(time_steps, n_features)`
+        sliding window (two Functional-API heads: `return_output` for the
+        continuous % return, `direction_output` for the UP/DOWN probability).
+        Scaled with the SAME per-variant global_scaler the variant's GBM uses.
         """
         # Pass the named DataFrame (columns already in model_input_columns()
         # order) so the scaler validates feature names instead of warning.
-        scaled = self.global_scaler.transform(model_input_window)
+        scaled = v['global_scaler'].transform(model_input_window)
         window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
-        predicted_return, prob_up = self.lstm_model.predict(window_3d, verbose=0)
+        predicted_return, prob_up = v['lstm_model'].predict(window_3d, verbose=0)
         # Both heads are trained on target_return in PERCENT units, so this
         # output is already a percentage and is symmetric with _predict_gbm
         # (neither multiplies by 100).
@@ -401,22 +442,63 @@ class PredictionService:
             "predicted_return_pct": predicted_return_pct,
         }
 
+    def _predict_variant(self, name: str, feature_window) -> dict:
+        """Run ONE variant's full committee (GBM + LSTM + consensus) over the
+        shared raw feature window. Selects the variant's own column subset and
+        applies its own PCA + scaler, so the two variants can never bleed into
+        each other. Returns the variant's response block ({} plus error notes
+        if nothing could run)."""
+        v = self.variants[name]
+        block = {}
+        if not (v['pca_ready'] and v['scaler_ready']):
+            block['error'] = (f"Variant '{name}' artifacts not loaded: "
+                              f"{[e for e in self.load_errors if e.startswith(f'[{name}]')]}")
+            return block
+
+        variant_window = feature_window[v['feature_columns']]
+        model_input_window = apply_lag_pca(variant_window, v['lag_scaler'], v['lag_pca'], lag_columns=LAG_COLUMNS)
+
+        predictions = {}
+        if v['gbm_ready']:
+            predictions['gbm'] = self._predict_gbm(v, model_input_window.iloc[-1])
+        if v['lstm_ready']:
+            if v['lstm_time_steps'] is None or len(model_input_window) < v['lstm_time_steps']:
+                block['lstm_error'] = "Not enough historical context for the LSTM sliding window."
+            else:
+                predictions['lstm'] = self._predict_lstm(v, model_input_window.tail(v['lstm_time_steps']))
+
+        block.update(predictions)
+        if predictions:
+            block['consensus'] = self.compute_consensus(predictions)
+        return block
+
     def predict(self) -> dict:
         """
         End-to-end, zero-input inference for t+1: resolve the latest live
-        feature window (Section 2/2B's MT5/yfinance + FRED fallback chains),
-        run whichever of the GBM/LSTM pipelines is loaded, and assemble a
-        single response dict with both models' predictions plus a committee
-        consensus (see compute_consensus). Raises RuntimeError if no model
-        artifacts loaded successfully at all.
+        feature window ONCE (MT5/yfinance + FRED fallback chains), then run it
+        through BOTH variants' committees and assemble a single response:
+
+            { as_of_date, forecasting_date, data_source, bar_used,
+              "baseline":   { gbm, lstm, consensus },
+              "with_macro": { gbm, lstm, consensus },
+              "variant_agreement": bool | None,
+              "h1": {...} }
+
+        `variant_agreement` compares the two consensus directions (True/False
+        when both variants produced one; None when either side is missing) —
+        a False is direct, honest evidence the unproven macro block is actually
+        changing the decision. Raises RuntimeError if no variant loaded at all.
         """
         if not self.models_ready:
             raise RuntimeError(f"Model artifacts not loaded. Errors: {self.load_errors}")
 
-        max_window = max(self.lstm_time_steps or 1, 1)
-        model_input_window, data_source, bar_used, as_of_date, forecasting_date = self._resolve_latest_window(max_window)
+        # One shared window sized for the largest LSTM lookback across variants.
+        max_window = max(
+            [v['lstm_time_steps'] for v in self.variants.values() if v['lstm_time_steps']] or [1]
+        )
+        feature_window, data_source, bar_used, as_of_date, forecasting_date = \
+            self._resolve_latest_window(max_window)
 
-        predictions = {}
         response = {
             "as_of_date": as_of_date,
             "forecasting_date": forecasting_date,
@@ -424,22 +506,24 @@ class PredictionService:
             "bar_used": bar_used,
         }
 
-        if self.gbm_ready:
-            predictions['gbm'] = self._predict_gbm(model_input_window.iloc[-1])
+        consensus_directions = {}
+        for name in self.variant_names:
+            block = self._predict_variant(name, feature_window)
+            response[name] = block
+            if 'consensus' in block:
+                consensus_directions[name] = block['consensus']['direction']
 
-        if self.lstm_ready:
-            if self.lstm_time_steps is None or len(model_input_window) < self.lstm_time_steps:
-                response['lstm_error'] = "Not enough historical context for the LSTM sliding window."
-            else:
-                predictions['lstm'] = self._predict_lstm(model_input_window.tail(self.lstm_time_steps))
-
-        response.update(predictions)
-        if predictions:
-            response['consensus'] = self.compute_consensus(predictions)
+        # True/False only when BOTH variants produced a consensus; None (unknown)
+        # when either side is degraded -- an honest "can't compare" rather than a
+        # fake agreement.
+        if len(consensus_directions) == len(self.variant_names) and len(self.variant_names) > 1:
+            response['variant_agreement'] = len(set(consensus_directions.values())) == 1
+        else:
+            response['variant_agreement'] = None
 
         # Supplementary H1->Daily ensemble (separate intraday predictor). It has
         # its own data feed and its own agreement-based consensus, surfaced as a
-        # self-contained block so it never perturbs the daily committee above.
+        # self-contained block so it never perturbs the daily committees above.
         # Any failure here (no H1 feed, etc.) degrades to an h1_error note.
         if self.h1_ready:
             try:
@@ -453,7 +537,8 @@ class PredictionService:
                 response['h1_error'] = str(e)
 
         # Best-effort: log this forecast for the /history prediction-vs-actual
-        # table. Logging must never break a prediction, so swallow any error.
+        # table and the dual paper-trading ledgers. Logging must never break a
+        # prediction, so swallow any error.
         try:
             from .tracking import log_prediction
             log_path = self.config.get('tracking', {}).get('log_path', 'results/prediction_log.csv')

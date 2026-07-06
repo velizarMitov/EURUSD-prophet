@@ -668,14 +668,31 @@ def test_compute_h1_consensus_unanimous_sets_agreement_true():
     assert c['confidence'] == pytest.approx(1.0)
 
 
-def _fake_predict_result(as_of, forecast, close, direction, ret):
-    """Minimal PredictionService.predict()-shaped dict for tracking tests."""
-    return {
+def _fake_predict_result(as_of, forecast, close, direction, ret,
+                         baseline_direction=None, baseline_ret=None):
+    """Minimal PredictionService.predict()-shaped dict (dual-variant schema)
+    for tracking tests. The with_macro block carries the primary `direction`;
+    pass baseline_direction to also populate the price-only variant's block
+    (omitting it mimics a degraded/pre-dual prediction with no baseline call)."""
+    result = {
         'as_of_date': as_of, 'forecasting_date': forecast,
         'bar_used': {'close': close},
-        'gbm': {'direction': direction}, 'lstm': {'direction': direction},
-        'consensus': {'direction': direction, 'predicted_return_pct': ret, 'confidence': 0.55},
+        'with_macro': {
+            'gbm': {'direction': direction}, 'lstm': {'direction': direction},
+            'consensus': {'direction': direction, 'predicted_return_pct': ret, 'confidence': 0.55},
+        },
+        'baseline': {},
+        'variant_agreement': None,
     }
+    if baseline_direction is not None:
+        result['baseline'] = {
+            'gbm': {'direction': baseline_direction}, 'lstm': {'direction': baseline_direction},
+            'consensus': {'direction': baseline_direction,
+                          'predicted_return_pct': ret if baseline_ret is None else baseline_ret,
+                          'confidence': 0.55},
+        }
+        result['variant_agreement'] = baseline_direction == direction
+    return result
 
 
 def test_log_prediction_is_idempotent_per_day(tmp_path):
@@ -955,3 +972,86 @@ def test_paper_trading_summary_max_drawdown_and_cumulative(tmp_path, monkeypatch
     assert ledger['cum_net_pips'].iloc[-1] == pytest.approx(0.0, abs=1.0), \
         "a +100p win then a −100p loss nets ~0 cumulative"
     assert summary['max_drawdown_pct'] > 0, "the losing leg must register as a drawdown"
+
+
+# ── Dual model variants (baseline price-only vs with_macro) ────────────────
+
+def test_variant_feature_columns_price_only_vs_full():
+    """The 'baseline' variant must be strictly price-only (no macro-derived
+    feature reaches its models), and 'with_macro' must be the full canonical
+    FEATURE_COLUMNS set. Both must still carry the PCA lag block. Guards the
+    contract that the two served variants differ ONLY in the macro features."""
+    from src.features import (
+        variant_feature_columns, FEATURE_COLUMNS, MACRO_FEATURE_COLUMNS, LAG_COLUMNS,
+    )
+
+    baseline = variant_feature_columns('baseline')
+    with_macro = variant_feature_columns('with_macro')
+
+    assert with_macro == FEATURE_COLUMNS, "with_macro must be the full canonical column set"
+    assert set(MACRO_FEATURE_COLUMNS) == {'yield_differential_delta', 'usd_index_return',
+                                          'policy_rate_differential', 'inflation_differential'}
+    assert not set(baseline) & set(MACRO_FEATURE_COLUMNS), "baseline must contain NO macro-derived feature"
+    assert set(with_macro) - set(baseline) == set(MACRO_FEATURE_COLUMNS), \
+        "the two variants must differ exactly by the macro block"
+    for col in LAG_COLUMNS:
+        assert col in baseline and col in with_macro, "both variants keep the PCA lag block"
+    # baseline preserves the canonical relative order (a scrambled order would
+    # silently break the trained artifacts' column contract)
+    assert baseline == [c for c in FEATURE_COLUMNS if c not in MACRO_FEATURE_COLUMNS]
+
+    with pytest.raises(KeyError):
+        variant_feature_columns('nonexistent_variant')
+
+
+def test_log_prediction_records_both_variants(tmp_path):
+    """A dual-variant prediction must land the with_macro consensus in the
+    legacy pred_* columns (ledger continuity) AND the baseline consensus in the
+    baseline_* columns, plus the variant_agreement flag."""
+    from src.tracking import log_prediction
+    log = str(tmp_path / 'log.csv')
+
+    log_prediction(_fake_predict_result('2026-07-06', '2026-07-07', 1.1400, 'DOWN', -0.02,
+                                        baseline_direction='UP', baseline_ret=+0.01), log)
+
+    row = pd.read_csv(log).iloc[0]
+    assert row['pred_direction'] == 'DOWN', "pred_* columns must carry the with_macro committee"
+    assert row['baseline_direction'] == 'UP', "baseline_* columns must carry the price-only committee"
+    assert row['baseline_return_pct'] == pytest.approx(0.01)
+    assert bool(row['variant_agreement']) is False, "UP vs DOWN must record disagreement"
+
+
+def test_paper_trading_baseline_ledger_skips_rows_without_baseline_forecast(tmp_path, monkeypatch):
+    """The baseline ledger must be driven by baseline_direction and must SKIP
+    (not flat-log) rows where no baseline forecast exists — e.g. every pre-dual
+    historical row — while the macro ledger still scores them via pred_direction."""
+    import src.tracking as tracking
+    from src.paper_trading import build_ledger
+
+    from src.tracking import log_prediction
+    log = str(tmp_path / 'log.csv')
+    # Pre-dual row: with_macro call only, no baseline block.
+    log_prediction(_fake_predict_result('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05), log)
+    # Dual row: both variants called (they disagree).
+    log_prediction(_fake_predict_result('2026-06-22', '2026-06-23', 1.1050, 'UP', +0.05,
+                                        baseline_direction='DOWN'), log)
+
+    actual = pd.DataFrame({'close': [1.1050, 1.1000]},
+                          index=pd.DatetimeIndex(['2026-06-22', '2026-06-23']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+    data_cfg = {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'}
+    now = pd.Timestamp('2026-06-27 11:00')
+
+    macro_ledger = build_ledger(log, data_cfg, spread_pips=0.0, now=now,
+                                direction_column='pred_direction')
+    baseline_ledger = build_ledger(log, data_cfg, spread_pips=0.0, now=now,
+                                   direction_column='baseline_direction')
+
+    assert len(macro_ledger) == 2, "macro ledger scores both rows (full pred_direction lineage)"
+    assert len(baseline_ledger) == 1, "baseline ledger must skip the pre-dual row entirely"
+    assert str(baseline_ledger.iloc[0]['forecasting_date']) == '2026-06-23'
+    assert baseline_ledger.iloc[0]['direction'] == 'SHORT', "baseline DOWN call -> short position"
+    # Same day, opposite calls: the two ledgers must book opposite-signed P&L.
+    macro_23 = macro_ledger[macro_ledger['forecasting_date'] == '2026-06-23'].iloc[0]
+    assert macro_23['net_pips'] == pytest.approx(-baseline_ledger.iloc[0]['net_pips'], abs=0.01), \
+        "opposite positions on the same move must mirror each other's P&L at zero cost"

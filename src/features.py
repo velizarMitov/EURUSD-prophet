@@ -65,6 +65,35 @@ FEATURE_COLUMNS = [
 # inflation_differential are already differentials and pass straight through.
 MACRO_MERGE_COLUMNS = ['yield_differential', 'usd_index', 'policy_rate_differential', 'inflation_differential']
 
+# ---------------------------------------------------------------------------
+# Dual model variants (see ARCHITECTURE_DOCS.md "Dual-Variant Architecture").
+# The four FRED-derived model features are statistically UNPROVEN (every one is
+# KEEP-provisional under the Bonferroni-corrected validation bar — Production
+# Methodology), so the system trains and serves TWO complete model families
+# side by side and lets the forward paper-trading ledgers arbitrate:
+#   * 'baseline'   — price-only: FEATURE_COLUMNS minus every macro-derived
+#                    feature (23 columns). No FRED dependency at inference.
+#   * 'with_macro' — the full 27-column FEATURE_COLUMNS set.
+# Both variants train on the IDENTICAL euro-era row set (the macro merge's
+# 1999+ truncation), so their comparison isolates the feature set itself, not
+# a training-span difference.
+MACRO_FEATURE_COLUMNS = [
+    'yield_differential_delta', 'usd_index_return',
+    'policy_rate_differential', 'inflation_differential',
+]
+PRICE_FEATURE_COLUMNS = [c for c in FEATURE_COLUMNS if c not in MACRO_FEATURE_COLUMNS]
+VARIANT_FEATURE_COLUMNS = {
+    'baseline': PRICE_FEATURE_COLUMNS,
+    'with_macro': FEATURE_COLUMNS,
+}
+
+
+def variant_feature_columns(variant: str) -> list:
+    """The exact model feature set for a named variant ('baseline' price-only /
+    'with_macro' full). Raises KeyError on an unknown variant name rather than
+    silently serving the wrong column set."""
+    return list(VARIANT_FEATURE_COLUMNS[variant])
+
 # The 6 autoregressive lag columns are the most mutually correlated block in
 # FEATURE_COLUMNS (each is a shifted copy of log_return/bar_dynamics) and are
 # the dimensionality-reduction target described in the project's PCA section.

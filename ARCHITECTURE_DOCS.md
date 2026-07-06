@@ -14,9 +14,9 @@
 | Layer | File | Role |
 |---|---|---|
 | Research / training | `notebooks/01_data_preparation.ipynb` | 61-cell research notebook (Sections 1–20). Mirrors the standalone trainer. |
-| Standalone trainer | `_train_pipeline.py` | Headless reproduction of the notebook's training sections; writes `models/` + MLflow. |
-| Inference core | `src/inference.py` | `PredictionService` — loads artifacts once, serves t+1 predictions. **Shared by both frontends.** |
-| Feature engineering | `src/features.py` | The 24-column `FEATURE_COLUMNS` contract, PCA on lag block, macro merge. |
+| Standalone trainer | `_train_pipeline.py` | `train_variant()` trains BOTH model variants (baseline price-only + with_macro) in one run; writes `models/<variant>/` + MLflow. |
+| Inference core | `src/inference.py` | `PredictionService` — loads BOTH variants' artifacts once, serves both committees + `variant_agreement` per prediction. **Shared by both frontends.** |
+| Feature engineering | `src/features.py` | The 27-column `FEATURE_COLUMNS` contract + per-variant subsets (`variant_feature_columns`), PCA on lag block, macro merge. |
 | Auxiliary intraday feature engineering | `src/h1_features.py` | H1→Daily feature module for the auxiliary ensemble (§3.4) — flattened daily stats + 24h tensor, both including `Trend_vs_SMA504`/`RSI_24`. Independent of `src/features.py`. |
 | Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV (also `fetch_h1_market_data` for the H1 stream). |
 | Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
@@ -74,6 +74,56 @@ separate, larger risk-management conversation that should happen only *after* th
 ledger demonstrates a supported edge.
 
 See `IMPROVEMENT_LOG.md` → "Production methodology hardening" for the commit trail.
+
+---
+
+## Dual-Variant Architecture (baseline vs with_macro)
+
+A direct consequence of the Production Methodology above: the four FRED macro
+features are **statistically unproven** (all KEEP-provisional under the
+Bonferroni-corrected validation bar), so instead of betting the single
+production model on them, the system trains and serves **two complete model
+families side by side** and lets forward evidence arbitrate:
+
+| Variant | Feature set | FRED dependency | Artifacts |
+|---|---|---|---|
+| `baseline` | `PRICE_FEATURE_COLUMNS` — 23 price-derived columns, **zero macro features** | none (immune to FRED outages by construction) | `models/baseline/` |
+| `with_macro` | full 27-column `FEATURE_COLUMNS` (adds `yield_differential_delta`, `usd_index_return`, `policy_rate_differential`, `inflation_differential`) | FRED API → public CSV → cache fallback | `models/with_macro/` |
+
+Design rules (enforced by code + tests):
+
+- **One training body.** `_train_pipeline.py::train_variant()` is the single
+  parametrized trainer; the run loops over `config.json → variants`. Never
+  duplicate the training logic per variant.
+- **Identical rows, different columns.** Both variants train on the SAME
+  euro-era engineered row set (the macro merge's 1999+ truncation), so the
+  comparison isolates the feature set itself, not a training-span difference.
+  Same unified 70/80/100 chronological split, same percent targets.
+- **Fully self-contained artifact sets.** Each variant owns its own
+  `lag_scaler`/`lag_pca`/`global_scaler`/GBM heads/LSTM under
+  `models/<variant>/` — the lag block is currently identical across variants,
+  but separate fits are kept deliberately to rule out any cross-variant
+  coupling. Never mix one variant's scaler with another's model.
+  (`test_smoke.py` asserts all 14 daily artifacts.)
+- **Independent serving gates.** `PredictionService` exposes `baseline_ready` /
+  `macro_ready`; a missing or corrupt variant degrades to an `error` note in
+  its response block while the other variant keeps serving.
+- **Every prediction returns both.** `POST /api/predict` →
+  `{ baseline: {gbm,lstm,consensus}, with_macro: {...}, variant_agreement }`.
+  `variant_agreement=false` is the most informative single signal on the
+  dashboard: it means the unproven macro block is *actually changing the
+  decision* that day. The UI labels the macro panel **experimental/unproven**
+  (with the Bonferroni context in the tooltip) — the two variants are NOT
+  presented as equally validated.
+- **Two forward ledgers.** `results/paper_trading_log_baseline.csv` and
+  `results/paper_trading_log_macro.csv` (config: `paper_trading.ledgers`)
+  accumulate separately from the same prediction log — the macro ledger drives
+  off the historical `pred_*` columns (continuous lineage back through the
+  pre-dual era), the baseline ledger off the new `baseline_*` columns
+  (accumulating from the first dual prediction). Whichever variant nets better
+  cost-adjusted P&L over a meaningful forward window is the honest winner.
+- The **H1→Daily ensemble** is price-only by construction, trains once, stays
+  at `models/` root, and is shared by both variants' responses.
 
 ---
 
@@ -791,20 +841,29 @@ cache). Post-defense methodology exports (see *Production Methodology*):
 
 ### 5.4 Prediction output structure & UI/API routing
 
-`service.predict()` returns a single dict:
+`service.predict()` returns a single dict (dual-variant shape):
 
 ```jsonc
 {
   "as_of_date": "YYYY-MM-DD",
-  "forecasting_date": "YYYY-MM-DD",      // as_of + 1 day (t+1)
+  "forecasting_date": "YYYY-MM-DD",      // as_of + 1 trading session (t+1)
   "data_source": "MT5|yfinance|history_fallback|<src>+history_backfill",
   "bar_used": { "date","open","high","low","close","tick_volume",
-                "yield_differential","macro_source" },
-  "gbm":  { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
-  "lstm": { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
-  "consensus": { "direction":"UP|DOWN|MIXED / LOW CONFIDENCE","agreement":bool,"confidence","predicted_return_pct" }
+                "yield_differential","usd_index","policy_rate_differential",
+                "inflation_differential","macro_source","macro_sources" },
+  "baseline": {                          // price-only variant (23 cols, no FRED)
+    "gbm":  { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+    "lstm": { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+    "consensus": { "direction":"UP|DOWN|MIXED / LOW CONFIDENCE","agreement":bool,"confidence","predicted_return_pct" }
+  },
+  "with_macro": { /* same committee shape — the experimental 27-col variant */ },
+  "variant_agreement": true,             // bool when both consensuses exist; null when either is degraded
+  "h1": { /* auxiliary intraday ensemble, shared by both variants */ }
 }
 ```
+
+A degraded variant replaces its block's committee with an `"error"` note; the
+other variant keeps serving (`baseline_ready` / `macro_ready` gates).
 
 Routing:
 

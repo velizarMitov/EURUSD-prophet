@@ -274,6 +274,54 @@ retroactively to what's already been tested.
       modules and endpoints. Mirrored the three rules into `CLAUDE.md` as a
       governing section. Docs-only; 46 tests still pass.
 
+## Backlog — Dual model variants (baseline vs with_macro, added 2026-07-06)
+
+The 4 macro features are KEEP-provisional (no proven edge), so instead of betting
+the single production model on them, train + persist + serve BOTH a price-only
+baseline and the with-macro variant side by side on every prediction, and let the
+two forward paper-trading ledgers arbitrate.
+
+- [x] `config.json → variants: ["baseline","with_macro"]` (note: the spec said to
+      replace `macro.experimental_features_enabled`, but no such boolean ever
+      existed in config.json — the list was added directly). `src/features.py`
+      gained `MACRO_FEATURE_COLUMNS` / `PRICE_FEATURE_COLUMNS` (23 = 27 − 4;
+      baseline resolved as strictly price-only since the spec's "original
+      24-column (no macro block)" was self-contradictory — the 24-col set
+      included `yield_differential_delta`, which IS macro) and
+      `variant_feature_columns()`.
+- [x] `_train_pipeline.py` refactored into ONE `train_variant()` body looped over
+      both variants (no copy-paste): shared engineered euro-era row set, unified
+      split, per-variant lag_scaler/lag_pca/global_scaler/GBM heads/LSTM under
+      `models/<variant>/`, per-variant MLflow runs + per-variant
+      `results/gbm_feature_importance_{variant}.csv` and
+      `results/backtest_transaction_costs_{variant}.csv`. Stale root-level daily
+      artifacts removed post-run. Per the user's safer-default instruction the
+      lag PCA is duplicated per variant even though the lag block is currently
+      identical across them.
+- [x] `src/inference.py` loads both variants with independent gates
+      (`baseline_ready`/`macro_ready`; per-family flags inside
+      `service.variants[name]`); one shared data fetch feeds both committees;
+      response = `{baseline, with_macro, variant_agreement}` (None when a side is
+      degraded — honest "can't compare", not fake agreement).
+- [x] `src/tracking.py` log schema: `pred_*` columns stay = with_macro committee
+      (continuous lineage for the macro ledger), new `baseline_*` +
+      `variant_agreement` columns. `src/paper_trading.py`: `direction_column`
+      param + `build_all_ledgers`; pre-dual rows are SKIPPED (not flat-logged) by
+      the baseline ledger since no baseline forecast existed. Two ledgers:
+      `results/paper_trading_log_baseline.csv` / `_macro.csv` (config
+      `paper_trading.ledgers`); old single `paper_trading_log.csv` superseded.
+- [x] `static/index.html`: side-by-side variant panels (responsive grid), macro
+      panel badged "⚠ experimental / unproven" with the Bonferroni context in the
+      tooltip (honesty over cosmetic confidence), agreement/disagreement banner +
+      border color driven by `variant_agreement`.
+- [x] Tests: `test_smoke` asserts all 14 per-variant artifacts; integration
+      asserts the dual response shape + `variant_agreement` consistency; unit
+      tests for the variant column contract, dual-consensus logging, and
+      baseline-ledger skip semantics.
+- [ ] **Follow-up:** port notebook Section 19 to `train_variant()` — it still
+      trains the pre-dual single 27-col pipeline into root-level `models/` paths
+      production no longer loads (flagged in CLAUDE.md as known drift).
+
 ## Working rules
 
 - Before each item: re-read the matching skill (`ml-practical-methodology` or
