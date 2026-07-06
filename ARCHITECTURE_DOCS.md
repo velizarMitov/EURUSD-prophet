@@ -151,8 +151,8 @@ the model-facing transform (`yield_differential_delta`) is derived downstream in
 
 ### 2.4 Feature transformation — `compute_features`
 
-`src/features.py:51-105` produces the canonical **24 `FEATURE_COLUMNS`**
-(`src/features.py:26-32`):
+`compute_features` produces the canonical **27 `FEATURE_COLUMNS`**
+(`src/features.py`):
 
 | Group | Columns | Math |
 |---|---|---|
@@ -165,7 +165,10 @@ the model-facing transform (`yield_differential_delta`) is derived downstream in
 | Cyclical time | `day_sin, day_cos, month_sin, month_cos` | sin/cos encoding (wrap-around preserved) |
 | Range | `ATR_14` | True Range, 14-period EWM (`com=13`) |
 | Bands | `BB_width` | `4·std / mid` (normalized Bollinger width) |
-| Exogenous macro | `yield_differential_delta` | `yield_differential.diff(1)` — the raw level (pre-merged, passthrough) stationarized exactly like `log_return` is derived from `close`; see §4.3 |
+| Exogenous macro — yield | `yield_differential_delta` | `yield_differential.diff(1)` — raw level (pre-merged) stationarized like `log_return`; see §4.3 |
+| Exogenous macro — USD | `usd_index_return` | `ln(usd_index / usd_index.shift(1))` on the merged DTWEXBGS level. RETURN not level (the level is ~57% EUR-weighted, near-collinear with EUR/USD). DTWEXBGS starts 2006 → pre-2006 rows get a flat **0** (fillna) so they are not truncated; see §2.6 |
+| Exogenous macro — rates | `policy_rate_differential` | DFF (effective fed funds) − ECBDFR (ECB deposit rate), passthrough level; see §2.6 |
+| Exogenous macro — inflation | `inflation_differential` | US CPI YoY% (CPIAUCSL) − DE HICP YoY% (CP0000DEM086NEST), computed in `macro_data`, passthrough; see §2.6 |
 
 **Critical live-edge property:** `compute_features` does **not** compute targets
 and does **not** `dropna`, so the most-recent bar (which has no future bar to
@@ -193,6 +196,42 @@ former separate `scaler_gb` / `scaler_lstm` are gone. The LSTM's early-stopping
 validation slice `[70%:80%]` sits *inside* the scaler/PCA fit window, but the
 final test block `[80%:100%]` does not, so reported test metrics stay
 leakage-free.
+
+### 2.6 Macro feature expansion (four FRED features, generalized fetcher)
+
+`src/macro_data.py` was generalized so the API → public-CSV → cache fallback
+chain (§2.2) is written **once** in `fetch_fred_feature` and reused by every macro
+feature; `fetch_macro_features` fans out to all four and returns one UTC frame
+(`fetch_yield_differential` is kept as a thin backward-compatible wrapper). Each
+feature has its **own** cache file under `results/` so a thin live fetch of one
+never truncates another's longer cached history.
+
+| Model feature | FRED series | Live start | Notes |
+|---|---|---|---|
+| `yield_differential_delta` | DGS10, IRLTLT01DEM156N | 1970 | existing (§4.3) |
+| `usd_index_return` | DTWEXBGS | 2006 | log-return; the Fed discontinued the pre-2006 trade-weighted indices (DTWEXM ends 2019), so no live series reaches earlier — pre-2006 rows get a flat 0 return rather than truncating history |
+| `policy_rate_differential` | DFF − ECBDFR | 1999 | DFF (effective fed funds, from 1970) chosen over DFEDTARU (2008) so the binding floor is the euro's own 1999 start, not 2008 |
+| `inflation_differential` | CPIAUCSL YoY − CP0000DEM086NEST YoY | 1997 | CP0000DEM086NEST (Eurostat HICP DE, live) replaces DEUCPIALLMINMEI (stale since 2025-03). YoY needs 12 prior months, so the fetcher pulls `yoy_lookback_days=420` extra so the feature is defined at the live edge |
+
+**History consequence (deliberate).** Requiring the differentials non-NaN makes
+`ECBDFR` (1999-01) the binding floor, so `add_advanced_features` now truncates
+training to the **real euro era (1999+, ~8,560 rows)** and drops the ~28 years of
+**synthetic pre-euro DEM-proxy** bars the 24-column model trained on (EUR/USD did
+not exist before 1999; those bars are a backfilled proxy). This is a data-quality
+improvement but shifts every split boundary, so 1999+ metrics are **not**
+comparable row-for-row with the old 1971+ ones — the old 24-col/1971+ baseline is
+preserved in `results/comparison_table.csv`. `add_advanced_features` drops NaN
+only on `FEATURE_COLUMNS + targets` (not on the intermediate merged levels
+`usd_index`/`yield_differential`), so `usd_index`'s 2006 start does not drag the
+floor to 2006. LSTM splits stay healthy at the 1999+ size (train ≈ 5,830 seq,
+val ≈ 816, test ≈ 1,653).
+
+**No look-ahead.** `merge_macro_features` aligns each macro series onto the price
+index by as-of forward-fill (reindex onto the union, `ffill`, select the OHLCV
+dates), so a monthly CPI print propagates onto every later daily bar — even when
+the month-start lands on a non-trading day — and never a future value backward.
+Guarded by `test_*_no_lookahead_*` for all four macro features. See §4.3.1 for the
+(provisional, not-significant) ablation of the three added features.
 
 ---
 
@@ -516,6 +555,49 @@ same comparison dynamically (it imports `FEATURE_COLUMNS`/`merge_macro_features`
 feature automatically on its next execution) but its markdown narrative still
 describes the old raw-level result and has not been re-run to confirm the
 notebook environment reproduces the same numbers as this standalone check.
+
+### 4.3.1 Three added macro features — kept provisionally, not statistically proven
+
+Three more FRED macro features were added (`usd_index_return`,
+`policy_rate_differential`, `inflation_differential` — see §2.4/§2.6). Each was
+ablated individually (WITH vs WITHOUT, one feature toggled, all other columns and
+rows held fixed) on the **euro-era 1999+ row set** — the addition of ECB/USD/HICP
+series truncates the trainable history from the synthetic-1971 span to the real
+euro era (§2.6), so this ablation runs on a different, shorter row set than §4.3's
+1971+ numbers and the two are **not** directly comparable (the old 24-col/1971+
+baseline row is preserved in `results/comparison_table.csv` as the permanent
+before reference). Point-estimate deltas (`results/new_macro_ablation.csv`):
+
+| Added feature | Δ accuracy | Δ ROC-AUC |
+|---|---|---|
+| `usd_index_return` | +0.0064 | +0.0073 |
+| `policy_rate_differential` | +0.0047 | +0.0045 |
+| `inflation_differential` | +0.0123 | +0.0041 |
+
+All three point estimates are **positive**, so per the "keep only non-negative
+features" rule they are kept — **but a proper significance test
+(`results/new_macro_significance.csv`) shows none of the three is distinguishable
+from noise:**
+
+| Added feature | 95% bootstrap CI (Δacc) | frac(Δ>0) | McNemar p | Verdict |
+|---|---|---|---|---|
+| `usd_index_return` | [−0.0099, +0.0234] | 0.77 | 0.499 | KEEP — **provisional** |
+| `policy_rate_differential` | [−0.0099, +0.0181] | 0.73 | 0.568 | KEEP — **provisional** |
+| `inflation_differential` | [−0.0064, +0.0298] | 0.90 | 0.210 | KEEP — **provisional** |
+
+Every 95% CI straddles 0 and every McNemar p-value is far above 0.05 (2000
+paired bootstrap resamples of the 1,712-row test block; McNemar over the 2×2
+correct/wrong flip table). So the features are retained on a nominally-positive
+point estimate but carry **no proven edge** — exactly the efficient-market result
+of §4.2. They should be revisited with a longer live test window before being
+treated as real signal, and this is a live-money caveat, not an academic one.
+
+**Out-of-scope flag (not acted on):** on this same 1999+ set, the existing
+`yield_differential_delta` now shows a small *negative* ablation delta
+(−0.0041 acc / −0.0045 auc) — the opposite sign from its +0.0029/+0.0032 on the
+1971+ set in §4.3. Both are within noise; re-evaluating/removing the yield
+feature is tracked as a separate `IMPROVEMENT_LOG.md` follow-up, deliberately not
+changed in the same pass that added the three features (one change at a time).
 
 ### 4.4 Known defects — fixed in this branch
 

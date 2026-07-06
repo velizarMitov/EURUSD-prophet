@@ -151,21 +151,99 @@ def test_yield_differential_delta_no_lookahead_on_weekend_gap():
     assert delta.loc[ohlcv_dates[4]] == pytest.approx(0.30), "Monday: 1.80 - 1.50 (own new value vs weekend ffill)."
 
 
+def _raw_yield_levels(vals_us, vals_de, start='2026-06-01'):
+    """A raw-level (us10y/de10y) frame shaped exactly like the generalized
+    low-level FRED fetchers now return -- combine derives yield_differential."""
+    idx = pd.date_range(start, periods=len(vals_us), tz='UTC')
+    return pd.DataFrame({'us10y': vals_us, 'de10y': vals_de}, index=idx)
+
+
+def _weekday_ohlcv(dates):
+    return pd.DataFrame(
+        {'open': [1.1] * len(dates), 'high': [1.1] * len(dates), 'low': [1.1] * len(dates),
+         'close': [1.1] * len(dates), 'tick_volume': [1] * len(dates)},
+        index=pd.to_datetime(dates),
+    )
+
+
+def test_usd_index_return_no_lookahead_and_flat_on_weekend():
+    """usd_index_return = log-return of the ffilled USD index level. A weekend
+    bar inherits Friday's level (flat 0 return), never Monday's future level;
+    Monday's return is measured against the ffilled Friday value."""
+    dates = ['2020-01-02', '2020-01-03', '2020-01-04', '2020-01-05', '2020-01-06']  # Thu..Mon (post-2006)
+    ohlcv = _weekday_ohlcv(dates)
+    macro = pd.DataFrame({'usd_index': [100.0, 110.0, 121.0]},
+                         index=pd.DatetimeIndex(['2020-01-02', '2020-01-03', '2020-01-06'], tz='UTC'))
+
+    eng = compute_features(merge_macro_features(ohlcv, macro))
+    r = eng['usd_index_return']
+    d = pd.to_datetime(dates)
+    assert r.loc[d[1]] == pytest.approx(np.log(110 / 100)), "Fri: log(110/100) vs Thu."
+    assert r.loc[d[2]] == pytest.approx(0.0), "Sat inherits Fri's level -> flat 0, no Monday leak."
+    assert r.loc[d[3]] == pytest.approx(0.0), "Sun inherits Fri's level -> flat 0."
+    assert r.loc[d[4]] == pytest.approx(np.log(121 / 110)), "Mon: log(121/110) vs ffilled Fri, not vs Sun."
+
+
+def test_usd_index_return_flat_zero_before_series_start():
+    """DTWEXBGS only exists from 2006; earlier rows (level NaN) must get a flat 0
+    return via fillna, NOT be dropped -- that is what preserves the 1999+ history
+    the other macro features cover."""
+    dates = ['1999-06-01', '1999-06-02', '1999-06-03']  # pre-2006, no USD level
+    ohlcv = _weekday_ohlcv(dates)
+    macro = pd.DataFrame({'usd_index': [np.nan]}, index=pd.DatetimeIndex(['1999-06-01'], tz='UTC'))
+    eng = compute_features(merge_macro_features(ohlcv, macro))
+    assert (eng['usd_index_return'] == 0.0).all(), "Pre-series-start USD return must be a flat 0, not NaN."
+
+
+def test_policy_rate_differential_ffill_no_lookahead():
+    """policy_rate_differential passes through as a level; a weekend/holiday bar
+    inherits the last known (Friday) rate differential, never Monday's future one."""
+    dates = ['2020-01-02', '2020-01-03', '2020-01-04', '2020-01-05', '2020-01-06']  # Thu..Mon
+    ohlcv = _weekday_ohlcv(dates)
+    macro = pd.DataFrame({'policy_rate_differential': [1.0, 1.5, 2.0]},
+                         index=pd.DatetimeIndex(['2020-01-02', '2020-01-03', '2020-01-06'], tz='UTC'))
+    eng = compute_features(merge_macro_features(ohlcv, macro))
+    p, d = eng['policy_rate_differential'], pd.to_datetime(dates)
+    assert p.loc[d[1]] == pytest.approx(1.5), "Fri: own value."
+    assert p.loc[d[2]] == pytest.approx(1.5), "Sat inherits Fri, never Monday's future 2.0."
+    assert p.loc[d[3]] == pytest.approx(1.5), "Sun inherits Fri."
+    assert p.loc[d[4]] == pytest.approx(2.0), "Mon: own new value."
+
+
+def test_inflation_differential_monthly_ffill_onto_daily_no_lookahead():
+    """A monthly CPI-YoY differential must propagate onto EVERY later daily bar
+    via as-of ffill -- including when the month-start print lands on a non-trading
+    day -- and a mid-month day must carry THIS month's value, never next month's."""
+    dates = ['2020-01-15', '2020-01-31', '2020-02-03', '2020-02-14']  # daily business days
+    ohlcv = _weekday_ohlcv(dates)
+    # Month-start prints; 2020-02-01 is a Saturday (non-trading) on purpose.
+    macro = pd.DataFrame({'inflation_differential': [2.0, 2.5]},
+                         index=pd.DatetimeIndex(['2020-01-01', '2020-02-01'], tz='UTC'))
+    eng = compute_features(merge_macro_features(ohlcv, macro))
+    infl, d = eng['inflation_differential'], pd.to_datetime(dates)
+    assert infl.loc[d[0]] == pytest.approx(2.0), "Jan 15 carries Jan's 2.0 (not future Feb 2.5)."
+    assert infl.loc[d[1]] == pytest.approx(2.0), "Jan 31 still Jan's 2.0."
+    assert infl.loc[d[2]] == pytest.approx(2.5), "Feb 3 carries Feb's 2.5 even though Feb 1 was a Saturday."
+    assert infl.loc[d[3]] == pytest.approx(2.5), "Feb 14 still Feb's 2.5."
+
+
 def test_fetch_yield_differential_prefers_fred_api(monkeypatch, tmp_path):
     """When the official FRED API (via FRED_API_KEY) succeeds, the free
-    public-CSV fallback must not be called at all."""
+    public-CSV fallback must not be called at all. The low-level fetcher now
+    returns RAW LEVELS; fetch_yield_differential's combine derives the spread."""
     import src.macro_data as macro_data
 
-    fake_df = pd.DataFrame({'yield_differential': [1.5, 1.6]}, index=pd.date_range('2026-06-01', periods=2, tz='UTC'))
-    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda series_ids, start, end: fake_df)
+    raw = _raw_yield_levels([4.5, 4.6], [3.0, 3.0])  # -> yield_differential [1.5, 1.6]
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api', lambda series_ids, start, end: raw)
 
     def _boom(*args, **kwargs):
-        raise AssertionError("pandas_datareader must not be called when the FRED API succeeds.")
-    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', _boom)
+        raise AssertionError("public endpoint must not be called when the FRED API succeeds.")
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public', _boom)
 
     df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-02', cache_path=str(tmp_path / 'cache.csv'))
     assert source == 'FRED_api'
     assert len(df) == 2
+    assert df['yield_differential'].tolist() == pytest.approx([1.5, 1.6])
 
 
 def test_fetch_yield_differential_falls_back_to_public_endpoint(monkeypatch, tmp_path):
@@ -173,26 +251,29 @@ def test_fetch_yield_differential_falls_back_to_public_endpoint(monkeypatch, tmp
     back to FRED's public CSV endpoint, which needs no key."""
     import src.macro_data as macro_data
 
-    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
-    fake_df = pd.DataFrame({'yield_differential': [2.0]}, index=pd.date_range('2026-06-01', periods=1, tz='UTC'))
-    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: fake_df)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api', lambda *args, **kwargs: None)
+    raw = _raw_yield_levels([5.0], [3.0])  # -> yield_differential [2.0]
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public', lambda *args, **kwargs: raw)
 
     df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=str(tmp_path / 'cache.csv'))
     assert source == 'FRED_public'
     assert len(df) == 1
+    assert df['yield_differential'].iloc[0] == pytest.approx(2.0)
 
 
 def test_fetch_yield_differential_falls_back_to_cache_when_unreachable(monkeypatch, tmp_path):
     """When neither live FRED source is reachable, reuse the last cached
-    snapshot on disk rather than failing the whole prediction pipeline."""
+    snapshot on disk rather than failing the whole prediction pipeline. The
+    cache stores the already-combined frame, so it is returned as-is."""
     import src.macro_data as macro_data
 
     cache_path = str(tmp_path / 'cache.csv')
-    cached_df = pd.DataFrame({'yield_differential': [0.9]}, index=pd.date_range('2026-05-01', periods=1, tz='UTC'))
+    cached_df = pd.DataFrame({'us10y': [3.9], 'de10y': [3.0], 'yield_differential': [0.9]},
+                             index=pd.date_range('2026-05-01', periods=1, tz='UTC'))
     cached_df.to_csv(cache_path)
 
-    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
-    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public', lambda *args, **kwargs: None)
 
     df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=cache_path)
     assert source == 'cache'
@@ -204,12 +285,44 @@ def test_fetch_yield_differential_returns_none_when_nothing_reachable(monkeypatc
     (None, None) so it can apply its own constant-default fallback."""
     import src.macro_data as macro_data
 
-    monkeypatch.setattr(macro_data, '_fetch_via_fredapi', lambda *args, **kwargs: None)
-    monkeypatch.setattr(macro_data, '_fetch_via_pandas_datareader', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api', lambda *args, **kwargs: None)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public', lambda *args, **kwargs: None)
 
     df, source = macro_data.fetch_yield_differential('2026-06-01', '2026-06-01', cache_path=str(tmp_path / 'missing.csv'))
     assert df is None
     assert source is None
+
+
+def test_fetch_fred_feature_generic_fallback_chain(monkeypatch, tmp_path):
+    """The generalized fetch_fred_feature drives the SAME API -> public -> cache
+    chain for ANY feature, not just the yield differential -- parametrized here
+    over a 2-series 'policy' combine to prove the reuse, so the chain logic is
+    tested once instead of duplicated per feature."""
+    import src.macro_data as macro_data
+
+    def _raw_policy(vals_fed, vals_ecb, start='2026-06-01'):
+        idx = pd.date_range(start, periods=len(vals_fed), tz='UTC')
+        return pd.DataFrame({'fed': vals_fed, 'ecb': vals_ecb}, index=idx)
+
+    # Tier 1: API succeeds -> public must not run.
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api',
+                        lambda *a, **k: _raw_policy([4.5, 4.5], [2.25, 2.5]))
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public',
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("public must not run")))
+    df, source = macro_data.fetch_fred_feature(
+        {'fed': 'DFF', 'ecb': 'ECBDFR'}, '2026-06-01', '2026-06-02',
+        combine=macro_data._combine_policy, cache_path=str(tmp_path / 'pol.csv'))
+    assert source == 'FRED_api'
+    assert df['policy_rate_differential'].tolist() == pytest.approx([2.25, 2.0])
+
+    # Tier 3: both live tiers fail -> the just-written cache answers.
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_api', lambda *a, **k: None)
+    monkeypatch.setattr(macro_data, '_fetch_raw_via_public', lambda *a, **k: None)
+    df2, source2 = macro_data.fetch_fred_feature(
+        {'fed': 'DFF', 'ecb': 'ECBDFR'}, '2026-06-01', '2026-06-02',
+        combine=macro_data._combine_policy, cache_path=str(tmp_path / 'pol.csv'))
+    assert source2 == 'cache'
+    assert df2['policy_rate_differential'].iloc[0] == pytest.approx(2.25)
 
 
 def test_compute_consensus_agreement_averages():

@@ -12,7 +12,22 @@
       "us10y": "DGS10",
       "de10y": "IRLTLT01DEM156N"
     },
-    "cache_path": "results/yield_differential.csv"
+    "cache_path": "results/yield_differential.csv",
+    "features": {
+      "usd_index": {
+        "series": { "usd_index": "DTWEXBGS" },
+        "cache_path": "results/usd_index.csv"
+      },
+      "policy_rate": {
+        "series": { "fed": "DFF", "ecb": "ECBDFR" },
+        "cache_path": "results/policy_rate_differential.csv"
+      },
+      "inflation": {
+        "series": { "us_cpi": "CPIAUCSL", "de_cpi": "CP0000DEM086NEST" },
+        "cache_path": "results/inflation_differential.csv",
+        "yoy_lookback_days": 420
+      }
+    }
   },
   "tracking": {
     "log_path": "results/prediction_log.csv",

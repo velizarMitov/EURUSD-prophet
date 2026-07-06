@@ -1,0 +1,5 @@
+feature,acc_without,auc_without,acc_with,auc_with,d_acc,d_auc,verdict
+usd_index_return,0.5082,0.5126,0.5146,0.5199,0.0064,0.0073,KEEP (+)
+policy_rate_differential,0.5099,0.5154,0.5146,0.5199,0.0047,0.0045,KEEP (+)
+inflation_differential,0.5023,0.5158,0.5146,0.5199,0.0123,0.0041,KEEP (+)
+yield_differential_delta,0.5187,0.5244,0.5146,0.5199,-0.0041,-0.0045,DROP (<=0)

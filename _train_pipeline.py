@@ -40,7 +40,7 @@ from src.features import (
     add_advanced_features, merge_macro_features, TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
     FEATURE_COLUMNS, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
 )
-from src.macro_data import fetch_yield_differential
+from src.macro_data import fetch_macro_features
 
 load_dotenv('.env')
 
@@ -78,21 +78,19 @@ raw_df = pd.read_csv(CONFIG['data']['history_csv_path'], index_col='time', parse
 raw_df = raw_df[['open', 'high', 'low', 'close', 'tick_volume']]
 print(f"Loaded {len(raw_df):,} bars ({raw_df.index[0].date()} -> {raw_df.index[-1].date()})")
 
-print("\n=== 1B. Macro Feature Ingestion (FRED: US 10Y - DE 10Y Yield Differential) ===")
+print("\n=== 1B. Macro Feature Ingestion (FRED: yield / USD index / policy-rate / inflation differentials) ===")
 macro_cfg = CONFIG.get('macro', {})
-macro_df, macro_source = fetch_yield_differential(
-    raw_df.index.min(), raw_df.index.max(),
-    series_ids=macro_cfg.get('fred_series'),
-    cache_path=macro_cfg.get('cache_path', 'results/yield_differential.csv'),
+macro_df, macro_sources = fetch_macro_features(raw_df.index.min(), raw_df.index.max(), macro_cfg)
+raw_df = merge_macro_features(
+    raw_df, macro_df if macro_df is not None else pd.DataFrame(index=raw_df.index)
 )
+macro_source = macro_sources.get('yield_differential', 'unavailable')
+print(f"Merged macro features (per-feed source): {macro_sources}")
 if macro_df is not None:
-    raw_df = merge_macro_features(raw_df, macro_df)
-    print(f"Merged yield_differential via {macro_source}: {len(macro_df):,} macro observations "
-          f"({macro_df.index[0].date()} -> {macro_df.index[-1].date()})")
+    print(f"Macro span: {macro_df.index[0].date()} -> {macro_df.index[-1].date()}  "
+          f"({len(macro_df):,} observations, {list(macro_df.columns)})")
 else:
-    raw_df = raw_df.assign(yield_differential=0.0)
-    macro_source = "unavailable"
-    print("WARNING: no live or cached FRED data reachable -- yield_differential defaulted to 0.0")
+    print("WARNING: no live or cached FRED data reachable -- macro features defaulted to neutral 0")
 
 print("\n=== 2. Feature Engineering (Multi-Task targets, target_return in PERCENT) ===")
 basic_advanced_df = add_advanced_features(raw_df)

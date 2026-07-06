@@ -1,0 +1,287 @@
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1783310700.890897   15352 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1783310702.723387   15352 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026/07/06 07:12:08 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
+
+WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
+
+WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
+
+2026/07/06 07:12:17 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+WARNING:tensorflow:TensorFlow GPU support is not available on native Windows for TensorFlow >= 2.11. Even if CUDA/cuDNN are installed, GPU will not be used. Please use WSL2 or the TensorFlow-DirectML plugin.
+XGBoost GPU (CUDA): available — tree training will run on RTX 4070.
+=== 1. Loading historical OHLCV ===
+Loaded 15,715 bars (1971-01-11 -> 2026-06-18)
+
+=== 1B. Macro Feature Ingestion (FRED: yield / USD index / policy-rate / inflation differentials) ===
+Merged macro features (per-feed source): {'yield_differential': 'FRED_api', 'usd_index': 'FRED_api', 'policy_rate_differential': 'FRED_api', 'inflation_differential': 'FRED_api'}
+Macro span: 1971-01-11 -> 2026-07-01  (17,435 observations, ['yield_differential', 'usd_index', 'policy_rate_differential', 'inflation_differential'])
+
+=== 2. Feature Engineering (Multi-Task targets, target_return in PERCENT) ===
+Shape: (8560, 32)
+
+=== 3. Unified Chronological Splits & PCA on Lag Features ===
+n=8560  LSTM-train [0:5992]  LSTM-val [5992:6848]  TEST [6848:8560]   (GBM-train = [0:6848])
+Lag columns in: 6  ->  PCA components out: 6
+Cumulative variance explained: 1.0000
+Model input columns (27): ['open', 'high', 'low', 'close', 'log_return', 'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20', 'bar_dynamics', 'day_sin', 'day_cos', 'month_sin', 'month_cos', 'ATR_14', 'BB_width', 'yield_differential_delta', 'usd_index_return', 'policy_rate_differential', 'inflation_differential', 'lag_pca_1', 'lag_pca_2', 'lag_pca_3', 'lag_pca_4', 'lag_pca_5', 'lag_pca_6']
+Global scaler fit on [0:6848] (80%); transformed full matrix (8560, 27).
+
+=== 4. GBM Dual Pipeline: Chronological Split & Global Scaling ===
+=== 5. GBM Hyperparameter Tuning ===
+--- Classification head (target_direction) [device=cuda] ---
+Best params: {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100, 'subsample': 1.0}  CV ROC-AUC: 0.5310
+--- Regression head (target_return [percent], pseudo-Huber) [device=cuda] ---
+Best params: {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100, 'subsample': 0.5}  CV MAE: 0.386311 (percent)
+
+=== 6. GBM Evaluation (held-out test) ===
+[Direction] Accuracy=0.5035  ROC-AUC=0.5208
+[Return]    MSE=0.183892  MAE=0.302926  (percent units)
+
+=== Backtest: GBM direction signal vs realistic transaction costs ===
+        scenario  cost_pips  n_days  n_trades  hit_rate  gross_return_pct_total  net_return_pct_total  gross_return_pct_per_trade  net_return_pct_per_trade
+gross (no costs)        0.0    1712       371  0.503505               14.434698             14.434698                    0.038908                  0.038908
+    1 pip spread        1.0    1712       371  0.503505               14.434698             11.061971                    0.038908                  0.029817
+    2 pip spread        2.0    1712       371  0.503505               14.434698              7.689243                    0.038908                  0.020726
+Saved: results/backtest_transaction_costs.csv
+[Direction:TRAIN] Accuracy=0.5897  ROC-AUC=0.6166  (train-test ROC-AUC gap=+0.0958)
+[mlflow] skipped logging 'gbm_direction_classifier': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBClassifier'].
+[mlflow] skipped logging 'gbm_return_regressor': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBRegressor'].
+MLflow run logged: run_id=d67284571f1646b3b77c919c1a16f737
+
+=== 7. Persisting GBM + PCA + global scaler artifacts ===
+Saved: lag_scaler.pkl, lag_pca.pkl, global_scaler.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl
+Saved: results/gbm_feature_importance.csv
+                 feature  importance_direction_classifier  importance_return_regressor
+                BB_width                         0.067389                     0.033524
+                 day_sin                         0.064227                     0.038633
+        usd_index_return                         0.059794                     0.032312
+            bar_dynamics                         0.051338                     0.038141
+               lag_pca_4                         0.045212                     0.035424
+                  ATR_14                         0.043570                     0.040204
+  inflation_differential                         0.043478                     0.033245
+              log_return                         0.042073                     0.038864
+               lag_pca_3                         0.041336                     0.039078
+               lag_pca_5                         0.041047                     0.037956
+                   close                         0.039823                     0.038233
+yield_differential_delta                         0.039255                     0.037409
+                    open                         0.037420                     0.038171
+               lag_pca_2                         0.036130                     0.031792
+policy_rate_differential                         0.035609                     0.037140
+               lag_pca_1                         0.033649                     0.035840
+               month_cos                         0.033521                     0.033698
+                 SMA_100                         0.032797                     0.038549
+               month_sin                         0.032328                     0.026741
+           volatility_20                         0.031999                     0.035456
+               lag_pca_6                         0.031784                     0.037285
+                 day_cos                         0.030377                     0.035990
+                    high                         0.028958                     0.027801
+                  SMA_50                         0.028591                     0.039300
+                 SMA_200                         0.028297                     0.042876
+                  SMA_21                         0.000000                     0.040387
+                     low                         0.000000                     0.055953
+
+=== 8. Multi-Task LSTM: Sliding-Window Data Preparation ===
+Train seq: (5972, 20, 27)  Val seq: (836, 20, 27)  Test seq: (1692, 20, 27)
+
+=== 9. Multi-Task LSTM Model Construction (Functional API) ===
+TensorFlow: no GPU on native Windows (TF >=2.11 requires WSL2 for CUDA). Training on CPU.
+Model: "multitask_lstm_eurusd"
+┌─────────────────────┬───────────────────┬────────────┬───────────────────┐
+│ Layer (type)        │ Output Shape      │    Param # │ Connected to      │
+├─────────────────────┼───────────────────┼────────────┼───────────────────┤
+│ ohlcv_window        │ (None, 20, 27)    │          0 │ -                 │
+│ (InputLayer)        │                   │            │                   │
+├─────────────────────┼───────────────────┼────────────┼───────────────────┤
+│ shared_lstm_trunk   │ (None, 64)        │     23,552 │ ohlcv_window[0][… │
+│ (LSTM)              │                   │            │                   │
+├─────────────────────┼───────────────────┼────────────┼───────────────────┤
+│ shared_dropout      │ (None, 64)        │          0 │ shared_lstm_trun… │
+│ (Dropout)           │                   │            │                   │
+├─────────────────────┼───────────────────┼────────────┼───────────────────┤
+│ return_output       │ (None, 1)         │         65 │ shared_dropout[0… │
+│ (Dense)             │                   │            │                   │
+├─────────────────────┼───────────────────┼────────────┼───────────────────┤
+│ direction_output    │ (None, 1)         │         65 │ shared_dropout[0… │
+│ (Dense)             │                   │            │                   │
+└─────────────────────┴───────────────────┴────────────┴───────────────────┘
+ Total params: 23,682 (92.51 KB)
+ Trainable params: 23,682 (92.51 KB)
+ Non-trainable params: 0 (0.00 B)
+
+=== 10. Training (early-stopping on the 70-80% validation block) ===
+Epoch 1/100
+94/94 - 3s - 28ms/step - direction_output_accuracy: 0.5094 - direction_output_loss: 0.6975 - loss: 1.0851 - return_output_loss: 0.3858 - return_output_mae: 0.4599 - val_direction_output_accuracy: 0.4928 - val_direction_output_loss: 0.7049 - val_loss: 0.8446 - val_return_output_loss: 0.1491 - val_return_output_mae: 0.2785
+Epoch 2/100
+94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5251 - direction_output_loss: 0.6937 - loss: 1.0461 - return_output_loss: 0.3513 - return_output_mae: 0.4353 - val_direction_output_accuracy: 0.4833 - val_direction_output_loss: 0.7049 - val_loss: 0.8415 - val_return_output_loss: 0.1426 - val_return_output_mae: 0.2727
+Epoch 3/100
+94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5194 - direction_output_loss: 0.6938 - loss: 1.0423 - return_output_loss: 0.3475 - return_output_mae: 0.4317 - val_direction_output_accuracy: 0.4904 - val_direction_output_loss: 0.7052 - val_loss: 0.8422 - val_return_output_loss: 0.1432 - val_return_output_mae: 0.2730
+Epoch 4/100
+94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5295 - direction_output_loss: 0.6906 - loss: 1.0311 - return_output_loss: 0.3394 - return_output_mae: 0.4251 - val_direction_output_accuracy: 0.4892 - val_direction_output_loss: 0.7056 - val_loss: 0.8433 - val_return_output_loss: 0.1423 - val_return_output_mae: 0.2719
+Epoch 5/100
+94/94 - 1s - 10ms/step - direction_output_accuracy: 0.5365 - direction_output_loss: 0.6898 - loss: 1.0243 - return_output_loss: 0.3329 - return_output_mae: 0.4226 - val_direction_output_accuracy: 0.4761 - val_direction_output_loss: 0.7032 - val_loss: 0.8427 - val_return_output_loss: 0.1437 - val_return_output_mae: 0.2725
+Epoch 6/100
+94/94 - 1s - 12ms/step - direction_output_accuracy: 0.5380 - direction_output_loss: 0.6871 - loss: 1.0186 - return_output_loss: 0.3298 - return_output_mae: 0.4184 - val_direction_output_accuracy: 0.4665 - val_direction_output_loss: 0.7029 - val_loss: 0.8429 - val_return_output_loss: 0.1428 - val_return_output_mae: 0.2725
+Epoch 7/100
+94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5415 - direction_output_loss: 0.6862 - loss: 1.0159 - return_output_loss: 0.3284 - return_output_mae: 0.4177 - val_direction_output_accuracy: 0.4809 - val_direction_output_loss: 0.7037 - val_loss: 0.8444 - val_return_output_loss: 0.1428 - val_return_output_mae: 0.2729
+Epoch 8/100
+94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5492 - direction_output_loss: 0.6850 - loss: 1.0126 - return_output_loss: 0.3263 - return_output_mae: 0.4176 - val_direction_output_accuracy: 0.4713 - val_direction_output_loss: 0.7041 - val_loss: 0.8449 - val_return_output_loss: 0.1438 - val_return_output_mae: 0.2734
+Epoch 9/100
+94/94 - 1s - 10ms/step - direction_output_accuracy: 0.5440 - direction_output_loss: 0.6843 - loss: 1.0093 - return_output_loss: 0.3235 - return_output_mae: 0.4141 - val_direction_output_accuracy: 0.4713 - val_direction_output_loss: 0.7040 - val_loss: 0.8441 - val_return_output_loss: 0.1439 - val_return_output_mae: 0.2736
+Epoch 10/100
+94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5524 - direction_output_loss: 0.6832 - loss: 1.0072 - return_output_loss: 0.3224 - return_output_mae: 0.4133 - val_direction_output_accuracy: 0.4713 - val_direction_output_loss: 0.7051 - val_loss: 0.8446 - val_return_output_loss: 0.1438 - val_return_output_mae: 0.2728
+Epoch 11/100
+94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5574 - direction_output_loss: 0.6815 - loss: 1.0042 - return_output_loss: 0.3216 - return_output_mae: 0.4134 - val_direction_output_accuracy: 0.4773 - val_direction_output_loss: 0.7042 - val_loss: 0.8434 - val_return_output_loss: 0.1423 - val_return_output_mae: 0.2730
+Epoch 12/100
+94/94 - 1s - 10ms/step - direction_output_accuracy: 0.5598 - direction_output_loss: 0.6789 - loss: 0.9978 - return_output_loss: 0.3176 - return_output_mae: 0.4112 - val_direction_output_accuracy: 0.4821 - val_direction_output_loss: 0.7056 - val_loss: 0.8463 - val_return_output_loss: 0.1445 - val_return_output_mae: 0.2743
+Epoch 12: early stopping
+Restoring model weights from the end of the best epoch: 2.
+2026/07/06 07:12:31 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/06 07:12:31 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
+Stopped after 12 epochs.
+
+=== 11. Evaluation (held-out test) ===
+[Return]    MSE=0.193713  MAE=0.315630  (percent units, comparable to GBM)
+[Direction] Accuracy=0.5095  ROC-AUC=0.5216
+[Multi-task check] Return-sign vs direction-head agreement: 0.5544 (shared signal present)
+[Direction:TRAIN] Accuracy=0.5394  ROC-AUC=0.5584  (train-test ROC-AUC gap=+0.0368)
+MLflow run logged: run_id=b589c201229c4c66b8ef083d7d1e8d4e
+
+=== 12. Persisting LSTM artifacts ===
+Saved: lstm_multitask_eurusd.keras, lstm_time_steps.pkl
+
+=== 13. H1 -> Daily Predictor (XGBoost / RandomForest / SVM / LSTM) ===
+H1 cache refreshed from MT5: 60000 bars.
+H1 datasets: flat (2499, 11), seq (2499, 24, 5), days 2016-11-11 -> 2026-07-02
+--- XGBoost [device=cuda] ---
+--- RandomForest ---
+--- SVM (RBF) ---
+--- Sequence-to-Vector LSTM ---
+Epoch 1/60
+55/55 - 1s - 27ms/step - loss: 0.2379 - mae: 0.3738 - val_loss: 0.1413 - val_mae: 0.2884
+Epoch 2/60
+55/55 - 0s - 7ms/step - loss: 0.2215 - mae: 0.3613 - val_loss: 0.1389 - val_mae: 0.2848
+Epoch 3/60
+55/55 - 0s - 7ms/step - loss: 0.2142 - mae: 0.3560 - val_loss: 0.1384 - val_mae: 0.2842
+Epoch 4/60
+55/55 - 0s - 7ms/step - loss: 0.2177 - mae: 0.3570 - val_loss: 0.1382 - val_mae: 0.2839
+Epoch 5/60
+55/55 - 0s - 6ms/step - loss: 0.2155 - mae: 0.3560 - val_loss: 0.1387 - val_mae: 0.2850
+Epoch 6/60
+55/55 - 0s - 6ms/step - loss: 0.2140 - mae: 0.3557 - val_loss: 0.1383 - val_mae: 0.2845
+Epoch 7/60
+55/55 - 0s - 7ms/step - loss: 0.2129 - mae: 0.3526 - val_loss: 0.1385 - val_mae: 0.2847
+Epoch 8/60
+55/55 - 0s - 6ms/step - loss: 0.2122 - mae: 0.3536 - val_loss: 0.1382 - val_mae: 0.2844
+Epoch 9/60
+55/55 - 0s - 7ms/step - loss: 0.2135 - mae: 0.3549 - val_loss: 0.1383 - val_mae: 0.2846
+Epoch 10/60
+55/55 - 0s - 7ms/step - loss: 0.2110 - mae: 0.3519 - val_loss: 0.1380 - val_mae: 0.2843
+Epoch 11/60
+55/55 - 0s - 7ms/step - loss: 0.2123 - mae: 0.3535 - val_loss: 0.1380 - val_mae: 0.2842
+Epoch 12/60
+55/55 - 0s - 6ms/step - loss: 0.2117 - mae: 0.3544 - val_loss: 0.1379 - val_mae: 0.2840
+Epoch 13/60
+55/55 - 0s - 5ms/step - loss: 0.2107 - mae: 0.3530 - val_loss: 0.1383 - val_mae: 0.2846
+Epoch 14/60
+55/55 - 0s - 7ms/step - loss: 0.2106 - mae: 0.3535 - val_loss: 0.1384 - val_mae: 0.2849
+Epoch 15/60
+55/55 - 0s - 6ms/step - loss: 0.2126 - mae: 0.3538 - val_loss: 0.1383 - val_mae: 0.2847
+Epoch 16/60
+55/55 - 0s - 7ms/step - loss: 0.2091 - mae: 0.3515 - val_loss: 0.1387 - val_mae: 0.2851
+Epoch 17/60
+55/55 - 0s - 6ms/step - loss: 0.2103 - mae: 0.3514 - val_loss: 0.1379 - val_mae: 0.2842
+Epoch 18/60
+55/55 - 0s - 7ms/step - loss: 0.2110 - mae: 0.3520 - val_loss: 0.1380 - val_mae: 0.2842
+Epoch 19/60
+55/55 - 0s - 6ms/step - loss: 0.2109 - mae: 0.3524 - val_loss: 0.1377 - val_mae: 0.2839
+Epoch 20/60
+55/55 - 0s - 6ms/step - loss: 0.2083 - mae: 0.3508 - val_loss: 0.1379 - val_mae: 0.2841
+Epoch 21/60
+55/55 - 0s - 6ms/step - loss: 0.2086 - mae: 0.3515 - val_loss: 0.1376 - val_mae: 0.2839
+Epoch 22/60
+55/55 - 0s - 7ms/step - loss: 0.2083 - mae: 0.3515 - val_loss: 0.1377 - val_mae: 0.2840
+Epoch 23/60
+55/55 - 1s - 13ms/step - loss: 0.2080 - mae: 0.3510 - val_loss: 0.1378 - val_mae: 0.2836
+Epoch 24/60
+55/55 - 0s - 6ms/step - loss: 0.2058 - mae: 0.3495 - val_loss: 0.1369 - val_mae: 0.2830
+Epoch 25/60
+55/55 - 0s - 6ms/step - loss: 0.2071 - mae: 0.3502 - val_loss: 0.1370 - val_mae: 0.2830
+Epoch 26/60
+55/55 - 0s - 7ms/step - loss: 0.2079 - mae: 0.3511 - val_loss: 0.1370 - val_mae: 0.2828
+Epoch 27/60
+55/55 - 0s - 6ms/step - loss: 0.2056 - mae: 0.3497 - val_loss: 0.1374 - val_mae: 0.2833
+Epoch 28/60
+55/55 - 0s - 7ms/step - loss: 0.2037 - mae: 0.3475 - val_loss: 0.1373 - val_mae: 0.2832
+Epoch 29/60
+55/55 - 0s - 6ms/step - loss: 0.2049 - mae: 0.3486 - val_loss: 0.1370 - val_mae: 0.2827
+Epoch 30/60
+55/55 - 0s - 7ms/step - loss: 0.2040 - mae: 0.3477 - val_loss: 0.1370 - val_mae: 0.2828
+Epoch 31/60
+55/55 - 0s - 6ms/step - loss: 0.2047 - mae: 0.3490 - val_loss: 0.1374 - val_mae: 0.2832
+Epoch 32/60
+55/55 - 0s - 7ms/step - loss: 0.2027 - mae: 0.3463 - val_loss: 0.1367 - val_mae: 0.2829
+Epoch 33/60
+55/55 - 0s - 7ms/step - loss: 0.2030 - mae: 0.3457 - val_loss: 0.1377 - val_mae: 0.2840
+Epoch 34/60
+55/55 - 0s - 6ms/step - loss: 0.1985 - mae: 0.3448 - val_loss: 0.1386 - val_mae: 0.2845
+Epoch 35/60
+55/55 - 0s - 5ms/step - loss: 0.2010 - mae: 0.3456 - val_loss: 0.1378 - val_mae: 0.2832
+Epoch 36/60
+55/55 - 0s - 7ms/step - loss: 0.2003 - mae: 0.3457 - val_loss: 0.1366 - val_mae: 0.2835
+Epoch 37/60
+55/55 - 0s - 8ms/step - loss: 0.1986 - mae: 0.3448 - val_loss: 0.1392 - val_mae: 0.2867
+Epoch 38/60
+55/55 - 0s - 6ms/step - loss: 0.1969 - mae: 0.3433 - val_loss: 0.1380 - val_mae: 0.2844
+Epoch 39/60
+55/55 - 0s - 6ms/step - loss: 0.1932 - mae: 0.3401 - val_loss: 0.1385 - val_mae: 0.2845
+Epoch 40/60
+55/55 - 0s - 7ms/step - loss: 0.1910 - mae: 0.3387 - val_loss: 0.1377 - val_mae: 0.2849
+Epoch 41/60
+55/55 - 0s - 6ms/step - loss: 0.1906 - mae: 0.3380 - val_loss: 0.1379 - val_mae: 0.2860
+Epoch 42/60
+55/55 - 0s - 6ms/step - loss: 0.1908 - mae: 0.3390 - val_loss: 0.1377 - val_mae: 0.2871
+Epoch 43/60
+55/55 - 0s - 5ms/step - loss: 0.1860 - mae: 0.3358 - val_loss: 0.1372 - val_mae: 0.2843
+Epoch 44/60
+55/55 - 0s - 6ms/step - loss: 0.1877 - mae: 0.3375 - val_loss: 0.1361 - val_mae: 0.2844
+Epoch 45/60
+55/55 - 0s - 6ms/step - loss: 0.1857 - mae: 0.3355 - val_loss: 0.1372 - val_mae: 0.2857
+Epoch 46/60
+55/55 - 0s - 7ms/step - loss: 0.1862 - mae: 0.3345 - val_loss: 0.1361 - val_mae: 0.2851
+Epoch 47/60
+55/55 - 0s - 6ms/step - loss: 0.1843 - mae: 0.3331 - val_loss: 0.1376 - val_mae: 0.2840
+Epoch 48/60
+55/55 - 0s - 7ms/step - loss: 0.1848 - mae: 0.3347 - val_loss: 0.1378 - val_mae: 0.2847
+Epoch 49/60
+55/55 - 0s - 6ms/step - loss: 0.1785 - mae: 0.3285 - val_loss: 0.1383 - val_mae: 0.2850
+Epoch 50/60
+55/55 - 0s - 6ms/step - loss: 0.1817 - mae: 0.3304 - val_loss: 0.1391 - val_mae: 0.2852
+Epoch 51/60
+55/55 - 0s - 5ms/step - loss: 0.1797 - mae: 0.3296 - val_loss: 0.1387 - val_mae: 0.2849
+Epoch 52/60
+55/55 - 0s - 6ms/step - loss: 0.1760 - mae: 0.3272 - val_loss: 0.1388 - val_mae: 0.2853
+Epoch 53/60
+55/55 - 0s - 5ms/step - loss: 0.1735 - mae: 0.3239 - val_loss: 0.1395 - val_mae: 0.2846
+Epoch 54/60
+55/55 - 0s - 6ms/step - loss: 0.1731 - mae: 0.3267 - val_loss: 0.1399 - val_mae: 0.2856
+2026/07/06 07:17:30 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/06 07:17:30 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/06 07:17:36 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/06 07:17:43 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/06 07:17:43 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
+
+=== 14. H1 Evaluation (held-out test) ===
+[H1:xgboost       ] MAE=0.3409%  directional ROC-AUC=0.5201
+[H1:random_forest ] MAE=0.3473%  directional ROC-AUC=0.4999
+[H1:svm_rbf       ] MAE=0.3429%  directional ROC-AUC=0.4970
+[H1:lstm_seq2vec  ] MAE=0.3583%  directional ROC-AUC=0.5313
+[mlflow] skipped logging 'h1_xgboost': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBRegressor'].
+MLflow run logged: run_id=681ec4de0bdc4030ac243c19604bb293
+
+=== 15. Persisting H1 -> Daily artifacts ===
+Saved H1 artifacts: h1_xgb_regressor.pkl, h1_rf_regressor.pkl, h1_svm_regressor.pkl, h1_feature_scaler.pkl, h1_lstm_scaler.pkl, h1_lstm.keras, h1_feature_columns.pkl, h1_lstm_config.pkl
+
+=== DONE ===

@@ -159,6 +159,61 @@ still open. One backlog item = one commit; do not batch items together.
       market" for the GBM head until this is addressed. Also worth updating
       `ARCHITECTURE_DOCS.md §4.2`'s "Honest performance reality" table, which
       currently only reports test-side numbers for the daily heads.
+- [ ] **NEW (flagged during the macro-expansion pass, deliberately not acted on):**
+      `yield_differential_delta` shows a small *negative* ablation delta on the
+      euro-era 1999+ row set (−0.0041 acc / −0.0045 auc, `results/new_macro_ablation.csv`)
+      — opposite sign from its +0.0029/+0.0032 on the 1971+ set. Both within noise.
+      Re-evaluate whether to keep/drop the yield feature on the 1999+ set as its own
+      one-change-at-a-time pass (with the same bootstrap/McNemar rigor), separate
+      from the three features added alongside it.
+
+## Backlog — Macro feature expansion (3 new FRED features, added 2026-07-05, PRODUCTION phase)
+
+Grounded in the CLAUDE.md invariant rule: any `FEATURE_COLUMNS` change updates
+`config.json`, `src/features.py`, `src/macro_data.py`, `_train_pipeline.py`,
+notebook macro cells, and `src/inference.py` together, no look-ahead. Goal:
+`usd_index_return` (log-ret of DTWEXAFEGS), `policy_rate_differential`
+(DFEDTARU − ECBDFR), `inflation_differential` (US CPI YoY − DE CPI YoY).
+
+- [x] Step 0: verify the 5 new series IDs resolve via the **official FRED API tier**
+      (not the public-CSV fallback). **Done:** throwaway script confirmed all 5
+      (DTWEXAFEGS/DFEDTARU/ECBDFR/CPIAUCSL/DEUCPIALLMINMEI) return via `fredapi.Fred`.
+      Key findings that shape the impl: ECBDFR is negative (−0.5, fine for a diff);
+      CPIAUCSL/DEUCPIALLMINMEI are monthly INDEX levels needing a YoY transform with
+      ≥12-month lookback (so the fetcher must extend the start window, else NaN at
+      the live edge — a real production bug now that money is at stake). Script deleted.
+- [x] Step 1: generalized `src/macro_data.py` — `fetch_fred_feature` writes the
+      API→public→cache chain once; `fetch_macro_features` fans out to all four;
+      `fetch_yield_differential` kept as thin wrapper. Per-feature cache files.
+      Old 4 FRED tests adapted (raw-level fetchers) + new generic fallback test.
+- [x] Step 2: `config.json` macro block — `macro.features` with series IDs +
+      cache paths + `yoy_lookback_days` for inflation.
+- [x] Step 3: `src/features.py` — `merge_macro_features` as-of ffills all 4 macro
+      columns (monthly CPI propagates onto daily, no look-ahead); `FEATURE_COLUMNS`
+      24→27; `usd_index_return` derived in `compute_features` from the merged level
+      (fillna 0 pre-2006); `add_advanced_features` dropna on `FEATURE_COLUMNS+targets`
+      only (so `usd_index`'s 2006 start doesn't drag the floor). Floor = 1999-01-04.
+- [x] Step 4: `_train_pipeline.py` + `src/inference.py` switched to
+      `fetch_macro_features`; `bar_used` surfaces all 4 macro values + per-feed
+      sources. **Notebook Section 2B still TODO** (secondary artifact; retrain uses
+      `_train_pipeline.py`).
+- [x] Step 5: no-look-ahead test per new feature (usd weekend-flat + pre-2006 zero,
+      policy ffill, inflation monthly→daily) + generic fallback test. 37 unit/smoke pass.
+- [x] Step 6: ablated each new feature individually on the FIXED 1999+ row set
+      (`results/new_macro_ablation.csv`). All three point-positive → kept (27 cols).
+      **Strengthened with a proper significance test** (`results/new_macro_significance.csv`,
+      2000 paired bootstrap resamples + McNemar):
+      - `usd_index_return`: Δacc +0.0064, 95% CI [−0.0099, +0.0234], McNemar p=0.499
+      - `policy_rate_differential`: Δacc +0.0047, 95% CI [−0.0099, +0.0181], p=0.568
+      - `inflation_differential`: Δacc +0.0123, 95% CI [−0.0064, +0.0298], p=0.210
+      **All three CIs straddle 0 and all McNemar p ≫ 0.05 → status is KEEP —
+      PROVISIONAL (no proven edge, not distinguishable from noise).** Kept in the
+      model on a nominally-positive point estimate, but flagged as a live-money
+      caveat to revisit with a longer test window. `comparison_table.csv` old
+      24-col/1971+ baseline row confirmed intact (retrain never writes it).
+      Full 27-col retrain run to regenerate all production artifacts.
+- [ ] Step 7: docs — `ARCHITECTURE_DOCS.md` §2.4 table (done), §2.6 macro-expansion
+      (done), §4.3.1 ablation+significance (done); notebook Section 2B cell (TODO).
 
 ## Working rules
 

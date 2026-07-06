@@ -34,13 +34,36 @@ from sklearn.preprocessing import StandardScaler
 # close) flips the sign: Accuracy +0.0029, ROC-AUC +0.0032 vs without. The raw
 # level is still merged and kept (unchanged) for the dashboard's human-readable
 # "US10Y-DE10Y Yield Differential" display -- only the MODEL feature changed.
+# Three more exogenous macro features (via src/macro_data.py::fetch_macro_features),
+# all merged as levels by merge_macro_features and turned into the model features
+# below by compute_features -- same passthrough discipline as yield_differential:
+#   * usd_index_return       -- log-return of the trade-weighted USD index
+#                               (DTWEXBGS). RETURN, not level: the raw level is
+#                               ~57% EUR-weighted and would be near-collinear with
+#                               EUR/USD itself. DTWEXBGS only exists from 2006, so
+#                               earlier euro-era rows get a flat 0 return rather
+#                               than truncating history (see compute_features).
+#   * policy_rate_differential -- DFF (effective fed funds) - ECBDFR (ECB deposit
+#                               facility). DFF/ECBDFR chosen over DFEDTARU so the
+#                               series reach back to the euro's 1999 start.
+#   * inflation_differential -- US CPI YoY% (CPIAUCSL) - DE HICP YoY%
+#                               (CP0000DEM086NEST; the older DEUCPIALLMINMEI is
+#                               stale since 2025-03). YoY computed in macro_data.
 FEATURE_COLUMNS = [
     'open', 'high', 'low', 'close', 'log_return',
     'SMA_21', 'SMA_50', 'SMA_100', 'SMA_200', 'volatility_20',
     'bar_dynamics', 'return_lag_1', 'dynamics_lag_1', 'return_lag_2',
     'dynamics_lag_2', 'return_lag_3', 'dynamics_lag_3', 'day_sin', 'day_cos',
     'month_sin', 'month_cos', 'ATR_14', 'BB_width', 'yield_differential_delta',
+    'usd_index_return', 'policy_rate_differential', 'inflation_differential',
 ]
+
+# The level/derived macro columns merge_macro_features left-joins onto the OHLCV
+# index (ffilled). yield_differential and usd_index are intermediate levels that
+# compute_features turns into their stationary model features
+# (yield_differential_delta, usd_index_return); policy_rate_differential and
+# inflation_differential are already differentials and pass straight through.
+MACRO_MERGE_COLUMNS = ['yield_differential', 'usd_index', 'policy_rate_differential', 'inflation_differential']
 
 # The 6 autoregressive lag columns are the most mutually correlated block in
 # FEATURE_COLUMNS (each is a shifted copy of log_return/bar_dynamics) and are
@@ -78,7 +101,34 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     # model should read directly. diff(1) uses only the current and immediately
     # preceding (already-ffilled) rows, so this introduces no look-ahead beyond
     # what merge_macro_features's own ffill already guarantees.
-    data['yield_differential_delta'] = data['yield_differential'].diff(1)
+    # An ENTIRELY missing/all-NaN macro column means that feed was unreachable
+    # (no FRED, no cache) -- default it to a neutral value so the pipeline
+    # degrades instead of dropna-ing the whole window. A column that is only
+    # PARTIALLY NaN (real leading gap, e.g. no ECB rate before 1999) is left
+    # intact so dropna truncates training to the genuine euro era.
+    if 'yield_differential' in data and not data['yield_differential'].isna().all():
+        data['yield_differential_delta'] = data['yield_differential'].diff(1)
+    else:
+        data['yield_differential_delta'] = 0.0
+
+    # 1c. USD trade-weighted index -> log-return (same stationarity move as
+    # log_return on close). DTWEXBGS only exists from 2006; pre-2006 euro-era
+    # rows (and any leading/gap NaN) get a flat 0 return via fillna, so the
+    # feature never truncates the 1999+ history the other macro features cover.
+    # fillna(0.0) injects no future information -- 0 == "no move / unknown".
+    if 'usd_index' in data and not data['usd_index'].isna().all():
+        _usd = data['usd_index'].replace(0, np.nan)
+        data['usd_index_return'] = np.log(_usd / _usd.shift(1)).fillna(0.0)
+    else:
+        data['usd_index_return'] = 0.0
+
+    # 1d. Policy-rate and inflation differentials pass through as levels (each is
+    # already a differential of two rates / two YoY inflations, reasonably
+    # stationary). Genuine leading NaN is kept (truncates to the euro era);
+    # only an entirely-absent feed is neutralized to 0.
+    for _col in ('policy_rate_differential', 'inflation_differential'):
+        if _col not in data or data[_col].isna().all():
+            data[_col] = 0.0
 
     # 2. Simple Moving Averages
     for period in [21, 50, 100, 200]:
@@ -142,19 +192,28 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     data[TARGET_RETURN_COLUMN] = ((data['close'].shift(-1) - data['close']) / data['close']) * 100
     data[TARGET_DIRECTION_COLUMN] = (data[TARGET_RETURN_COLUMN] > 0).astype(int)
 
-    # Clean missing values systematically
-    data.dropna(inplace=True)
+    # Drop warm-up / undefined-target rows, but ONLY on the columns the model
+    # actually consumes (the 27 FEATURE_COLUMNS + the two targets). The merged
+    # intermediate LEVELS (usd_index, yield_differential) are deliberately NOT in
+    # the subset: usd_index (DTWEXBGS) is NaN before 2006, and dropping on it
+    # would truncate the whole euro-era history even though usd_index_return is a
+    # flat 0 there. policy_rate_differential / inflation_differential ARE features,
+    # so their genuine leading NaN still truncates training to the real euro era.
+    data.dropna(subset=FEATURE_COLUMNS + [TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN], inplace=True)
     return data
 
 
 def merge_macro_features(ohlcv_df: pd.DataFrame, macro_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Left-join the (already UTC-indexed) yield_differential series from
-    src/macro_data.py onto the OHLCV index, then forward-fill any remaining
-    gaps -- weekend FX bars and bond-market holidays inherit the last known
-    differential rather than NaN. ffill only ever carries a *past* value
-    forward (never a future one backward), so this introduces zero look-ahead
-    bias regardless of how the two calendars are offset.
+    Left-join the (already UTC-indexed) macro columns from src/macro_data.py
+    (MACRO_MERGE_COLUMNS: yield_differential, usd_index, policy_rate_differential,
+    inflation_differential) onto the OHLCV index, then forward-fill each -- weekend
+    FX bars, bond/rate holidays, and the monthly-CPI/daily-price frequency mismatch
+    all inherit the last known value rather than NaN. ffill only ever carries a
+    *past* value forward (never a future one backward), so this introduces zero
+    look-ahead regardless of how the calendars are offset. Any macro column absent
+    from `macro_df` (a feature entirely unreachable this run) is created as all-NaN
+    here; compute_features then applies each feature's own neutral default.
     """
     original_index = ohlcv_df.index
     utc_index = (
@@ -163,8 +222,19 @@ def merge_macro_features(ohlcv_df: pd.DataFrame, macro_df: pd.DataFrame) -> pd.D
     )
     merged = ohlcv_df.copy()
     merged.index = utc_index
-    merged = merged.join(macro_df[['yield_differential']], how='left')
-    merged['yield_differential'] = merged['yield_differential'].ffill()
+    for col in MACRO_MERGE_COLUMNS:
+        s = macro_df[col].dropna() if col in macro_df.columns else pd.Series(dtype=float)
+        if len(s):
+            # As-of alignment: reindex each macro series onto the union of its own
+            # dates and the OHLCV dates, ffill, then select the OHLCV dates. Unlike
+            # a plain left-join, this never loses a macro observation that lands on
+            # a non-trading day (e.g. a month-start CPI print on a weekend) -- its
+            # value still propagates onto every LATER daily bar. ffill only carries
+            # a PAST value forward, never a future one backward, so no look-ahead.
+            s = s.sort_index()
+            merged[col] = s.reindex(s.index.union(utc_index)).ffill().reindex(utc_index)
+        else:
+            merged[col] = np.nan  # feature unavailable -> compute_features neutralizes
     merged.index = original_index
     return merged
 

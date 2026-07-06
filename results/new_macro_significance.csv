@@ -1,0 +1,4 @@
+feature,point_delta_acc,ci95_dacc_low,ci95_dacc_high,frac_dacc_positive,ci95_dauc_low,ci95_dauc_high,mcnemar_b_0to1,mcnemar_c_1to0,mcnemar_p,verdict
+usd_index_return,0.0064,-0.0099,0.0234,0.769,-0.0063,0.0218,115,104,0.499,KEEP-provisional (CI straddles 0; not distinguishable from noise)
+policy_rate_differential,0.0047,-0.0099,0.0181,0.725,-0.0048,0.0134,79,71,0.568,KEEP-provisional (CI straddles 0; not distinguishable from noise)
+inflation_differential,0.0123,-0.0064,0.0298,0.900,-0.0113,0.0190,138,117,0.210,KEEP-provisional (CI straddles 0; not distinguishable from noise)

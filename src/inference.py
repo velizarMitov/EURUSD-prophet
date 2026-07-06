@@ -8,7 +8,7 @@ from .features import (
     LAG_COLUMNS, FEATURE_COLUMNS,
 )
 from .live_data import fetch_live_market_data, drop_incomplete_bars
-from .macro_data import fetch_yield_differential
+from .macro_data import fetch_macro_features
 
 
 class PredictionService:
@@ -209,16 +209,16 @@ class PredictionService:
             data_source = f"{data_source}+history_backfill"
 
         macro_cfg = self.config.get('macro', {})
-        macro_df, macro_source = fetch_yield_differential(
-            ohlcv_df.index.min(), ohlcv_df.index.max(),
-            series_ids=macro_cfg.get('fred_series'),
-            cache_path=os.path.join(self.base_dir, macro_cfg.get('cache_path', 'results/yield_differential.csv')),
+        macro_df, macro_sources = fetch_macro_features(
+            ohlcv_df.index.min(), ohlcv_df.index.max(), macro_cfg, base_dir=self.base_dir,
         )
-        if macro_df is not None:
-            ohlcv_df = merge_macro_features(ohlcv_df, macro_df)
-        else:
-            ohlcv_df = ohlcv_df.assign(yield_differential=0.0)
-            macro_source = "unavailable"
+        # merge_macro_features + compute_features neutralize any entirely-missing
+        # macro column, so an empty frame here (every feed unreachable) degrades
+        # gracefully rather than failing the prediction.
+        ohlcv_df = merge_macro_features(
+            ohlcv_df, macro_df if macro_df is not None else pd.DataFrame(index=ohlcv_df.index)
+        )
+        macro_source = macro_sources.get('yield_differential', 'unavailable')
 
         engineered = compute_features(ohlcv_df).dropna(subset=FEATURE_COLUMNS)
         if len(engineered) < time_steps:
@@ -231,6 +231,12 @@ class PredictionService:
 
         as_of_date = engineered.index[-1]
         last_row = ohlcv_df.loc[as_of_date]
+
+        def _macro_val(col):
+            # ffilled level for display; None if the feed was entirely absent
+            v = last_row.get(col)
+            return float(v) if v is not None and pd.notna(v) else None
+
         bar_used = {
             "date": as_of_date.date().isoformat(),
             "open": float(last_row['open']),
@@ -238,8 +244,12 @@ class PredictionService:
             "low": float(last_row['low']),
             "close": float(last_row['close']),
             "tick_volume": float(last_row['tick_volume']),
-            "yield_differential": float(last_row['yield_differential']),
+            "yield_differential": _macro_val('yield_differential'),
+            "usd_index": _macro_val('usd_index'),
+            "policy_rate_differential": _macro_val('policy_rate_differential'),
+            "inflation_differential": _macro_val('inflation_differential'),
             "macro_source": macro_source,
+            "macro_sources": macro_sources,
         }
         # The model's "next bar" is the next *trading* session, not the next
         # calendar day: FX closes Friday night, and the shift(-1) targets were
