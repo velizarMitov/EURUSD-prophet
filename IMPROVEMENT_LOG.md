@@ -215,6 +215,34 @@ notebook macro cells, and `src/inference.py` together, no look-ahead. Goal:
 - [ ] Step 7: docs — `ARCHITECTURE_DOCS.md` §2.4 table (done), §2.6 macro-expansion
       (done), §4.3.1 ablation+significance (done); notebook Section 2B cell (TODO).
 
+## Backlog — Production methodology hardening (post-defense, added 2026-07-06, REAL-MONEY phase)
+
+The exam is passed; the system now trades real capital. A false-positive feature
+is live risk, not a lost grade. Root problem: every feature KEEP/DROP decision so
+far (`yield_differential` + the 3 macro features) was scored on the SAME fixed
+held-out TEST block `[80%:100%]` — that is data-snooping, and it applies
+retroactively to what's already been tested.
+
+- [x] Step 1 — Split validation from test, permanently. Audited the split: the
+      prior ablation/significance scratchpad scripts fit on `[0:80%]` and scored
+      KEEP/DROP on `iloc[80%:]`, i.e. **on the final test block** — confirmed
+      data-snooping. Fixed with a permanent, committed harness `src/ablation.py`
+      whose sole arbiter is the VALIDATION slice `[70%:80%]`; the test block is
+      never indexed there. PCA/scaler/model are fit on `[0:70%]` only so the val
+      block is genuinely held out from the fit. Re-ran all 4 features on
+      validation (`results/feature_ablation_validation.csv`):
+      - `yield_differential_delta`: Δacc −0.0047, 95% CI [−0.0245, +0.0152], McNemar p=0.728
+      - `usd_index_return`: Δacc +0.0058, 95% CI [−0.0152, +0.0245], p=0.645
+      - `policy_rate_differential`: Δacc +0.0058, 95% CI [−0.0152, +0.0257], p=0.653
+      - `inflation_differential`: Δacc +0.0093, 95% CI [−0.0175, +0.0362], p=0.563
+      **All four straddle 0 and all McNemar p ≫ 0.05 on validation too** — the
+      test-block "positive point estimates" do not survive being moved to a clean
+      arbiter, exactly the efficient-market expectation. Added 2 unit tests
+      guarding the split-boundary invariant and the McNemar helper. 41 tests pass.
+- [ ] Step 2 — Cumulative hypothesis counter + Bonferroni-corrected bar.
+- [ ] Step 3 — Forward/paper-trading harness (the real arbiter going forward).
+- [ ] Step 4 — Document the new methodology (ARCHITECTURE_DOCS.md + CLAUDE.md).
+
 ## Working rules
 
 - Before each item: re-read the matching skill (`ml-practical-methodology` or

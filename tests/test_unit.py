@@ -791,3 +791,44 @@ def test_simulate_strategy_wrong_calls_produce_negative_gross_return():
 
     assert result['hit_rate'] == pytest.approx(0.0)
     assert result['gross_return_pct_total'] == pytest.approx(-0.7)
+
+
+def test_ablation_arbiter_is_validation_never_test():
+    """The feature-ablation harness must decide KEEP/DROP on the validation
+    slice [70%:80%] ONLY -- the final test block [80%:100%] must never be read
+    during feature search (post-defense anti-data-snooping invariant). Guard the
+    split math directly so a future refactor can't silently push the arbiter
+    onto the test rows."""
+    from src.ablation import _canonical_split
+
+    # 1000 rows, config's 0.80 / 0.10 -> train [0:700], val [700:800], test [800:1000].
+    split = _canonical_split(1000, train_fraction=0.80, val_fraction=0.10)
+    assert split['train_end'] == 700, "ablation fit block must end at the 70% mark"
+    assert split['val_end'] == 800, "validation arbiter must end at the 80% mark"
+    # The validation arbiter is exactly the 70-80% band, disjoint from and strictly
+    # BELOW the test block [val_end:] which this harness never indexes into.
+    val_rows = set(range(split['train_end'], split['val_end']))
+    test_rows = set(range(split['val_end'], split['n']))
+    assert val_rows.isdisjoint(test_rows)
+    assert max(val_rows) < min(test_rows), "validation must lie entirely before the untouched test block"
+
+
+def test_ablation_mcnemar_exact_symmetric_and_significant_cases():
+    """The exact-binomial McNemar helper: perfectly balanced discordant pairs
+    give p=1.0 (no evidence of a difference); a lopsided split gives a small
+    two-sided p. Guards the b/c discordant-pair accounting the KEEP decision
+    rests on."""
+    import numpy as np
+    from src.ablation import _mcnemar_exact
+
+    # Balanced: WITHOUT-wrong/WITH-correct on 5 rows, the reverse on 5 rows.
+    wo = np.array([False] * 5 + [True] * 5 + [True] * 3)
+    w = np.array([True] * 5 + [False] * 5 + [True] * 3)
+    b, c, p = _mcnemar_exact(wo, w)
+    assert (b, c) == (5, 5) and p == pytest.approx(1.0)
+
+    # Lopsided 8 vs 1: two-sided exact p must be well under 0.05.
+    wo2 = np.array([False] * 8 + [True] * 1)
+    w2 = np.array([True] * 8 + [False] * 1)
+    b2, c2, p2 = _mcnemar_exact(wo2, w2)
+    assert (b2, c2) == (8, 1) and p2 < 0.05
