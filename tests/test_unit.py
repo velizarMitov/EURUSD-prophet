@@ -868,3 +868,90 @@ def test_register_hypothesis_is_idempotent_and_counts_family(tmp_path, monkeypat
     row = log[log['feature'] == 'brand_new_feature'].iloc[0]
     assert row['alpha_bonferroni'] == pytest.approx(0.05)   # first hypothesis -> family size 1
     assert bool(row['cleared_bar']) is True                 # CI excludes 0 and p < 0.05
+
+
+def _paper_log(tmp_path, rows):
+    """Write a minimal prediction-log CSV for the paper-trading tests."""
+    from src.tracking import log_prediction
+    log = str(tmp_path / 'log.csv')
+    for as_of, forecast, close, direction, ret in rows:
+        log_prediction(_fake_predict_result(as_of, forecast, close, direction, ret), log)
+    return log
+
+
+def test_paper_trading_ledger_scores_costs_and_direction(tmp_path, monkeypatch):
+    """A correct LONG call nets (move − spread) pips and counts a win; a wrong
+    call is a loss; a MIXED row takes no position (flat, excluded from the win
+    rate). Guards the direction sign and the per-position spread charge."""
+    import src.tracking as tracking
+    from src.paper_trading import build_ledger, summarize
+
+    log = _paper_log(tmp_path, [
+        ('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05),   # correct long: +50 pips gross
+        ('2026-06-22', '2026-06-23', 1.1050, 'UP', +0.05),   # wrong long: market falls
+        ('2026-06-23', '2026-06-24', 1.1000, 'MIXED / LOW CONFIDENCE', 0.0),  # no position
+    ])
+    # Realised closes: 22nd up to 1.1050 (+50p), 23rd down to 1.1000 (−50p), 24th anything.
+    actual = pd.DataFrame({'close': [1.1050, 1.1000, 1.1010]},
+                          index=pd.DatetimeIndex(['2026-06-22', '2026-06-23', '2026-06-24']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    ledger = build_ledger(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                          spread_pips=2.0, now=pd.Timestamp('2026-06-27 11:00'))
+
+    assert len(ledger) == 3
+    win_row = ledger.iloc[0]
+    assert win_row['direction'] == 'LONG'
+    assert win_row['gross_pips'] == pytest.approx(50.0, abs=0.5)
+    assert win_row['net_pips'] == pytest.approx(48.0, abs=0.5), "gross 50p minus 2p spread"
+    assert win_row['outcome'] == 'win'
+    assert ledger.iloc[1]['outcome'] == 'loss', "wrong long into a falling market is a loss"
+    assert ledger.iloc[2]['direction'] == 'FLAT' and ledger.iloc[2]['spread_pips'] == 0.0, \
+        "MIXED row takes no position and is charged no spread"
+
+    summary = summarize(ledger)
+    assert summary['n_positions'] == 2, "flat day excluded from taken positions"
+    assert summary['n_wins'] == 1 and summary['win_rate'] == pytest.approx(0.5)
+
+
+def test_paper_trading_excludes_unsettled_forecasts(tmp_path, monkeypatch):
+    """A forecast whose day hasn't closed has undefined P&L and must not appear
+    in the ledger -- the forward ledger only ever scores settled sessions."""
+    import src.tracking as tracking
+    from src.paper_trading import build_ledger
+
+    log = _paper_log(tmp_path, [
+        ('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05),   # settled
+        ('2026-06-22', '2026-06-23', 1.1050, 'DOWN', -0.05),  # 23rd not in closes -> pending
+    ])
+    actual = pd.DataFrame({'close': [1.1080]}, index=pd.DatetimeIndex(['2026-06-22']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    ledger = build_ledger(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                          now=pd.Timestamp('2026-06-25 11:00'))
+    assert len(ledger) == 1, "only the settled forecast is scored"
+    assert str(ledger.iloc[0]['forecasting_date']) == '2026-06-22'
+
+
+def test_paper_trading_summary_max_drawdown_and_cumulative(tmp_path, monkeypatch):
+    """Max drawdown is measured on the cumulative net-return curve seeded at
+    flat, and cumulative pips accumulate in chronological order. A win then an
+    equal-and-opposite loss must leave a drawdown equal to the loss leg."""
+    import src.tracking as tracking
+    from src.paper_trading import build_ledger, summarize
+
+    log = _paper_log(tmp_path, [
+        ('2026-06-19', '2026-06-22', 1.1000, 'UP', +0.05),   # +move
+        ('2026-06-22', '2026-06-23', 1.1100, 'UP', +0.05),   # −move (drawdown leg)
+    ])
+    actual = pd.DataFrame({'close': [1.1100, 1.1000]},
+                          index=pd.DatetimeIndex(['2026-06-22', '2026-06-23']))
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (actual, 'stub'))
+
+    ledger = build_ledger(log, {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X'},
+                          spread_pips=0.0, now=pd.Timestamp('2026-06-27 11:00'))
+    summary = summarize(ledger)
+
+    assert ledger['cum_net_pips'].iloc[-1] == pytest.approx(0.0, abs=1.0), \
+        "a +100p win then a −100p loss nets ~0 cumulative"
+    assert summary['max_drawdown_pct'] > 0, "the losing leg must register as a drawdown"

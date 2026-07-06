@@ -146,6 +146,40 @@ def prediction_history():
     return HTMLResponse(content=html)
 
 
+@app.get("/api/paper-trading")
+def paper_trading_summary():
+    """JSON scorecard + ledger for the simulated forward paper-trading harness.
+    Rebuilt live from the prediction log joined to realised closes, and the CSV
+    is refreshed on each call. Simulated only — no broker orders are placed."""
+    from src.paper_trading import build_and_save
+
+    pt_cfg = CONFIG.get('paper_trading', {})
+    log_path = os.path.join(BASE_DIR, CONFIG.get('tracking', {}).get('log_path', 'results/prediction_log.csv'))
+    out_path = os.path.join(BASE_DIR, pt_cfg.get('log_path', 'results/paper_trading_log.csv'))
+    spread_pips = pt_cfg.get('spread_pips', 1.5)
+
+    ledger, summary = build_and_save(log_path, CONFIG['data'], out_path, spread_pips=spread_pips)
+    return {"spread_pips": spread_pips, "summary": summary,
+            "ledger": ledger.to_dict(orient='records')}
+
+
+@app.get("/paper-trading", response_class=HTMLResponse)
+def paper_trading_page():
+    """Render the simulated paper-trading ledger + running scorecard (cumulative
+    net P&L, win rate, Sharpe-like ratio, max drawdown), net of a realistic
+    retail spread. This forward ledger is the primary production-worthiness
+    arbiter going forward (ARCHITECTURE_DOCS.md Production Methodology)."""
+    from src.paper_trading import build_and_save, render_html
+
+    pt_cfg = CONFIG.get('paper_trading', {})
+    log_path = os.path.join(BASE_DIR, CONFIG.get('tracking', {}).get('log_path', 'results/prediction_log.csv'))
+    out_path = os.path.join(BASE_DIR, pt_cfg.get('log_path', 'results/paper_trading_log.csv'))
+    spread_pips = pt_cfg.get('spread_pips', 1.5)
+
+    ledger, summary = build_and_save(log_path, CONFIG['data'], out_path, spread_pips=spread_pips)
+    return HTMLResponse(content=render_html(ledger, summary, spread_pips))
+
+
 if __name__ == "__main__":
     # Makes this file directly runnable: `python api.py` (or a double-click via
     # start.bat) launches the server, instead of silently importing the module

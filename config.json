@@ -33,6 +33,10 @@
     "log_path": "results/prediction_log.csv",
     "html_path": "results/prediction_history.html"
   },
+  "paper_trading": {
+    "log_path": "results/paper_trading_log.csv",
+    "spread_pips": 1.5
+  },
   "pca": {
     "variance_threshold": 0.95,
     "lag_columns": [

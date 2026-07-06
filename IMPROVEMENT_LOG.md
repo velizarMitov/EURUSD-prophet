@@ -251,7 +251,20 @@ retroactively to what's already been tested.
       current bar all 4 stay **KEEP-provisional** (smallest McNemar p is 0.5625,
       ~45x the 0.0125 bar). Added `bonferroni_alpha` + register-idempotency tests.
       43 tests pass.
-- [ ] Step 3 — Forward/paper-trading harness (the real arbiter going forward).
+- [x] Step 3 — Forward/paper-trading harness (the real arbiter going forward).
+      Added `src/paper_trading.py`: reconstructs a simulated, cost-net position
+      ledger on demand from `results/prediction_log.csv` joined to realised
+      closes (UP→long, DOWN→short, MIXED→flat), charging a configurable retail
+      spread (`config.json → paper_trading.spread_pips`, default 1.5) once per
+      taken position. Writes `results/paper_trading_log.csv` and a scorecard
+      (cumulative net pips/%, win rate, annualised Sharpe-like ratio, max
+      drawdown). Surfaced at `GET /paper-trading` (HTML) and `GET /api/paper-trading`
+      (JSON), cross-linked with `/history`. **Simulated only** — no broker/order
+      code (per the task's explicit no-real-execution scope). Current forward
+      window is tiny (7 settled positions, net −180 pips / −1.58%) and not yet
+      meaningful — the ledger is meant to accumulate over months before it can
+      arbitrate production-worthiness. Added 3 unit tests (direction/cost sign,
+      pending-exclusion, drawdown/cumulative math). 46 tests pass.
 - [ ] Step 4 — Document the new methodology (ARCHITECTURE_DOCS.md + CLAUDE.md).
 
 ## Working rules

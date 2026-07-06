@@ -242,6 +242,8 @@ def _wrap(title: str, inner: str, summary: str) -> str:
   <p class="summary" style="margin-top:1rem;font-size:.85rem;">
     A directional hit-rate near 50% is the expected, theory-consistent result for daily EUR/USD
     (near random walk) — see <code>ARCHITECTURE_DOCS.md §4.2.1</code>.
+    See the <a href="/paper-trading">forward paper-trading ledger</a> for the cost-net,
+    simulated P&amp;L that is the primary production-worthiness arbiter going forward.
   </p>
 </body></html>"""
 
