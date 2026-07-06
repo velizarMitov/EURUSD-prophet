@@ -1,0 +1,5 @@
+n,date,feature,arbiter,point_delta_acc,ci95_dacc_low,ci95_dacc_high,mcnemar_p,alpha_bonferroni,cleared_bar,verdict,notes
+1,2026-07-05,yield_differential_delta,validation[70:80],-0.0047,-0.0245,0.0152,0.7275,0.0500,False,KEEP-provisional,"Began as raw-level yield_differential (net-negative on test); replaced by diff. Originally scored on TEST block; re-scored on validation in Step 1."
+2,2026-07-05,usd_index_return,validation[70:80],0.0058,-0.0152,0.0245,0.6445,0.0250,False,KEEP-provisional,"Macro expansion. Originally scored on TEST block; re-scored on validation in Step 1."
+3,2026-07-05,policy_rate_differential,validation[70:80],0.0058,-0.0152,0.0257,0.6530,0.0167,False,KEEP-provisional,"Macro expansion. Originally scored on TEST block; re-scored on validation in Step 1."
+4,2026-07-05,inflation_differential,validation[70:80],0.0093,-0.0175,0.0362,0.5625,0.0125,False,KEEP-provisional,"Macro expansion. Originally scored on TEST block; re-scored on validation in Step 1."

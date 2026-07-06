@@ -65,6 +65,63 @@ STANDARD_FEATURES = [
 BOOTSTRAP_RESAMPLES = 2000
 VALIDATION_CSV = 'results/feature_ablation_validation.csv'
 
+# Multiple-comparisons bookkeeping. Every feature ever ablated is one hypothesis
+# spent against the same data; testing enough of them guarantees a naive-0.05
+# "winner" by chance. `feature_hypothesis_log.csv` is the running family count
+# (seeded retroactively with the 4 already-tested features), and every KEEP
+# decision from now on must clear a Bonferroni-corrected bar, not a flat 0.05.
+HYPOTHESIS_LOG = 'results/feature_hypothesis_log.csv'
+HYPOTHESIS_LOG_COLUMNS = [
+    'n', 'date', 'feature', 'arbiter', 'point_delta_acc',
+    'ci95_dacc_low', 'ci95_dacc_high', 'mcnemar_p',
+    'alpha_bonferroni', 'cleared_bar', 'verdict', 'notes',
+]
+FAMILY_ALPHA = 0.05
+
+
+def _hyp_path(base_dir=''):
+    return os.path.join(base_dir, HYPOTHESIS_LOG) if base_dir else HYPOTHESIS_LOG
+
+
+def load_hypothesis_log(base_dir=''):
+    """The running family of feature hypotheses (empty frame if none yet)."""
+    p = _hyp_path(base_dir)
+    if not os.path.exists(p):
+        return pd.DataFrame(columns=HYPOTHESIS_LOG_COLUMNS)
+    return pd.read_csv(p)
+
+
+def bonferroni_alpha(family_size, family_alpha=FAMILY_ALPHA):
+    """The corrected per-hypothesis bar: family_alpha / family_size. Guards
+    against family_size 0 (returns the uncorrected bar)."""
+    return family_alpha / max(1, family_size)
+
+
+def register_hypothesis(result, base_dir='', notes=''):
+    """Append a NEWLY tested feature to the hypothesis log and return its row.
+    The recorded Bonferroni bar reflects the family size AFTER this addition, so
+    the log always shows the exact bar the decision was judged against. A feature
+    already in the log is not double-counted (idempotent by feature name)."""
+    log = load_hypothesis_log(base_dir)
+    if result['feature'] in set(log['feature']):
+        return log
+    n = len(log) + 1
+    row = {
+        'n': n, 'date': pd.Timestamp.utcnow().date().isoformat(),
+        'feature': result['feature'], 'arbiter': result['arbiter'],
+        'point_delta_acc': result['point_delta_acc'],
+        'ci95_dacc_low': result['ci95_dacc_low'], 'ci95_dacc_high': result['ci95_dacc_high'],
+        'mcnemar_p': result['mcnemar_p'],
+        'alpha_bonferroni': round(bonferroni_alpha(n), 4),
+        'cleared_bar': result['mcnemar_p'] < bonferroni_alpha(n)
+                       and (result['ci95_dacc_low'] > 0 or result['ci95_dacc_high'] < 0),
+        'verdict': result['verdict'], 'notes': notes,
+    }
+    new = pd.DataFrame([row], columns=HYPOTHESIS_LOG_COLUMNS)
+    out = new if log.empty else pd.concat([log, new], ignore_index=True)
+    out.to_csv(_hyp_path(base_dir), index=False)
+    return out
+
 
 def _canonical_split(n: int, train_fraction: float, val_fraction: float) -> dict:
     """The three chronological boundaries shared with `_train_pipeline.py`.
@@ -198,14 +255,26 @@ def evaluate_feature(feature, red, cols_full, split, random_state=42,
 
 
 def run(features=None, config_path='config.json', base_dir='', out_csv=VALIDATION_CSV,
-        alpha=0.05, random_state=None):
+        register=False, random_state=None):
     """Ablate `features` (default: the standard 4) on the validation slice and
-    write `out_csv`. Prints a report whose header states the arbiter block and
-    the significance bar in force so it can never be silently forgotten."""
+    write `out_csv`. The significance bar is the Bonferroni-corrected
+    `0.05 / family_size`, where family_size counts every feature hypothesis ever
+    tested (`feature_hypothesis_log.csv`) plus any genuinely new feature in this
+    run. The header prints that corrected bar so it can never be silently
+    forgotten. `register=True` appends new features to the hypothesis log."""
     features = features or STANDARD_FEATURES
     with open(os.path.join(base_dir, config_path) if base_dir else config_path) as f:
         config = json.load(f)
     random_state = config['random_state'] if random_state is None else random_state
+
+    # Bonferroni bar: family = everything already logged, unioned with whatever
+    # this run tests. A re-run of already-logged features leaves the family size
+    # unchanged; a genuinely new feature grows it and tightens the bar for all.
+    log = load_hypothesis_log(base_dir)
+    already = set(log['feature'])
+    new_feats = [f for f in features if f not in already]
+    family_size = len(already | set(features))
+    alpha = bonferroni_alpha(family_size)
 
     red, cols_full, split = build_matrix(config, base_dir=base_dir)
     prob_w, pred_w, y_val = _fit_predict_val(red, cols_full, split, random_state)
@@ -216,7 +285,10 @@ def run(features=None, config_path='config.json', base_dir='', out_csv=VALIDATIO
     print("FEATURE ABLATION — arbiter = VALIDATION slice [70%:80%] (test block NOT touched)")
     print(f"  full model on validation: acc={acc_w:.4f}  auc={auc_w:.4f}  "
           f"(n_val={len(y_val):,} rows)")
-    print(f"  significance bar in force: alpha={alpha:.4g}")
+    print(f"  hypotheses tested to date: {len(already)}  |  this run adds "
+          f"{len(new_feats)} new  ->  family size {family_size}")
+    print(f"  BONFERRONI-CORRECTED BAR: alpha = {FAMILY_ALPHA} / {family_size} "
+          f"= {alpha:.4g}  (a KEEP must clear THIS, not a flat 0.05)")
     print("=" * 78)
 
     rows = []
@@ -224,6 +296,8 @@ def run(features=None, config_path='config.json', base_dir='', out_csv=VALIDATIO
         res = evaluate_feature(feat, red, cols_full, split, random_state=random_state,
                                alpha=alpha, prob_w=prob_w, pred_w=pred_w, y_val=y_val)
         rows.append(res)
+        if register and feat in new_feats:
+            register_hypothesis(res, base_dir=base_dir)
         print(f"\n=== {feat} ===")
         print(f"  point delta acc={res['point_delta_acc']:+.4f}  auc={res['point_delta_auc']:+.4f}")
         print(f"  95% CI d_acc=[{res['ci95_dacc_low']:+.4f}, {res['ci95_dacc_high']:+.4f}]  "

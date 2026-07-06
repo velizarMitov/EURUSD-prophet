@@ -832,3 +832,39 @@ def test_ablation_mcnemar_exact_symmetric_and_significant_cases():
     w2 = np.array([True] * 8 + [False] * 1)
     b2, c2, p2 = _mcnemar_exact(wo2, w2)
     assert (b2, c2) == (8, 1) and p2 < 0.05
+
+
+def test_bonferroni_bar_tightens_with_family_size():
+    """The corrected significance bar must shrink as more feature hypotheses are
+    spent (0.05/N), so a KEEP gets harder to earn the more features are tried --
+    the whole point of the multiple-comparisons guard."""
+    from src.ablation import bonferroni_alpha
+
+    assert bonferroni_alpha(1) == pytest.approx(0.05)
+    assert bonferroni_alpha(4) == pytest.approx(0.0125)
+    assert bonferroni_alpha(10) == pytest.approx(0.005)
+    assert bonferroni_alpha(0) == pytest.approx(0.05), "degenerate family size 0 falls back to uncorrected bar"
+
+
+def test_register_hypothesis_is_idempotent_and_counts_family(tmp_path, monkeypatch):
+    """Registering a new feature grows the family by one and records the bar it
+    faced; registering the SAME feature again must not double-count it (the log
+    is the source of truth for the multiple-comparisons denominator)."""
+    import src.ablation as ablation
+
+    log_path = tmp_path / "feature_hypothesis_log.csv"
+    monkeypatch.setattr(ablation, "HYPOTHESIS_LOG", str(log_path))
+
+    res = {
+        'feature': 'brand_new_feature', 'arbiter': 'validation[70:80]',
+        'point_delta_acc': 0.02, 'ci95_dacc_low': 0.005, 'ci95_dacc_high': 0.035,
+        'mcnemar_p': 0.001, 'verdict': 'KEEP (CI excludes 0 and McNemar p<0.05)',
+    }
+    ablation.register_hypothesis(res)
+    ablation.register_hypothesis(res)   # second call must be a no-op
+
+    log = ablation.load_hypothesis_log()
+    assert list(log['feature']).count('brand_new_feature') == 1, "must not double-count"
+    row = log[log['feature'] == 'brand_new_feature'].iloc[0]
+    assert row['alpha_bonferroni'] == pytest.approx(0.05)   # first hypothesis -> family size 1
+    assert bool(row['cleared_bar']) is True                 # CI excludes 0 and p < 0.05

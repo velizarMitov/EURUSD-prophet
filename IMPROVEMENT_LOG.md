@@ -239,7 +239,18 @@ retroactively to what's already been tested.
       test-block "positive point estimates" do not survive being moved to a clean
       arbiter, exactly the efficient-market expectation. Added 2 unit tests
       guarding the split-boundary invariant and the McNemar helper. 41 tests pass.
-- [ ] Step 2 — Cumulative hypothesis counter + Bonferroni-corrected bar.
+- [x] Step 2 — Cumulative hypothesis counter + Bonferroni-corrected bar. Added
+      `results/feature_hypothesis_log.csv`, seeded retroactively with the 4
+      hypotheses already spent (`yield_differential_delta`, `usd_index_return`,
+      `policy_rate_differential`, `inflation_differential`). `src/ablation.py`
+      now reads that family count and judges every KEEP against a Bonferroni bar
+      `alpha = 0.05 / family_size` (currently **0.05 / 4 = 0.0125**), not a flat
+      0.05 — printed in the header of every report so it can't be silently
+      forgotten. A genuinely new feature grows the family and tightens the bar
+      for all; `register_hypothesis()` appends it (idempotent by name). At the
+      current bar all 4 stay **KEEP-provisional** (smallest McNemar p is 0.5625,
+      ~45x the 0.0125 bar). Added `bonferroni_alpha` + register-idempotency tests.
+      43 tests pass.
 - [ ] Step 3 — Forward/paper-trading harness (the real arbiter going forward).
 - [ ] Step 4 — Document the new methodology (ARCHITECTURE_DOCS.md + CLAUDE.md).
 
