@@ -27,3 +27,4 @@ env/
 mlruns/
 mlflow.db
 mlartifacts/
+.gstack/
