@@ -506,6 +506,66 @@ context with no directional claim. `agreement=True` only on a unanimous sign.
 committee's hit-rate. The static UI (`static/index.html`) renders the H1 block as
 a separate "Auxiliary Intraday Ensemble" section below the daily cards.
 
+### 3.5 Next-Day Realized Volatility (5-seed multi-task LSTM ensemble)
+
+A **genuinely different prediction task** from direction/return: the target is
+`target_volatility_pct = |next-day log return| × 100` (`src/features.py`, same
+`shift(-1)` convention and percent unit as `target_return`). Unlike next-day
+direction (near-efficient, ROC-AUC ≈ 0.50, §4.2.1), **volatility clustering is a
+well-established FX stylized fact** — and this is, accordingly, the only neural
+model family in the project with a CI-confirmed edge over its honest baseline.
+
+**Methodology (`src/volatility.py`, entirely under the post-defense Production
+Methodology):**
+
+- **Mandatory baselines first.** A GARCH(1,1) (`arch` package) with parameters
+  fit on the train block ONLY, rolled forward with FIXED parameters
+  (`ARCHModel.fix`) so every validation/test forecast uses only past data —
+  plus a naive persistence baseline (today's |return| = tomorrow's forecast).
+  GARCH's conditional σ is converted to an E|r| point forecast via the
+  folded-normal factor √(2/π). On validation: GARCH MAE 0.2038% / R² +0.009;
+  persistence MAE 0.2611% / R² −0.842.
+- **Validation-only arbiter.** All decisions on `[70%:80%]`; the experiment's
+  LSTMs fit on `[0:63%]` with `[63%:70%]` as the early-stopping tail so the
+  arbiter is genuinely held out of everything the experiment fits (stricter
+  than the production LSTM convention, because here validation IS the arbiter).
+- **Its own hypothesis family** (`results/volatility_hypothesis_log.csv`) —
+  continuous R²/MAE metrics, separate from the 4-feature direction/return
+  family; the Bonferroni bar tightened as it grew: 0.05 → 0.025 → 0.0167.
+- **Training-noise honesty.** Single-seed runs exposed TF/oneDNN CPU
+  nondeterminism of the same order as the deltas under test (identical-seed
+  dedicated-model MAE moved 0.190→0.197 between runs). Bootstrap CIs capture
+  row-sampling noise only, so the ship candidate was pre-registered as the
+  **seed-ensemble** (mean over seeds 42–46) of the 3-head multi-task
+  architecture (which beat the dedicated single-head model head-to-head at
+  the tightened bar — sharing the trunk with return/direction HELPS the
+  volatility head).
+- **The pre-registered ship gate cleared decisively**
+  (`results/volatility_seed_ensemble.csv`): MT 5-seed ensemble MAE 0.1859% /
+  R² +0.144 vs GARCH 0.2038% / +0.009; ΔMAE CI98.33 [+0.0111, +0.0242],
+  ΔR² CI [+0.080, +0.183], frac(ΔMAE>0)=1.000 — every individual seed also
+  beat GARCH. One-shot test-block report (never a search knob): ensemble
+  MAE 0.2188% / R² +0.110 vs GARCH 0.2326% / +0.036 — the edge generalizes.
+
+**Production artifacts** (`models/volatility/`, produced by
+`train_production_volatility_model` inside `_train_pipeline.py` §12B):
+5 × `volatility_lstm_seed{42..46}.keras` + its own `lag_scaler/lag_pca/
+global_scaler` (fit `[0:80%]`) + `lstm_time_steps.pkl` + `vol_metrics.json`
+(one-shot test report + the validation ship-gate evidence, consumed by
+serving for honest framing). **Price-only by nature** — ONE family, no
+baseline/with_macro duplication; GARCH and volatility consume no macro columns.
+
+**Serving:** `PredictionService` loads the family behind its own `vol_ready`
+gate; because the VALIDATED object is the full 5-seed mean, a partial ensemble
+refuses to serve (all-or-nothing load). `predict()` adds a
+`volatility_forecast` block — `predicted_vol_pct` (the seed-averaged
+volatility head; the ensemble's return/direction heads are training
+scaffolding and are discarded) plus `vs_garch_baseline` /
+`vs_persistence_baseline` / `test_report_one_shot` context from
+`vol_metrics.json`. The UI renders it as a direction-free "expected movement
+magnitude" card labeled `✓ validated vs GARCH(1,1)` — the framing matches
+exactly what the rigorous test found, no more.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

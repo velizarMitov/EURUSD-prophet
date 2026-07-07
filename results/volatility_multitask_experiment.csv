@@ -1,0 +1,2 @@
+hypothesis,arbiter,n_val,garch_mae,garch_r2,dedicated_mae,dedicated_r2,multitask_mae,multitask_r2,point_delta_mae,ci_dmae_low,ci_dmae_high,point_delta_r2,ci_dr2_low,ci_dr2_high,magnitude_corr,sign_agreement,alpha_bar,cleared_bar,primary_still_clears_tightened_bar,verdict
+volatility_multitask_head_vs_dedicated,validation[70:80],856,0.203794,0.0094,0.197108,0.0798,0.189128,0.1112,0.00798,0.005216,0.010939,0.0315,0.003,0.0679,0.1551,0.7605,0.025,True,False,MULTI-TASK WINS (sharing helps at the family bar) — ship the 3-head trunk

@@ -15,10 +15,29 @@ def test_smoke_model_resolution():
         'lstm_multitask_eurusd.keras',
         'lstm_time_steps.pkl',
     ]
+    # The volatility family ships as a 5-seed ensemble: the VALIDATED object is
+    # the mean over ALL seeds (results/volatility_seed_ensemble.csv), so every
+    # seed model must exist — a partial ensemble is a different, unvalidated
+    # predictor and inference refuses to serve one (vol_ready gate).
+    VOLATILITY_ARTIFACTS = [
+        'volatility_lstm_seed42.keras',
+        'volatility_lstm_seed43.keras',
+        'volatility_lstm_seed44.keras',
+        'volatility_lstm_seed45.keras',
+        'volatility_lstm_seed46.keras',
+        'global_scaler.pkl',
+        'lag_scaler.pkl',
+        'lag_pca.pkl',
+        'lstm_time_steps.pkl',
+        'vol_metrics.json',
+    ]
     required_artifacts = [
         os.path.join('models', variant, artifact)
         for variant in ('baseline', 'with_macro')
         for artifact in VARIANT_ARTIFACTS
+    ] + [
+        os.path.join('models', 'volatility', artifact)
+        for artifact in VOLATILITY_ARTIFACTS
     ] + [
         os.path.join('results', 'eurusd_features.csv'),
         'config.json',

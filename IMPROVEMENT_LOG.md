@@ -322,6 +322,59 @@ two forward paper-trading ledgers arbitrate.
       trains the pre-dual single 27-col pipeline into root-level `models/` paths
       production no longer loads (flagged in CLAUDE.md as known drift).
 
+## Backlog — Next-day realized volatility target (added 2026-07-07)
+
+A genuinely different task from direction/return, where real signal is far more
+plausible (volatility clustering is an established FX stylized fact, unlike
+next-day direction). Ran entirely under the Production Methodology: validation
+arbiter only, mandatory GARCH baseline before any NN, its own hypothesis family.
+
+- [x] Step 0 — Prereqs: `config.json` was already valid in the working tree
+      (no restore needed; `json.load` passes). `arch>=6.0.0` added to
+      requirements.txt (installed 8.0.0). ONE volatility model, not
+      per-variant — GARCH/volatility are price-only by nature.
+- [x] Step 1 — Target + honest baselines FIRST. `target_volatility_pct =
+      |next-day log return| * 100` in `src/features.py::add_advanced_features`
+      (same `shift(-1)` geometry as `target_return`; unit tests mirror the
+      existing no-look-ahead pattern). `src/volatility.py`: GARCH(1,1) fit on
+      the train block ONLY then FIXED-parameter-rolled (`ARCHModel.fix`) —
+      genuinely out-of-sample one-step forecasts; E|r| via √(2/π)·σ. On
+      validation `[70:80]`: GARCH MAE 0.2038% / R² +0.009, persistence
+      MAE 0.2611% / R² −0.842 — the bar the NN had to clear, computed BEFORE
+      building it.
+- [x] Step 2 — Dedicated price-only LSTM (fit `[0:63]`, ES tail `[63:70]` so
+      the arbiter stays clean) beat GARCH on the first run (MAE 0.1897,
+      R² +0.118, 95% CIs excluding 0)… but the follow-up multi-task experiment
+      exposed **TF/oneDNN training nondeterminism of the same order as the
+      deltas** (identical-seed MAE 0.190→0.197), which flipped the primary
+      re-check at the tightened family bar. Honest fix: ONE final
+      pre-registered ship gate — the 5-seed ensemble (mean over 42–46) of the
+      3-head multi-task trunk (which beat the dedicated model head-to-head;
+      sharing HELPS the vol head: corr(vol_head,|return_head|)=+0.16) vs
+      GARCH at family_size=3 Bonferroni α=0.0167. **CLEARED decisively**:
+      ensemble MAE 0.1859 / R² +0.144, ΔMAE CI98.33 [+0.0111,+0.0242],
+      ΔR² CI [+0.080,+0.183], frac=1.000; every individual seed also beat
+      GARCH (`results/volatility_seed_ensemble.csv`).
+- [x] Step 3 — Separate hypothesis family:
+      `results/volatility_hypothesis_log.csv` (3 hypotheses spent: dedicated
+      vs GARCH, MT-head vs dedicated, MT-ensemble vs GARCH — the family is
+      now SPENT on this arbiter; further volatility claims need genuinely new
+      data, i.e. the forward window). Never mixed with the 4-feature
+      direction/return family count.
+- [x] Step 4 — Shipped with honest framing (the gate cleared, so it ships as
+      validated — the exact mirror of the macro features shipping as
+      unproven): `train_production_volatility_model` in `_train_pipeline.py`
+      §12B → `models/volatility/` (5 seed models + own PCA/scalers fit
+      `[0:80]` + `vol_metrics.json` carrying the one-shot test report:
+      ensemble MAE 0.2188 / R² +0.110 vs GARCH 0.2326 / +0.036 — edge
+      generalizes to the untouched test block). `PredictionService.vol_ready`
+      all-or-nothing gate (a partial ensemble is an unvalidated object →
+      refuses to serve), `volatility_forecast` response block with
+      `vs_garch_baseline`/`vs_persistence_baseline` evidence, UI card
+      "Next-Day Realized Volatility ✓ validated vs GARCH(1,1)" —
+      direction-free magnitude framing. `test_smoke` asserts the 10 new
+      artifacts; ARCHITECTURE_DOCS.md §3.5. 52 tests pass.
+
 ## Bug fixes
 
 - [x] **H1 consensus 2-2 tie bug (live dashboard report, 2026-07-07).** A 2-2

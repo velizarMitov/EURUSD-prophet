@@ -105,6 +105,13 @@ LAG_COLUMNS = [
 
 TARGET_RETURN_COLUMN = 'target_return'
 TARGET_DIRECTION_COLUMN = 'target_direction'
+# Next-day realized volatility proxy: |next-day log return| in PERCENT.
+# A genuinely different task from direction/return — volatility clustering is a
+# well-established FX stylized fact, unlike next-day direction. Same shift(-1)
+# convention and percent unit as target_return; evaluated against a GARCH(1,1)
+# baseline in src/volatility.py (its own hypothesis family, see
+# results/volatility_hypothesis_log.csv).
+TARGET_VOLATILITY_COLUMN = 'target_volatility_pct'
 
 DEFAULT_HISTORY_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'results', 'eurusd_features.csv'
@@ -221,6 +228,12 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     data[TARGET_RETURN_COLUMN] = ((data['close'].shift(-1) - data['close']) / data['close']) * 100
     data[TARGET_DIRECTION_COLUMN] = (data[TARGET_RETURN_COLUMN] > 0).astype(int)
 
+    # Realized-volatility target: |next-day LOG return| * 100. Log (not simple)
+    # return matches the GARCH literature convention; the shift(-1) is the same
+    # next-bar geometry as target_return, so it is NaN on the exact same final
+    # row and introduces no additional look-ahead surface.
+    data[TARGET_VOLATILITY_COLUMN] = np.abs(np.log(data['close'].shift(-1) / data['close'])) * 100
+
     # Drop warm-up / undefined-target rows, but ONLY on the columns the model
     # actually consumes (the 27 FEATURE_COLUMNS + the two targets). The merged
     # intermediate LEVELS (usd_index, yield_differential) are deliberately NOT in
@@ -228,7 +241,8 @@ def add_advanced_features(df: pd.DataFrame) -> pd.DataFrame:
     # would truncate the whole euro-era history even though usd_index_return is a
     # flat 0 there. policy_rate_differential / inflation_differential ARE features,
     # so their genuine leading NaN still truncates training to the real euro era.
-    data.dropna(subset=FEATURE_COLUMNS + [TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN], inplace=True)
+    data.dropna(subset=FEATURE_COLUMNS + [TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
+                                          TARGET_VOLATILITY_COLUMN], inplace=True)
     return data
 
 

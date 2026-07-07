@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 from src.features import (
     add_advanced_features, build_live_features, merge_macro_features, compute_features, FEATURE_COLUMNS,
-    TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN, LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
+    TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN, TARGET_VOLATILITY_COLUMN,
+    LAG_COLUMNS, fit_lag_pca, apply_lag_pca, model_input_columns,
 )
 
 def test_feature_engineering_success():
@@ -600,6 +601,56 @@ def test_h1_target_is_strict_next_day_shift_no_lookahead():
     Xf, Xs, yr, yd, idx = build_h1_datasets(h1=h1)
     assert len(Xf) == len(closes) - 1 == len(yr) == Xs.shape[0] == len(idx)
     assert not np.isnan(yr).any(), "Resolved targets must contain no NaN after the last-day drop."
+
+
+def test_target_volatility_is_next_day_abs_log_return_no_lookahead():
+    """target_volatility_pct[t] must be exactly |ln(close[t+1]/close[t])| * 100 --
+    strictly the NEXT day's realized absolute log return via the same shift(-1)
+    geometry as target_return, with the final (unresolved) bar dropped."""
+    dates = pd.date_range('2026-01-01', periods=300, freq='D')
+    rng = np.random.default_rng(7)
+    close = pd.Series(1.10 + np.cumsum(rng.normal(0, 0.004, 300)), index=dates)
+    df = pd.DataFrame({
+        'open': close.values, 'high': close.values + 0.002,
+        'low': close.values - 0.002, 'close': close.values,
+        'tick_volume': np.full(300, 1000),
+        'yield_differential': np.full(300, 1.5),
+    }, index=dates)
+
+    res = add_advanced_features(df)
+    assert TARGET_VOLATILITY_COLUMN in res.columns, "Volatility target bypassed."
+
+    # Hand-check every surviving row against the raw close series: the value at
+    # date d must use ONLY d and d+1 -- nothing further into the future.
+    for d in res.index:
+        pos = dates.get_loc(d)
+        expected = abs(np.log(close.iloc[pos + 1] / close.iloc[pos])) * 100
+        assert res.loc[d, TARGET_VOLATILITY_COLUMN] == pytest.approx(expected), \
+            f"target_volatility_pct at {d} must be the |t+1 log return| * 100."
+
+    # Nonnegative by construction, and the last raw bar (undefined target) must
+    # have been dropped -- same boundary discipline as target_return.
+    assert (res[TARGET_VOLATILITY_COLUMN] >= 0).all(), "Realized volatility can never be negative."
+    assert dates[-1] not in res.index, "Last bar's shift(-1) volatility target is undefined and must be dropped."
+
+
+def test_volatility_sequence_alignment_no_lookahead():
+    """src/volatility.py::make_sequences must end each window AT the target row
+    (rows [t-time_steps+1 : t] predict y[t]) -- the window may never include
+    row t+1, whose return IS the target."""
+    from src.volatility import make_sequences
+
+    n, time_steps = 30, 5
+    X = np.arange(n, dtype=float).reshape(-1, 1)  # row t has value t
+    y = np.arange(n, dtype=float) * 10
+
+    windows, targets, target_rows = make_sequences(X, y, time_steps)
+    assert windows.shape == (n - time_steps + 1, time_steps, 1)
+    for k, t in enumerate(target_rows):
+        assert targets[k] == y[t], "Target must be the window's own end row's y."
+        assert windows[k, -1, 0] == float(t), "Window must END at the target row t."
+        assert windows[k, 0, 0] == float(t - time_steps + 1), "Window must start time_steps-1 rows back."
+        assert (windows[k, :, 0] <= t).all(), "No window row may lie beyond t (look-ahead)."
 
 
 def test_h1_features_do_not_depend_on_future_days():

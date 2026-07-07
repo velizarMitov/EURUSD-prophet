@@ -1,0 +1,38 @@
+{
+  "model": "5-seed multi-task LSTM ensemble, volatility head (price-only)",
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "target": "target_volatility_pct",
+  "n_test": 1712,
+  "test_ensemble_mae": 0.218756,
+  "test_ensemble_r2": 0.1096,
+  "test_garch_mae": 0.232573,
+  "test_garch_r2": 0.0356,
+  "test_persistence_mae": 0.292136,
+  "test_persistence_r2": -0.7797,
+  "note": "one-shot held-out test report; the SHIP decision was made on the validation arbiter (results/volatility_seed_ensemble.csv + results/volatility_hypothesis_log.csv), never on this block",
+  "validation_decision": {
+    "garch_mae": 0.203794,
+    "garch_r2": 0.0094,
+    "mt_ensemble_mae": 0.18594,
+    "mt_ensemble_r2": 0.1444,
+    "point_delta_mae": 0.017854,
+    "ci_dmae_low": 0.011128,
+    "ci_dmae_high": 0.02422,
+    "point_delta_r2": 0.135,
+    "ci_dr2_low": 0.0796,
+    "ci_dr2_high": 0.1833,
+    "alpha_bar": 0.0166666666666666,
+    "cleared_bar": true,
+    "verdict": "CLEARED \u2014 ship the MT seed-ensemble with honest GARCH-relative framing"
+  },
+  "validation_persistence_baseline": {
+    "persistence_mae": 0.261091,
+    "persistence_r2": -0.8416
+  }
+}

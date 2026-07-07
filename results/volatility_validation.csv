@@ -1,0 +1,2 @@
+hypothesis,arbiter,n_val,garch_mae,garch_r2,persistence_mae,persistence_r2,lstm_mae,lstm_r2,point_delta_mae,ci_dmae_low,ci_dmae_high,point_delta_r2,ci_dr2_low,ci_dr2_high,alpha_bar,cleared_bar,verdict
+volatility_lstm_vs_garch11,validation[70:80],856,0.203794,0.0094,0.261091,-0.8416,0.189651,0.1184,0.014143,0.006918,0.020438,0.109,0.0535,0.1553,0.05,True,"CLEARED (LSTM beats GARCH(1,1): both 95.0% CIs exclude 0 in its favor)"

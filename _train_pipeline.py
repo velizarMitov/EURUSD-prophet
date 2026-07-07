@@ -474,6 +474,43 @@ for _stale in (
         print(f"Removed superseded single-variant artifact: {_stale}")
 
 # ===========================================================================
+# Next-Day Realized Volatility (5-seed multi-task LSTM ensemble, price-only)
+# ===========================================================================
+# ADDITIVE to the daily variants above. ONE model family (price-only by
+# nature — GARCH and volatility need no macro columns), trained ONCE, not per
+# variant. Ships the exact object that cleared the pre-registered validation
+# ship gate against a train-only-fit GARCH(1,1)
+# (results/volatility_seed_ensemble.csv + results/volatility_hypothesis_log.csv);
+# the test-block numbers printed here are the ONE-SHOT final report, never a
+# search knob. Guarded so a failure degrades to a warning and leaves the daily
+# variants intact (same pattern as the H1 block below).
+print("\n=== 12B. Next-Day Realized Volatility ensemble ===")
+try:
+    from src.volatility import train_production_volatility_model
+
+    with mlflow.start_run(run_name="Volatility_MT_Seed_Ensemble") as vol_run:
+        _vol_metrics = train_production_volatility_model(CONFIG)
+        mlflow.log_params({
+            "model_family": "Volatility_MT_LSTM_SeedEnsemble",
+            "seeds": ",".join(str(s) for s in _vol_metrics.get('seeds', [])),
+            "target": _vol_metrics.get('target'),
+            "train_fraction": train_fraction,
+            "val_fraction": val_fraction,
+        })
+        mlflow.log_metrics({
+            "test_ensemble_mae": _vol_metrics['test_ensemble_mae'],
+            "test_ensemble_r2": _vol_metrics['test_ensemble_r2'],
+            "test_garch_mae": _vol_metrics['test_garch_mae'],
+            "test_garch_r2": _vol_metrics['test_garch_r2'],
+        })
+        print(f"MLflow run logged: run_id={vol_run.info.run_id}")
+except Exception as _vol_err:
+    import traceback
+    print(f"WARNING: volatility ensemble section skipped ({_vol_err}). "
+          f"Daily production artifacts are unaffected.")
+    traceback.print_exc()
+
+# ===========================================================================
 # H1 -> Daily Predictor (auxiliary multi-model ensemble)
 # ===========================================================================
 # ADDITIVE to the daily pipeline above -- it never touches the per-variant daily

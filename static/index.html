@@ -165,6 +165,10 @@
             });
             html += `</div>`;
 
+            // --- Next-day realized volatility (the one validated edge) ---
+            if (data.volatility_forecast) html += renderVolatility(data.volatility_forecast);
+            else if (data.volatility_error) html += `<div class="meta">Volatility forecast unavailable: ${data.volatility_error}</div>`;
+
             // --- Auxiliary Intraday (H1 -> Daily) ensemble ---
             if (data.h1) html += renderH1(data.h1);
             else if (data.h1_error) html += `<div class="meta">H1 ensemble unavailable: ${data.h1_error}</div>`;
@@ -210,6 +214,29 @@
             return `<div class="variant-panel ${opts.agreeCls || ''}">
                 <h3 class="panel-title">${title} ${opts.badge || ''}</h3>
                 ${note}${inner}
+            </div>`;
+        }
+
+        // Next-day realized volatility: a MAGNITUDE forecast (how much movement),
+        // deliberately direction-free. Framed exactly as rigorously as it was
+        // earned: validated against a GARCH(1,1) baseline on the validation
+        // arbiter (see results/volatility_seed_ensemble.csv).
+        function renderVolatility(vf) {
+            if (vf.error) return `<div class="meta">Volatility forecast unavailable: ${vf.error}</div>`;
+            const g = vf.vs_garch_baseline || {};
+            const validated = g.validated === true;
+            const badge = validated
+                ? '<span class="badge price-only" title="The 5-seed ensemble beat a train-only-fit GARCH(1,1) baseline on the held-out validation arbiter with Bonferroni-corrected bootstrap CIs excluding 0 (see results/volatility_seed_ensemble.csv). This is the only neural model in this project with a confirmed edge over its honest baseline.">✓ validated vs GARCH(1,1)</span>'
+                : '<span class="badge experimental" title="Validation evidence unavailable in vol_metrics.json — treat as unvalidated.">unvalidated</span>';
+            const ctx = (typeof g.ensemble_mae_pct === 'number' && typeof g.garch_mae_pct === 'number')
+                ? `Validation MAE ${g.ensemble_mae_pct.toFixed(4)}% vs GARCH ${g.garch_mae_pct.toFixed(4)}% ` +
+                  `(&Delta; CI [${g.delta_mae_ci[0].toFixed(4)}, ${g.delta_mae_ci[1].toFixed(4)}], never crossing 0)`
+                : '';
+            return `<div class="card" style="background:#eef7f2; border-left-color:#148f77; border-left-width:6px;">
+                <h3>Next-Day Realized Volatility ${badge}</h3>
+                <div class="value">Expected movement magnitude: &plusmn;${vf.predicted_vol_pct.toFixed(4)}%</div>
+                <div class="sub-value">|next-day log return| forecast — says how MUCH the pair is likely to move, not which way. Volatility clustering is a real FX signal; direction near-efficiency still applies to the panels above.</div>
+                <div class="meta">${vf.model}. ${ctx}</div>
             </div>`;
         }
 

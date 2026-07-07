@@ -1,3 +1,4 @@
+import json
 import os
 
 import joblib
@@ -5,7 +6,7 @@ import pandas as pd
 
 from .features import (
     load_history, compute_features, apply_lag_pca, merge_macro_features,
-    LAG_COLUMNS, FEATURE_COLUMNS, variant_feature_columns,
+    LAG_COLUMNS, FEATURE_COLUMNS, PRICE_FEATURE_COLUMNS, variant_feature_columns,
 )
 from .live_data import fetch_live_market_data, drop_incomplete_bars
 from .macro_data import fetch_macro_features
@@ -91,6 +92,41 @@ class PredictionService:
         self.h1_ready = None not in (
             self.h1_xgb, self.h1_rf, self.h1_svm, self.h1_lstm_model,
             self.h1_feature_scaler, self.h1_lstm_scaler, self.h1_feature_columns,
+        )
+
+        # Next-day realized-volatility ensemble (models/volatility/): the
+        # 5-seed multi-task LSTM ensemble whose volatility head cleared the
+        # pre-registered validation ship gate against GARCH(1,1) (see
+        # src/volatility.py + results/volatility_seed_ensemble.csv). Loaded on
+        # its own try/except — its absence never blocks the daily variants.
+        # The validated object is the FULL seed ensemble, so vol_ready demands
+        # every seed model: serving a partial ensemble would be a silently
+        # different (unvalidated) predictor.
+        self.vol_models = []
+        self.vol_lag_scaler = self.vol_lag_pca = self.vol_global_scaler = None
+        self.vol_time_steps = None
+        self.vol_metrics = None
+        try:
+            from .volatility import VOL_MODEL_DIR, VOL_MODEL_FILES
+            vol_dir = os.path.join(base_dir, VOL_MODEL_DIR)
+            self.vol_lag_scaler = joblib.load(os.path.join(vol_dir, 'lag_scaler.pkl'))
+            self.vol_lag_pca = joblib.load(os.path.join(vol_dir, 'lag_pca.pkl'))
+            self.vol_global_scaler = joblib.load(os.path.join(vol_dir, 'global_scaler.pkl'))
+            self.vol_time_steps = joblib.load(os.path.join(vol_dir, 'lstm_time_steps.pkl'))
+            with open(os.path.join(vol_dir, 'vol_metrics.json')) as f:
+                self.vol_metrics = json.load(f)
+            os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+            from tensorflow.keras.models import load_model
+            self.vol_models = [
+                load_model(os.path.join(vol_dir, fname)) for fname in VOL_MODEL_FILES
+            ]
+        except Exception as e:
+            self.load_errors.append(f"Volatility ensemble: {e}")
+
+        self.vol_ready = (
+            len(self.vol_models) > 0
+            and None not in (self.vol_lag_scaler, self.vol_lag_pca,
+                             self.vol_global_scaler, self.vol_time_steps)
         )
         # Independent per-variant readiness gates (the names the API surfaces).
         self.baseline_ready = self._variant_ready('baseline')
@@ -349,6 +385,70 @@ class PredictionService:
             "predicted_return_pct": predicted_return_pct,
         }
 
+    def _predict_volatility(self, feature_window) -> dict:
+        """
+        Run the 5-seed volatility ensemble on the shared raw feature window:
+        select the price-only column subset, apply the volatility family's own
+        PCA + scaler (fit on [0:80%] at training time), and average the
+        VOLATILITY head across the seed models. The return/direction heads of
+        these multi-task models are training scaffolding only and are
+        deliberately discarded here — the daily variants remain the sole
+        source of return/direction predictions.
+
+        The response block carries the validated GARCH/persistence context
+        from vol_metrics.json so the UI can frame the number exactly as
+        rigorously as it was earned (Production Methodology: label according
+        to what the test actually found).
+        """
+        vol_window = feature_window[PRICE_FEATURE_COLUMNS]
+        model_input = apply_lag_pca(vol_window, self.vol_lag_scaler, self.vol_lag_pca,
+                                    lag_columns=LAG_COLUMNS)
+        if len(model_input) < self.vol_time_steps:
+            return {"error": "Not enough historical context for the volatility sliding window."}
+        scaled = self.vol_global_scaler.transform(model_input.tail(self.vol_time_steps))
+        window_3d = scaled.reshape(1, scaled.shape[0], scaled.shape[1])
+
+        vol_preds = []
+        for m in self.vol_models:
+            _ret, _dir, vol = m.predict(window_3d, verbose=0)
+            vol_preds.append(float(vol.ravel()[0]))
+        predicted_vol_pct = sum(vol_preds) / len(vol_preds)
+
+        block = {
+            "predicted_vol_pct": predicted_vol_pct,
+            "unit": "percent — |next-day log return| * 100 (single-day realized volatility proxy)",
+            "model": f"{len(self.vol_models)}-seed multi-task LSTM ensemble, volatility head (price-only)",
+        }
+        metrics = self.vol_metrics or {}
+        decision = metrics.get('validation_decision', {})
+        if decision:
+            block["vs_garch_baseline"] = {
+                "validated": bool(decision.get('cleared_bar')),
+                "arbiter": "validation slice [70%:80%], test block untouched",
+                "ensemble_mae_pct": decision.get('mt_ensemble_mae'),
+                "garch_mae_pct": decision.get('garch_mae'),
+                "delta_mae_pct": decision.get('point_delta_mae'),
+                "delta_mae_ci": [decision.get('ci_dmae_low'), decision.get('ci_dmae_high')],
+                "ensemble_r2": decision.get('mt_ensemble_r2'),
+                "garch_r2": decision.get('garch_r2'),
+                "delta_r2_ci": [decision.get('ci_dr2_low'), decision.get('ci_dr2_high')],
+                "alpha_bonferroni": decision.get('alpha_bar'),
+            }
+        persistence = metrics.get('validation_persistence_baseline', {})
+        if persistence:
+            block["vs_persistence_baseline"] = {
+                "persistence_mae_pct": persistence.get('persistence_mae'),
+                "persistence_r2": persistence.get('persistence_r2'),
+            }
+        if 'test_ensemble_mae' in metrics:
+            block["test_report_one_shot"] = {
+                "ensemble_mae_pct": metrics['test_ensemble_mae'],
+                "ensemble_r2": metrics['test_ensemble_r2'],
+                "garch_mae_pct": metrics['test_garch_mae'],
+                "garch_r2": metrics['test_garch_r2'],
+            }
+        return block
+
     def _predict_h1(self, now=None):
         """
         Run the auxiliary H1->Daily ensemble on the latest COMPLETE trading day.
@@ -508,6 +608,7 @@ class PredictionService:
               "baseline":   { gbm, lstm, consensus },
               "with_macro": { gbm, lstm, consensus },
               "variant_agreement": bool | None,
+              "volatility_forecast": { predicted_vol_pct, vs_garch_baseline, ... },
               "h1": {...} }
 
         `variant_agreement` compares the two consensus directions (True/False
@@ -518,9 +619,12 @@ class PredictionService:
         if not self.models_ready:
             raise RuntimeError(f"Model artifacts not loaded. Errors: {self.load_errors}")
 
-        # One shared window sized for the largest LSTM lookback across variants.
+        # One shared window sized for the largest LSTM lookback across variants
+        # (and the volatility ensemble, which shares the same convention).
         max_window = max(
-            [v['lstm_time_steps'] for v in self.variants.values() if v['lstm_time_steps']] or [1]
+            [v['lstm_time_steps'] for v in self.variants.values() if v['lstm_time_steps']]
+            + ([self.vol_time_steps] if self.vol_time_steps else [])
+            or [1]
         )
         feature_window, data_source, bar_used, as_of_date, forecasting_date = \
             self._resolve_latest_window(max_window)
@@ -546,6 +650,16 @@ class PredictionService:
             response['variant_agreement'] = len(set(consensus_directions.values())) == 1
         else:
             response['variant_agreement'] = None
+
+        # Next-day realized-volatility forecast (validated against GARCH(1,1)
+        # on the validation arbiter — the only NN family in this project with a
+        # CI-confirmed edge over its honest baseline). Failure degrades to a
+        # volatility_error note, never breaking the daily committees.
+        if self.vol_ready:
+            try:
+                response['volatility_forecast'] = self._predict_volatility(feature_window)
+            except Exception as e:
+                response['volatility_error'] = str(e)
 
         # Supplementary H1->Daily ensemble (separate intraday predictor). It has
         # its own data feed and its own agreement-based consensus, surfaced as a
