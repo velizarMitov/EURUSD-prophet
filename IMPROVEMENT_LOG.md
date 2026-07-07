@@ -322,6 +322,34 @@ two forward paper-trading ledgers arbitrate.
       trains the pre-dual single 27-col pipeline into root-level `models/` paths
       production no longer loads (flagged in CLAUDE.md as known drift).
 
+## Bug fixes
+
+- [x] **H1 consensus 2-2 tie bug (live dashboard report, 2026-07-07).** A 2-2
+      vote split displayed "UP — 50% model agreement" over a NEGATIVE −0.0131%
+      averaged return. Root cause: `compute_h1_consensus` broke ties with
+      `up >= down` (arbitrary UP) while `predicted_return_pct` was the full-panel
+      mean — a vote-derived label shown next to a magnitude-derived number from a
+      contradicting definition. The daily committee's design is vote-based with
+      an explicit MIXED downgrade, so H1 was standardized to match (design (a)):
+      strict-majority direction, `MIXED / TIE` on an exact split, and the
+      consensus return now averages the MAJORITY side only (sign-consistent with
+      the label by construction; the old full-panel mean could contradict a 3-1
+      vote too — the prior unit test literally asserted UP over a −0.025 mean).
+      UI updated (neutral tie card, "Majority-side averaged return" label);
+      ARCHITECTURE_DOCS §3.4 states the tie handling; regression test
+      `test_compute_h1_consensus_exact_tie_is_mixed_not_arbitrary_up` pins the
+      exact reported numbers. `/history` already treats a non-UP/DOWN h1 call as
+      unscored. 50 tests pass.
+      **Related observation (not touched, one change at a time):** the DAILY
+      committee can also surface a sign-conflicting pair on the per-model level —
+      each model's direction comes from its classifier/direction head while its
+      return comes from the regression head (multi-task sign agreement is only
+      0.61–0.72). E.g. the 2026-06-29 logged row: pred DOWN with +0.0104% return.
+      That is an architectural property of the dual heads, already measured by
+      the `multitask_sign_agreement` metric; whether the consensus should
+      reconcile it (e.g. defer the displayed return to the direction-consistent
+      head) is a separate decision worth its own pass.
+
 ## Working rules
 
 - Before each item: re-read the matching skill (`ml-practical-methodology` or

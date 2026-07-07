@@ -234,11 +234,21 @@
 
         function renderH1(h1) {
             const c = h1.consensus;
-            const cls = c.direction === 'UP' ? 'up' : 'down';
-            const arrow = c.direction === 'UP' ? '📈' : '📉';
+            const isTie = c.direction !== 'UP' && c.direction !== 'DOWN';
+            // A MIXED / TIE has no direction: neutral card, no up/down arrow.
+            const cls = isTie ? '' : (c.direction === 'UP' ? 'up' : 'down');
+            const arrow = isTie ? '⚖️' : (c.direction === 'UP' ? '📈' : '📉');
             const agree = c.agreement
                 ? `✅ All ${c.n_models} intraday models agree`
-                : `⚠️ ${Math.round(c.confidence * 100)}% of models on the majority side`;
+                : isTie
+                    ? `⚖️ Exact ${c.n_models / 2}&ndash;${c.n_models / 2} split — no majority, no directional call`
+                    : `⚠️ ${Math.round(c.confidence * 100)}% of models on the majority side`;
+            // The consensus return averages the MAJORITY-side models only (so it can
+            // never contradict the direction label); on a tie it is the full-panel
+            // mean, shown as context with no directional claim attached.
+            const retLabel = isTie
+                ? 'Full-panel averaged return (context only — no majority behind it)'
+                : 'Majority-side averaged return';
 
             let html = `<div class="card" style="background:#eef2f7; border-left-color:#34495e;">
                 <h3>Auxiliary Intraday Ensemble (H1 &rarr; Daily) &mdash; Data 'As Of' ${h1.as_of_date}</h3>
@@ -246,8 +256,8 @@
             </div>`;
             html += `<div class="card ${cls}" style="border-left-width:6px;">
                 <h3>H1 Ensemble Consensus</h3>
-                <div class="value">${c.direction} ${arrow} &mdash; ${Math.round(c.confidence * 100)}% model agreement</div>
-                <div class="sub-value">Averaged predicted return: ${c.predicted_return_pct.toFixed(4)}%</div>
+                <div class="value">${c.direction} ${arrow}${isTie ? '' : ` &mdash; ${Math.round(c.confidence * 100)}% model agreement`}</div>
+                <div class="sub-value">${retLabel}: ${c.predicted_return_pct.toFixed(4)}%</div>
                 <div class="meta">${agree}</div>
             </div>`;
             for (const [key, pred] of Object.entries(h1.predictions)) {

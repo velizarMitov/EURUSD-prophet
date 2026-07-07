@@ -635,7 +635,9 @@ def test_h1_inference_sample_drops_forming_current_day():
 
 def test_compute_h1_consensus_majority_and_agreement():
     """A 3-1 split must yield the majority direction, confidence = agreeing
-    fraction (0.75), agreement=False, and the mean return across ALL models."""
+    fraction (0.75), agreement=False, and the mean return over the MAJORITY-side
+    models only — a full-panel mean here would be NEGATIVE (-0.025) under an
+    'UP' label, the exact vote-vs-magnitude inconsistency the tie bug exposed."""
     from src.inference import PredictionService
 
     per_model = {
@@ -649,7 +651,33 @@ def test_compute_h1_consensus_majority_and_agreement():
     assert c['direction'] == 'UP'
     assert c['agreement'] is False
     assert c['confidence'] == pytest.approx(0.75)
-    assert c['predicted_return_pct'] == pytest.approx((0.10 + 0.20 + 0.00 - 0.40) / 4)
+    assert c['predicted_return_pct'] == pytest.approx((0.10 + 0.20 + 0.00) / 3), \
+        "return must average the majority side only, staying sign-consistent with the label"
+    assert c['predicted_return_pct'] >= 0, "an UP label must never ship with a negative consensus return"
+    assert c['n_models'] == 4
+
+
+def test_compute_h1_consensus_exact_tie_is_mixed_not_arbitrary_up():
+    """REGRESSION (live dashboard bug, 2026-07-07): a 2-2 vote split was labeled
+    'UP — 50% model agreement' (via the old `up >= down` tie-break) while the
+    displayed averaged return was NEGATIVE (-0.0131%). An exact tie has NO
+    majority: it must be labeled MIXED / TIE, mirroring the daily committee's
+    MIXED honesty, with the full-panel mean only as unclaiming context.
+    Exact numbers from the report."""
+    from src.inference import PredictionService
+
+    per_model = {
+        'h1_xgboost':       {'direction': 'UP',   'predicted_return_pct':  0.0043},
+        'h1_random_forest': {'direction': 'UP',   'predicted_return_pct':  0.0048},
+        'h1_svm':           {'direction': 'DOWN', 'predicted_return_pct': -0.0035},
+        'h1_lstm':          {'direction': 'DOWN', 'predicted_return_pct': -0.0581},
+    }
+    c = PredictionService.compute_h1_consensus(per_model)
+
+    assert c['direction'] == 'MIXED / TIE', "a 2-2 split must never be crowned UP or DOWN"
+    assert c['agreement'] is False
+    assert c['confidence'] == pytest.approx(0.5)
+    assert c['predicted_return_pct'] == pytest.approx((0.0043 + 0.0048 - 0.0035 - 0.0581) / 4)
     assert c['n_models'] == 4
 
 

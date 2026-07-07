@@ -391,20 +391,46 @@ class PredictionService:
 
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:
-        """Aggregate the four return-only H1 regressors into one call. Direction
-        is the majority sign; confidence is the fraction of models on that side
-        (a genuine [0.5, 1.0] agreement measure, NOT a probability); predicted
-        return is the mean across all models. agreement=True only on a unanimous
-        sign."""
+        """Aggregate the four return-only H1 regressors into one call, using the
+        same VOTE-BASED design as the daily committee (compute_consensus):
+
+        * Direction = the STRICT majority sign. An exact 50/50 vote has no
+          majority, so it is labeled "MIXED / TIE" — mirroring the daily
+          "MIXED / LOW CONFIDENCE" honesty — never an arbitrarily crowned side.
+          (The original `up >= down` silently labeled a 2-2 split "UP" while
+          the displayed mean return was negative: a vote-derived label next to
+          a magnitude-derived number from a contradicting definition.)
+        * predicted_return_pct = mean over the MAJORITY-side models only, so
+          the number is sign-consistent with the label by construction (an
+          H1 model's direction IS the sign of its return, so a full-panel mean
+          can contradict a 3-1 vote whenever the minority's magnitude
+          dominates). On a tie, the full-panel mean is returned as context —
+          the MIXED label makes no directional claim for it to contradict.
+        * confidence = fraction of models on the majority side (a genuine
+          [0.5, 1.0] agreement measure, NOT a probability); 0.5 on a tie.
+        * agreement=True only on a unanimous sign.
+        """
         dirs = [p['direction'] for p in per_model.values()]
         n = len(dirs)
         up = dirs.count("UP")
         down = n - up
+
+        if up == down:
+            return {
+                "direction": "MIXED / TIE",
+                "agreement": False,
+                "confidence": 0.5,
+                "predicted_return_pct": sum(p['predicted_return_pct'] for p in per_model.values()) / n,
+                "n_models": n,
+            }
+
+        direction = "UP" if up > down else "DOWN"
+        majority = [p for p in per_model.values() if p['direction'] == direction]
         return {
-            "direction": "UP" if up >= down else "DOWN",
+            "direction": direction,
             "agreement": up == n or down == n,
             "confidence": max(up, down) / n,
-            "predicted_return_pct": sum(p['predicted_return_pct'] for p in per_model.values()) / n,
+            "predicted_return_pct": sum(p['predicted_return_pct'] for p in majority) / len(majority),
             "n_models": n,
         }
 

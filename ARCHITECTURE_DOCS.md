@@ -464,11 +464,24 @@ regressor** — direction is derived from the sign of the predicted return, ther
 no calibrated probability.
 
 `compute_h1_consensus` (static method) aggregates the four regressors
-independently of the daily committee's `compute_consensus`: direction is the
-majority sign, `confidence` is the **fraction of models agreeing** (a genuine
+independently of the daily committee's `compute_consensus`, but with the SAME
+vote-based design: direction is the **strict** majority sign; an exact 2–2 vote
+has no majority and is labeled **`MIXED / TIE`** (mirroring the daily
+`MIXED / LOW CONFIDENCE` honesty — never an arbitrarily crowned side).
+`confidence` is the **fraction of models on the majority side** (a genuine
 [0.5, 1.0] agreement measure — **not** a calibrated probability, unlike the daily
-consensus's `confidence`), and `predicted_return_pct` is the mean across all four.
-`agreement=True` only on a unanimous sign.
+consensus's `confidence`; exactly 0.5 on a tie). `predicted_return_pct` is the
+mean over the **majority-side models only**, so the number is sign-consistent
+with the direction label by construction (an H1 model's direction IS the sign of
+its return, so a full-panel mean can contradict a 3–1 vote whenever the
+minority's magnitude dominates); on a tie it is the full-panel mean, reported as
+context with no directional claim. `agreement=True` only on a unanimous sign.
+
+> **Fixed bug (2026-07-07):** the original implementation broke 2–2 ties with
+> `up >= down` (arbitrary "UP") while displaying the full-panel mean return —
+> the live dashboard showed *"UP — 50% model agreement"* over a **negative**
+> −0.0131% average. Regression-guarded by
+> `test_compute_h1_consensus_exact_tie_is_mixed_not_arbitrary_up`.
 
 ```jsonc
 "h1": {
@@ -479,9 +492,11 @@ consensus's `confidence`), and `predicted_return_pct` is the mean across all fou
     "h1_svm":            { "direction": "UP|DOWN", "predicted_return_pct": float },
     "h1_lstm":           { "direction": "UP|DOWN", "predicted_return_pct": float }
   },
-  "consensus": { "direction": "UP|DOWN", "agreement": bool, "confidence": 0.5-1.0, "predicted_return_pct": float, "n_models": 4 }
+  "consensus": { "direction": "UP|DOWN|MIXED / TIE", "agreement": bool, "confidence": 0.5-1.0, "predicted_return_pct": float, "n_models": 4 }
 }
 // or, on any failure: "h1_error": "<message>"
+// A MIXED / TIE consensus (exact 2-2 vote) is NOT scored by /history and takes
+// no position anywhere -- same no-directional-claim handling as the daily MIXED.
 ```
 
 `src/tracking.py::log_prediction` also logs the H1 consensus (`h1_direction`,
