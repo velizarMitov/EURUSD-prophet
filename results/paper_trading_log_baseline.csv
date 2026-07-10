@@ -1,2 +1,5 @@
 as_of_date,forecasting_date,direction,entry,exit,gross_pips,spread_pips,net_pips,net_return_pct,cum_net_pips,cum_net_return_pct,outcome
 2026-07-03,2026-07-06,SHORT,1.14281,1.14418,-13.7,1.5,-15.2,-0.133,-15.2,-0.133,loss
+2026-07-06,2026-07-07,SHORT,1.14418,1.14039,37.9,1.5,36.4,0.3181,21.2,0.1851,win
+2026-07-07,2026-07-08,SHORT,1.14039,1.1416,-12.1,1.5,-13.6,-0.1193,7.6,0.0658,loss
+2026-07-08,2026-07-09,SHORT,1.1416,1.14264,-10.4,1.5,-11.9,-0.1042,-4.3,-0.0384,loss
