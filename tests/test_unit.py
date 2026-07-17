@@ -668,6 +668,146 @@ def test_h1_features_do_not_depend_on_future_days():
     pd.testing.assert_series_equal(feats_full.iloc[1], feats_trunc.iloc[1])
 
 
+def _synthetic_daily_ohlcv(n=120, seed=11):
+    """Random-walk daily OHLCV frame for the volatility candidate-feature tests."""
+    dates = pd.date_range('2026-01-01', periods=n, freq='D')
+    rng = np.random.default_rng(seed)
+    close = pd.Series(1.10 + np.cumsum(rng.normal(0, 0.004, n)), index=dates)
+    return pd.DataFrame({
+        'open': close.values, 'high': close.values + 0.002,
+        'low': close.values - 0.002, 'close': close.values,
+        'tick_volume': np.full(n, 1000),
+    }, index=dates), close
+
+
+def test_volatility_candidate_rsi14_formula_and_no_lookahead():
+    """RSI_14 (volatility-model candidate ONLY) must be literally the H1
+    module's _rsi formula applied to the DAILY close with period=14, and a
+    trailing-window computation: truncating the future must not change the
+    past values."""
+    from src.volatility import add_volatility_candidate_features
+    from src.h1_features import _rsi
+
+    df, close = _synthetic_daily_ohlcv()
+    res = add_volatility_candidate_features(df)
+
+    expected = _rsi(close, 14)
+    pd.testing.assert_series_equal(res['RSI_14'], expected,
+                                   check_names=False)
+    assert res['RSI_14'].dropna().between(0.0, 100.0).all(), \
+        "RSI must live in [0, 100]."
+
+    # Past-only windows: dropping the future leaves earlier values untouched.
+    res_trunc = add_volatility_candidate_features(df.iloc[:80])
+    pd.testing.assert_series_equal(res['RSI_14'].iloc[:80], res_trunc['RSI_14'],
+                                   check_names=False)
+
+    # Flat window -> the same neutral-50 convention as the H1 rsi_24.
+    flat = df.copy()
+    flat[['open', 'high', 'low', 'close']] = 1.10
+    res_flat = add_volatility_candidate_features(flat)
+    assert (res_flat['RSI_14'].iloc[20:] == 50.0).all(), \
+        "A flat window must map to neutral RSI 50, mirroring _rsi's convention."
+
+
+def test_volatility_candidate_bb_percent_b_consistent_with_bb_width_no_lookahead():
+    """BB_percent_b must be built from the SAME 20-day rolling mean/std that
+    BB_width uses (upper/lower = mid ± 2σ) -- never a second, inconsistent
+    Bollinger computation -- and must be a strictly trailing-window feature."""
+    from src.volatility import add_volatility_candidate_features
+
+    df, close = _synthetic_daily_ohlcv()
+    res = add_volatility_candidate_features(df)
+
+    mid = close.rolling(20).mean()
+    std = close.rolling(20).std()
+    expected_pb = (close - (mid - 2 * std)) / (4 * std)
+    pd.testing.assert_series_equal(res['BB_percent_b'], expected_pb,
+                                   check_names=False)
+
+    # Consistency with the shipped BB_width on identical rows: BB_width is
+    # (upper - lower) / mid over the same components, so reconstructing the
+    # band range two ways must agree: BB_width * mid == 4σ (the %B denominator).
+    feats = compute_features(df)
+    valid = std.notna() & (std > 0)
+    np.testing.assert_allclose((feats['BB_width'] * mid)[valid], (4 * std)[valid],
+                               rtol=1e-12)
+
+    # Past-only windows: truncating the future leaves earlier values untouched.
+    res_trunc = add_volatility_candidate_features(df.iloc[:80])
+    pd.testing.assert_series_equal(res['BB_percent_b'].iloc[:80],
+                                   res_trunc['BB_percent_b'], check_names=False)
+
+    # Degenerate flat window (σ=0) -> neutral mid-band 0.5, not NaN/inf.
+    flat = df.copy()
+    flat[['open', 'high', 'low', 'close']] = 1.10
+    res_flat = add_volatility_candidate_features(flat)
+    assert (res_flat['BB_percent_b'].iloc[20:] == 0.5).all(), \
+        "A zero-width band must map to the neutral mid-band 0.5."
+
+
+def test_volatility_candidates_stay_out_of_direction_return_models():
+    """The Ch.11 diagnostic closed the direction/return capacity question:
+    RSI_14 / BB_percent_b are volatility-model candidates ONLY and must never
+    leak into FEATURE_COLUMNS (which both daily variants derive from). The
+    FOMC calendar trio is likewise candidate-only until a hypothesis test
+    clears its family bar."""
+    from src.volatility import CANDIDATE_VOL_FEATURES
+    from src.fomc_calendar import FOMC_FEATURE_COLUMNS
+
+    overlap = set(CANDIDATE_VOL_FEATURES + FOMC_FEATURE_COLUMNS) & set(FEATURE_COLUMNS)
+    assert not overlap, \
+        f"Candidate features must not enter the direction/return feature set: {overlap}"
+
+
+def test_fomc_calendar_join_resolves_known_dates_correctly():
+    """The FOMC calendar join must resolve is_fomc_day / days_to_next /
+    days_since_last exactly for hand-checkable dates. (No look-ahead test by
+    design: scheduled FOMC dates are public knowledge months-to-years ahead —
+    there is no publish-lag surface to guard, unlike the FRED series.)"""
+    from src.fomc_calendar import add_fomc_features
+
+    calendar = ['2026-01-28', '2026-03-18']
+    dates = pd.date_range('2026-01-26', '2026-01-31', freq='D')
+    df = pd.DataFrame({'close': np.ones(len(dates))}, index=dates)
+
+    res = add_fomc_features(df, fomc_dates=calendar)
+
+    # is_fomc_day: exactly the statement day.
+    assert res['is_fomc_day'].tolist() == [0, 0, 1, 0, 0, 0]
+    # Countdown to the next statement day (0 ON the day, then to March 18).
+    assert res.loc['2026-01-26', 'days_to_next_fomc'] == 2
+    assert res.loc['2026-01-28', 'days_to_next_fomc'] == 0
+    assert res.loc['2026-01-29', 'days_to_next_fomc'] == \
+        (pd.Timestamp('2026-03-18') - pd.Timestamp('2026-01-29')).days
+    # Distance since the last statement day (0 ON the day).
+    assert res.loc['2026-01-28', 'days_since_last_fomc'] == 0
+    assert res.loc['2026-01-31', 'days_since_last_fomc'] == 3
+    # Before the first calendar date there IS no last meeting -> NaN, so a
+    # truncated calendar can never silently masquerade as a long quiet period.
+    assert np.isnan(res.loc['2026-01-26', 'days_since_last_fomc'])
+
+
+def test_fomc_dates_csv_covers_known_statement_days():
+    """The committed reference CSV must contain hand-known statement days,
+    exclude the non-scheduled actions (surprise moves are not knowable in
+    advance -> including them would leak the future into the countdown), and
+    span the whole euro-era modeling window."""
+    from src.fomc_calendar import load_fomc_dates
+
+    dates = set(load_fomc_dates())
+    for known in ['1999-02-03', '2008-12-16', '2015-12-16', '2019-05-01',
+                  '2022-06-15', '2026-01-28']:
+        assert pd.Timestamp(known) in dates, f"missing known FOMC statement day {known}"
+    for excluded in ['2020-03-03', '2020-03-15', '2020-03-18', '2025-08-22']:
+        assert pd.Timestamp(excluded) not in dates, \
+            f"non-scheduled/cancelled action {excluded} must be excluded"
+    idx = pd.DatetimeIndex(sorted(dates))
+    assert idx.min() <= pd.Timestamp('1999-01-04') + pd.Timedelta(days=60)
+    assert idx.max() >= pd.Timestamp('2026-12-01')
+    assert (idx.dayofweek < 5).all(), "FOMC statement days are always weekdays"
+
+
 def test_h1_inference_sample_drops_forming_current_day():
     """Live H1 inference must ignore the still-forming current UTC session and
     settle on the previous completed day, mirroring drop_incomplete_bars."""
@@ -677,11 +817,91 @@ def test_h1_inference_sample_drops_forming_current_day():
     h1 = _synthetic_h1(closes, start='2026-03-02')
 
     # Mid-session on the last day (03-04) -> it is forming and must be excluded.
-    flat_row, seq, as_of = build_h1_inference_sample(h1=h1, now=pd.Timestamp('2026-03-04 11:00', tz='UTC'))
+    flat_row, seq, as_of, source = build_h1_inference_sample(h1=h1, now=pd.Timestamp('2026-03-04 11:00', tz='UTC'))
 
     assert as_of == pd.Timestamp('2026-03-03', tz='UTC'), "Must settle on the last COMPLETED day."
     assert flat_row.shape[0] == 1
     assert seq.shape == (1, HOURS_PER_DAY, len(SEQ_FEATURE_COLUMNS))
+    assert source == "preloaded", "A directly passed frame must be labeled as such, not as cache/live."
+
+
+def test_h1_inference_refreshes_stale_cache_live_first(tmp_path, monkeypatch):
+    """REGRESSION (frozen H1 'as of' bug): the old cache-first load served
+    whatever day the last retrain happened to leave in results/eurusd_h1.csv.
+    With a live source available, inference must serve the latest complete
+    trading session — never a stale cached one."""
+    from src import live_data
+    from src.h1_features import build_h1_inference_sample
+
+    # Cache ends Wed 2026-03-04; by Friday it is two sessions behind.
+    stale = _synthetic_h1([1.10, 1.11, 1.12], start='2026-03-02')
+    cache = tmp_path / 'eurusd_h1.csv'
+    stale.to_csv(cache)
+
+    # The live chain knows through Thu 2026-03-05 (the expected latest session).
+    fresh = _synthetic_h1([1.10, 1.11, 1.12, 1.13], start='2026-03-02')
+    monkeypatch.setattr(live_data, 'fetch_h1_market_data', lambda **kw: (fresh, 'MT5'))
+
+    now = pd.Timestamp('2026-03-06 09:00', tz='UTC')  # Friday morning
+    flat_row, seq, as_of, source = build_h1_inference_sample(cache_path=str(cache), now=now)
+
+    assert as_of == pd.Timestamp('2026-03-05', tz='UTC'), \
+        "Must serve the latest complete session from the live fetch, not the stale cache day."
+    assert source == "live"
+
+
+def test_h1_staleness_gate_skips_live_fetch_when_cache_current(tmp_path, monkeypatch):
+    """The staleness gate is mandatory: when the cache already holds the
+    expected latest complete session, a dashboard load must NOT hit the live
+    chain at all (no fetch-on-every-call regression)."""
+    from src import live_data
+    from src.h1_features import build_h1_inference_sample
+
+    current = _synthetic_h1([1.10, 1.11, 1.12, 1.13], start='2026-03-02')  # ends Thu 03-05
+    cache = tmp_path / 'eurusd_h1.csv'
+    current.to_csv(cache)
+
+    def _must_not_fetch(**kw):
+        raise AssertionError("Cache is current — the staleness gate must not trigger a live fetch.")
+    monkeypatch.setattr(live_data, 'fetch_h1_market_data', _must_not_fetch)
+
+    now = pd.Timestamp('2026-03-06 09:00', tz='UTC')  # Friday; expected latest = Thu 03-05
+    flat_row, seq, as_of, source = build_h1_inference_sample(cache_path=str(cache), now=now)
+
+    assert as_of == pd.Timestamp('2026-03-05', tz='UTC')
+    assert source == "cache"
+
+
+def test_h1_thin_live_fetch_backfills_history_from_cache(tmp_path, monkeypatch):
+    """A live pull rich in NEW bars but thin in history must be merged onto the
+    cached rows (dedup by index, live wins) and the merged frame rewritten to
+    the cache — a shallow fetch may never truncate the SMA504/RSI warm-up
+    history (the H1 analogue of the old daily SMA_200 warm-up bug)."""
+    from src import live_data
+    from src.h1_features import refresh_h1_frame
+
+    old = _synthetic_h1([1.10, 1.11, 1.12], start='2026-03-02')  # Mon..Wed history
+    cache = tmp_path / 'eurusd_h1.csv'
+    old.to_csv(cache)
+
+    thin_live = _synthetic_h1([1.13], start='2026-03-05')  # Thu only — no history
+
+    def _fake_fetch(**kw):
+        thin_live.to_csv(kw.get('cache_path'))  # mimic fetch's own live-only cache write
+        return thin_live, 'yfinance'
+    monkeypatch.setattr(live_data, 'fetch_h1_market_data', _fake_fetch)
+
+    now = pd.Timestamp('2026-03-06 09:00', tz='UTC')
+    frame, source = refresh_h1_frame(cache_path=str(cache), now=now)
+
+    assert source == "live+history_backfill"
+    assert frame.index.min() == old.index.min(), "Cached history rows must survive the merge."
+    assert frame.index.max() == thin_live.index.max(), "The fresh live bars must be present."
+    assert len(frame) == len(old) + len(thin_live)
+
+    # The cache on disk must now hold the MERGED frame, not the thin live-only write.
+    reread = pd.read_csv(cache, index_col=0, parse_dates=True)
+    assert len(reread) == len(frame), "Merged frame must be persisted back to the cache."
 
 
 def test_compute_h1_consensus_majority_and_agreement():

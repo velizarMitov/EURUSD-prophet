@@ -133,12 +133,17 @@ def _canonical_split(n: int, train_fraction: float, val_fraction: float) -> dict
     return {"train_end": train_end, "val_end": val_end, "n": n}
 
 
-def build_matrix(config: dict, base_dir: str = ""):
+def build_matrix(config: dict, base_dir: str = "", extra_feature_columns=None):
     """Engineer the full feature matrix once and return everything the ablation
     loop needs: the PCA-reduced frame, the canonical model input columns, the
     split boundaries, and the direction target. PCA is fit on the 70% train
     block only, so nothing the validation arbiter sees has leaked into the fit.
-    Offline-safe: `fetch_macro_features` falls back to the cached FRED CSVs."""
+    Offline-safe: `fetch_macro_features` falls back to the cached FRED CSVs.
+
+    `extra_feature_columns` appends candidate columns (currently the FOMC
+    calendar trio, src/fomc_calendar.py) to the model input set for an
+    ADDITION hypothesis test — the row set is identical with or without them,
+    so the comparison isolates the columns themselves."""
     def _p(rel):
         return os.path.join(base_dir, rel) if base_dir else rel
 
@@ -148,6 +153,14 @@ def build_matrix(config: dict, base_dir: str = ""):
     )
     feat = add_advanced_features(merge_macro_features(ohlcv.copy(), macro))
 
+    extra = list(extra_feature_columns or [])
+    if extra:
+        from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
+        if any(c in FOMC_FEATURE_COLUMNS for c in extra):
+            feat = add_fomc_features(feat, base_dir=base_dir)
+        assert not feat[extra].isna().any().any(), \
+            "extra candidate columns must be fully defined on the modeled rows"
+
     split = _canonical_split(
         len(feat), config['split']['train_fraction'], config['split']['val_fraction']
     )
@@ -156,7 +169,8 @@ def build_matrix(config: dict, base_dir: str = ""):
         variance_threshold=config['pca']['variance_threshold'],
     )
     red = apply_lag_pca(feat, lag_scaler, lag_pca, lag_columns=LAG_COLUMNS)
-    cols_full = model_input_columns(lag_pca, base_columns=FEATURE_COLUMNS, lag_columns=LAG_COLUMNS)
+    cols_full = model_input_columns(lag_pca, base_columns=FEATURE_COLUMNS + extra,
+                                    lag_columns=LAG_COLUMNS)
     return red, cols_full, split
 
 
@@ -191,20 +205,26 @@ def _mcnemar_exact(correct_wo, correct_w):
 
 
 def evaluate_feature(feature, red, cols_full, split, random_state=42,
-                     n_boot=BOOTSTRAP_RESAMPLES, alpha=0.05, prob_w=None, pred_w=None, y_val=None):
+                     n_boot=BOOTSTRAP_RESAMPLES, alpha=0.05, prob_w=None, pred_w=None,
+                     y_val=None, feature_name=None):
     """Ablate one feature on the VALIDATION slice with bootstrap CI + McNemar.
 
     WITH = full model; WITHOUT = drop exactly `feature` (rows held identical, so
-    the delta isolates that feature). Returns a result dict; `alpha` is the
-    significance bar the verdict is judged against (a flat 0.05 here in Step 1;
-    Step 2 passes a Bonferroni-corrected value). The full-model predictions can
-    be passed in (`prob_w`/`pred_w`/`y_val`) to avoid refitting it per feature.
+    the delta isolates that feature). `feature` may be a single column name or
+    a LIST of columns tested as one bundled hypothesis (e.g. the FOMC calendar
+    trio — several views of one underlying fact spend one Bonferroni slot);
+    `feature_name` labels a bundle in the result/log. Returns a result dict;
+    `alpha` is the significance bar the verdict is judged against (a flat 0.05
+    here in Step 1; Step 2 passes a Bonferroni-corrected value). The full-model
+    predictions can be passed in (`prob_w`/`pred_w`/`y_val`) to avoid refitting
+    it per feature.
     """
+    drop = [feature] if isinstance(feature, str) else list(feature)
     rng = np.random.default_rng(random_state)
     if prob_w is None:
         prob_w, pred_w, y_val = _fit_predict_val(red, cols_full, split, random_state)
 
-    cols_wo = [c for c in cols_full if c != feature]
+    cols_wo = [c for c in cols_full if c not in set(drop)]
     prob_wo, pred_wo, _ = _fit_predict_val(red, cols_wo, split, random_state)
 
     correct_w = (pred_w == y_val)
@@ -236,7 +256,7 @@ def evaluate_feature(feature, red, cols_full, split, random_state=42,
         verdict = "KEEP-provisional (not distinguishable from noise at the current bar)"
 
     return {
-        "feature": feature,
+        "feature": feature_name or (feature if isinstance(feature, str) else '+'.join(feature)),
         "arbiter": "validation[70:80]",
         "n_val": n_val,
         "point_delta_acc": round(point_dacc, 4),
@@ -312,7 +332,71 @@ def run(features=None, config_path='config.json', base_dir='', out_csv=VALIDATIO
     return df
 
 
+def run_addition_test(name, columns, config_path='config.json', base_dir='',
+                      register=True, random_state=None,
+                      out_csv='results/feature_addition_validation.csv'):
+    """Test ADDING a bundled column block to the current full feature set as
+    ONE hypothesis (one Bonferroni slot for the whole bundle — its columns are
+    several views of one underlying fact, e.g. the FOMC calendar trio).
+
+    WITH = FEATURE_COLUMNS + bundle, WITHOUT = the current full set, identical
+    rows, judged on the validation arbiter with the same paired bootstrap +
+    exact McNemar used for the macro features. The family bar counts every
+    hypothesis in `feature_hypothesis_log.csv` at RUN TIME plus this one."""
+    with open(os.path.join(base_dir, config_path) if base_dir else config_path) as f:
+        config = json.load(f)
+    random_state = config['random_state'] if random_state is None else random_state
+
+    log = load_hypothesis_log(base_dir)
+    family_size = len(set(log['feature']) | {name})
+    alpha = bonferroni_alpha(family_size)
+
+    red, cols_full, split = build_matrix(config, base_dir=base_dir,
+                                         extra_feature_columns=list(columns))
+    prob_w, pred_w, y_val = _fit_predict_val(red, cols_full, split, random_state)
+
+    print("=" * 78)
+    print(f"FEATURE ADDITION TEST — {name} {list(columns)} as ONE bundled hypothesis")
+    print(f"  arbiter = VALIDATION slice [70%:80%] (test block NOT touched)")
+    print(f"  hypotheses tested to date: {len(set(log['feature']))}  ->  family size "
+          f"{family_size}  ->  BONFERRONI BAR alpha = {FAMILY_ALPHA} / {family_size} "
+          f"= {alpha:.4g}")
+    print("=" * 78)
+
+    res = evaluate_feature(list(columns), red, cols_full, split,
+                           random_state=random_state, alpha=alpha,
+                           prob_w=prob_w, pred_w=pred_w, y_val=y_val,
+                           feature_name=name)
+    # ADD-test verdict wording: an addition that fails the bar is DROPPED
+    # outright (never "KEEP-provisional" — that status is for features that
+    # already shipped before the validation-arbiter methodology existed).
+    if res['verdict'].startswith('KEEP ('):
+        res['verdict'] = (f'KEEP — bundle clears the corrected bar '
+                          f'(CI excludes 0 and McNemar p<{alpha:.4g})')
+    else:
+        res['verdict'] = ('DROP — addition indistinguishable from noise at the '
+                          'corrected bar (do not add)')
+    print(f"  point delta acc={res['point_delta_acc']:+.4f}  auc={res['point_delta_auc']:+.4f}")
+    print(f"  95% CI d_acc=[{res['ci95_dacc_low']:+.4f}, {res['ci95_dacc_high']:+.4f}]  "
+          f"frac(d_acc>0)={res['frac_dacc_positive']:.3f}")
+    print(f"  95% CI d_auc=[{res['ci95_dauc_low']:+.4f}, {res['ci95_dauc_high']:+.4f}]")
+    print(f"  McNemar b={res['mcnemar_b_0to1']} c={res['mcnemar_c_1to0']}  p={res['mcnemar_p']:.4f}")
+    print(f"  VERDICT: {res['verdict']}")
+
+    if register:
+        register_hypothesis(res, base_dir=base_dir,
+                            notes=f'ADD-test of bundled block {",".join(columns)} '
+                                  f'(one hypothesis for the whole bundle)')
+    out_path = os.path.join(base_dir, out_csv) if base_dir else out_csv
+    pd.DataFrame([res]).to_csv(out_path, index=False)
+    print(f"\nSaved: {out_path}")
+    return res
+
+
 if __name__ == "__main__":
     import sys
-    feats = sys.argv[1:] or None
-    run(features=feats)
+    if sys.argv[1:2] == ['fomc']:
+        from src.fomc_calendar import FOMC_FEATURE_COLUMNS
+        run_addition_test('fomc_calendar_block', FOMC_FEATURE_COLUMNS)
+    else:
+        run(features=sys.argv[1:] or None)

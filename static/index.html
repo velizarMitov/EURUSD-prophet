@@ -79,6 +79,12 @@
             history_fallback: 'Historical fallback (no live source reachable)',
         };
 
+        const H1_SOURCE_LABELS = {
+            live: 'Live H1 fetch',
+            'live+history_backfill': 'Live H1 fetch + cached history backfill',
+            cache: 'H1 cache (already current, or no live source reachable)',
+        };
+
         const MACRO_SOURCE_LABELS = {
             FRED_api: 'Live FRED API',
             FRED_public: 'Live FRED public endpoint',
@@ -277,9 +283,11 @@
                 ? 'Full-panel averaged return (context only — no majority behind it)'
                 : 'Majority-side averaged return';
 
+            const h1SourceLabel = H1_SOURCE_LABELS[h1.data_source] || h1.data_source || '';
             let html = `<div class="card" style="background:#eef2f7; border-left-color:#34495e;">
                 <h3>Auxiliary Intraday Ensemble (H1 &rarr; Daily) &mdash; Data 'As Of' ${h1.as_of_date}</h3>
                 <div class="sub-value">Four next-day return regressors built from the last complete session's 24 hourly bars.</div>
+                ${h1SourceLabel ? `<div class="meta">${h1SourceLabel}</div>` : ''}
             </div>`;
             html += `<div class="card ${cls}" style="border-left-width:6px;">
                 <h3>H1 Ensemble Consensus</h3>

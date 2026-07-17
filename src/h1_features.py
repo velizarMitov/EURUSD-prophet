@@ -50,10 +50,29 @@ SEQ_FEATURE_COLUMNS = ["log_return", "hl_range", "co_change", "volume", "rsi_24"
 DEFAULT_H1_CACHE = "results/eurusd_h1.csv"
 
 
+def _normalize_h1(df: pd.DataFrame) -> pd.DataFrame:
+    """UTC-localise, sort, and reduce to the canonical OHLCV float columns."""
+    df = df.copy()
+    df.index = pd.to_datetime(df.index)
+    df.index = df.index.tz_localize('UTC') if df.index.tz is None else df.index.tz_convert('UTC')
+    df = df.sort_index()
+    return df[['open', 'high', 'low', 'close', 'tick_volume']].astype(float)
+
+
+def _to_utc(now=None) -> pd.Timestamp:
+    now = pd.Timestamp.now(tz='UTC') if now is None else pd.Timestamp(now)
+    return now.tz_localize('UTC') if now.tzinfo is None else now.tz_convert('UTC')
+
+
 def load_h1_frame(cache_path: str = DEFAULT_H1_CACHE, allow_fetch: bool = True) -> pd.DataFrame:
     """
     Load H1 OHLCV as a UTC-indexed frame. Reads the cache CSV if present;
     otherwise (``allow_fetch``) pulls a fresh copy via ``src.live_data``.
+
+    Cache-first: suitable for TRAINING, where ``_train_pipeline.py`` explicitly
+    refreshes the cache beforehand. Live inference must go through
+    ``refresh_h1_frame`` instead — reading the cache blindly here is exactly
+    what froze the served H1 'as of' date at the last retrain.
     """
     df = None
     if cache_path and os.path.exists(cache_path):
@@ -65,10 +84,90 @@ def load_h1_frame(cache_path: str = DEFAULT_H1_CACHE, allow_fetch: bool = True) 
     if df is None or len(df) == 0:
         raise RuntimeError("No H1 data available (cache missing and live fetch failed).")
 
-    df.index = pd.to_datetime(df.index)
-    df.index = df.index.tz_localize('UTC') if df.index.tz is None else df.index.tz_convert('UTC')
-    df = df.sort_index()
-    return df[['open', 'high', 'low', 'close', 'tick_volume']].astype(float)
+    return _normalize_h1(df)
+
+
+def last_complete_session(h1: pd.DataFrame, now: pd.Timestamp):
+    """Latest UTC day strictly before ``now``'s date holding >= ``MIN_HOURS``
+    bars — the same completeness rule ``aggregate_daily_features`` applies.
+    ``None`` when no such day exists."""
+    counts = h1.groupby(h1.index.normalize()).size()
+    counts = counts[(counts.index < now.normalize()) & (counts >= MIN_HOURS)]
+    return counts.index[-1] if len(counts) else None
+
+
+def expected_latest_session(now: pd.Timestamp) -> pd.Timestamp:
+    """Most recent weekday (Mon–Fri) strictly before ``now``, at UTC midnight.
+
+    FX prints no Saturday H1 bars and only a thin (< ``MIN_HOURS``) late-Sunday
+    open, so this is the newest session an up-to-date H1 cache can contain
+    COMPLETE. A market holiday can make this date unattainable — the gate then
+    errs toward a redundant live fetch, never toward serving stale data.
+    """
+    day = now.normalize() - pd.Timedelta(days=1)
+    while day.dayofweek >= 5:  # Sat=5 / Sun=6
+        day -= pd.Timedelta(days=1)
+    return day
+
+
+def refresh_h1_frame(cache_path: str = DEFAULT_H1_CACHE, now=None):
+    """
+    Staleness-gated, live-first H1 load for INFERENCE.
+
+    Gate first: if the cache's last COMPLETE session already is the expected
+    latest FX session, the cache is served untouched — a dashboard load must
+    not hit MT5/yfinance when there is nothing newer to gain. Only a genuinely
+    behind (or missing/unreadable) cache triggers ``fetch_h1_market_data``
+    (MT5 -> yfinance chain, which self-writes the cache).
+
+    A live pull rich in new bars but thin in history would silently truncate
+    the SMA504/RSI trailing warm-ups (the H1 analogue of the old daily SMA_200
+    bug), so cached rows absent from the live frame are concatenated back on
+    (dedup by index, live wins) and the merged frame is rewritten to the cache.
+    A fully failed live chain falls back to the stale cache — degraded freshness
+    beats no H1 block at all.
+
+    Returns ``(frame, source)`` with source in ``{"cache", "live",
+    "live+history_backfill"}``.
+    """
+    now = _to_utc(now)
+
+    cached = None
+    if cache_path and os.path.exists(cache_path):
+        try:
+            cached = _normalize_h1(pd.read_csv(cache_path, index_col=0, parse_dates=True))
+        except Exception:
+            cached = None  # unreadable cache -> treat as absent, go live
+    if cached is not None and len(cached) > 0:
+        last = last_complete_session(cached, now)
+        if last is not None and last >= expected_latest_session(now):
+            return cached, "cache"
+
+    from src.live_data import fetch_h1_market_data
+    live, live_source = fetch_h1_market_data(cache_path=cache_path)
+
+    if live is None or len(live) == 0 or live_source == "cache":
+        # Live chain exhausted (fetch may itself have fallen back to the same
+        # cache file). Serve the best copy we have rather than hard-failing.
+        fallback = live if live is not None and len(live) > 0 else cached
+        if fallback is None:
+            raise RuntimeError("No H1 data available (live fetch failed and no cache).")
+        return _normalize_h1(fallback), "cache"
+
+    live = _normalize_h1(live)
+    if cached is not None and len(cached) > 0:
+        merged = pd.concat([cached, live])
+        merged = merged[~merged.index.duplicated(keep='last')].sort_index()
+        if len(merged) > len(live):
+            # fetch_h1_market_data already wrote the live-only frame to the
+            # cache; persist the merged one so the warm-up history survives
+            # for the next reader.
+            try:
+                merged.to_csv(cache_path)
+            except OSError:
+                pass
+            return merged, "live+history_backfill"
+    return live, "live"
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
@@ -205,17 +304,23 @@ def build_h1_inference_sample(cache_path: str = DEFAULT_H1_CACHE, now=None, h1: 
     The current (still-forming) UTC day is dropped so a live forecast never
     bases itself on a half-formed session -- the intraday analogue of
     ``live_data.drop_incomplete_bars``. ``h1`` may be passed directly (tests);
-    otherwise it is loaded from ``cache_path``.
+    otherwise it is loaded live-first through ``refresh_h1_frame`` (staleness
+    gate + MT5/yfinance chain + history backfill), so the served day tracks the
+    market instead of freezing at the last retrain's cache write.
 
-    Returns ``(flat_row_df, seq_tensor, as_of_date)`` where ``flat_row_df`` is a
-    single-row DataFrame in ``FLAT_FEATURE_COLUMNS`` order and ``seq_tensor`` has
-    shape ``(1, HOURS_PER_DAY, len(SEQ_FEATURE_COLUMNS))``.
+    Returns ``(flat_row_df, seq_tensor, as_of_date, data_source)`` where
+    ``flat_row_df`` is a single-row DataFrame in ``FLAT_FEATURE_COLUMNS`` order,
+    ``seq_tensor`` has shape ``(1, HOURS_PER_DAY, len(SEQ_FEATURE_COLUMNS))``,
+    and ``data_source`` is ``refresh_h1_frame``'s label (``"preloaded"`` when
+    ``h1`` was passed in directly).
     """
-    h1 = load_h1_frame(cache_path) if h1 is None else h1
+    now = _to_utc(now)
+    if h1 is None:
+        h1, data_source = refresh_h1_frame(cache_path, now=now)
+    else:
+        data_source = "preloaded"
     feats, _ = aggregate_daily_features(h1)
 
-    now = pd.Timestamp.now(tz='UTC') if now is None else pd.Timestamp(now)
-    now = now.tz_localize('UTC') if now.tzinfo is None else now.tz_convert('UTC')
     today = now.normalize()
     feats = feats[feats.index < today]  # drop the still-forming current session
     if len(feats) == 0:
@@ -224,4 +329,4 @@ def build_h1_inference_sample(cache_path: str = DEFAULT_H1_CACHE, now=None, h1: 
     as_of = feats.index[-1]
     flat_row = feats.iloc[[-1]]
     seq = build_lstm_tensor(h1, feats.index[[-1]])
-    return flat_row, seq, as_of
+    return flat_row, seq, as_of, data_source

@@ -375,6 +375,157 @@ arbiter only, mandatory GARCH baseline before any NN, its own hypothesis family.
       direction-free magnitude framing. `test_smoke` asserts the 10 new
       artifacts; ARCHITECTURE_DOCS.md §3.5. 52 tests pass.
 
+## Backlog — Volatility candidate input features (RSI_14 / BB %B, added 2026-07-17)
+
+Owner-directed re-opening of the volatility hypothesis family (previously
+marked spent on the validation arbiter) under the standard Bonferroni
+widening: two volatility-regime oscillators, pre-declared up front and tested
+ONE AT A TIME against the validated 5-seed ensemble, each judged at the
+final-family bar `0.05/5 = 0.01` (99% CIs) — stricter than the 0.0167 the
+original ship gate cleared. Runner: `python -m src.volatility candidates`
+(`run_candidate_feature_tests`); results
+`results/volatility_candidate_features.csv`; both registered in
+`results/volatility_hypothesis_log.csv` (hypotheses 4–5).
+
+- [x] Step 1 — Features constructed with no look-ahead, volatility-only:
+      `RSI_14` literally reuses `src/h1_features.py::_rsi` (period=14, daily
+      close); `BB_percent_b = (close − lower) / (upper − lower)` from the
+      SAME 20-day rolling mean/σ that `BB_width` uses (σ=0 → neutral 0.5,
+      mirroring `_rsi`'s neutral-50). Computed on full history before the
+      euro-era dropna (warm-ups never reach modeled rows); NEVER added to
+      `FEATURE_COLUMNS` (direction/return capacity question is closed per the
+      Ch.11 diagnostic — a unit test enforces the separation). 3 new tests:
+      formula consistency, future-truncation invariance, family separation.
+- [x] Step 2 — Both hypotheses tested vs the SAME freshly trained same-seeds
+      base ensemble (never vs each other), paired bootstrap 2000 resamples on
+      identical validation rows, test block never indexed. Base: val MAE
+      0.184755% / R² +0.1445 (GARCH context 0.203794% / +0.0094).
+
+      | hypothesis | Δ MAE (base−cand) | ΔMAE CI99 | ΔR² CI99 | verdict |
+      |---|---|---|---|---|
+      | #4 +RSI_14 | −0.0010% | [−0.00222, +0.00013] | [−0.0216, +0.0016] | **DROP** |
+      | #5 +BB_percent_b | −0.0015% | [−0.00254, −0.00036] | [−0.0121, +0.0069] | **DROP** |
+
+      Neither CI excludes 0 in the feature's favor; BB %B's ΔMAE CI is
+      entirely negative — CI-confirmed HARM (frac(ΔMAE>0)=0.000): the extra
+      input dilutes the validated ensemble. Textbook illustration of why the
+      Bonferroni + validation-arbiter discipline exists: two "obvious"
+      volatility-regime oscillators, honestly tested, add nothing the price
+      features don't already carry.
+- [x] Step 3 — Null results documented (this entry + hypothesis log +
+      ARCHITECTURE_DOCS §3.5), exactly like the macro-feature nulls — not
+      discarded quietly. Production `models/volatility/` UNTOUCHED (no
+      retrain, no UI change — the KEEP branch never triggered); the family
+      count is now 5, so any future volatility hypothesis faces
+      `alpha = 0.05/6 = 0.0083`. Full suite green (58 tests).
+
+## Backlog — FOMC meeting-day calendar features (added 2026-07-17, tested BOTH families)
+
+Genuinely new information (a scheduled-event calendar — nothing like it tried
+before in either family): `is_fomc_day` / `days_to_next_fomc` /
+`days_since_last_fomc`, bundled as ONE hypothesis per family (three views of
+the same calendar fact — they never eat three Bonferroni slots).
+
+- [x] Step 1 — Calendar built from real sources, verified live ("probe before
+      you build"). **ALFRED release-dates for rid=101 REJECTED by the probe**:
+      it returns ~3.7k near-DAILY dates — per its own header, "dates when any
+      series from this release was revised" (data-revision timestamps), not
+      meeting days. Replacement (same official domain): fomccalendars.htm
+      (2021–2027) + fomchistorical{1998..2020}.htm, parsed from the meeting
+      headings with a statement-link cross-check that fails loudly on parser
+      drift. `results/fomc_dates.csv`: **240 statement days (1998-02-04 →
+      2027-12-08)**, statement day = LAST day of each SCHEDULED meeting.
+      Unscheduled/notation-vote/cancelled actions excluded BY DESIGN — a
+      surprise action was not knowable in advance, so a countdown including it
+      would inject future knowledge into pre-announcement rows (the 2020-03
+      emergency cuts are the canonical case). Small static reference file
+      (~8 dates/yr), NOT a live-fetch feed; **needs a manual annual refresh**
+      (`python -m src.fomc_calendar`) when the Fed publishes the next year.
+      Scheduled dates are public years ahead → no publish-lag/look-ahead
+      surface (unlike COT/FRED); correctness tests cover the join geometry
+      and known/excluded dates (no look-ahead test — nothing to guard).
+- [x] Step 2 — ONE hypothesis per family at each family's CURRENT bar
+      (counts read from the logs at run time):
+
+      | family | hypothesis # | bar | result | evidence |
+      |---|---|---|---|---|
+      | volatility | #6 | 0.05/6 = 0.0083 | **DROP** | ΔMAE = −0.0003% CI99.2 [−0.0024, +0.0016]; ΔR² [−0.0207, +0.0174]; frac(ΔMAE>0)=0.344 |
+      | direction/return | #5 | 0.05/5 = 0.01 | **DROP** | Δacc = −0.0292, 95% CI [−0.0549, −0.0035] (entirely harmful); McNemar b=46/c=71, p=0.0261 > bar |
+
+      Volatility: same 5-seed (42–46) ensemble methodology vs a same-seeds
+      base (val MAE 0.183148% / R² +0.1545), paired bootstrap 2000 resamples,
+      validation [70:80] only (`run_candidate_feature_tests`, bundle-aware).
+      Direction/return: ADD-test via `src/ablation.py::run_addition_test`
+      (paired bootstrap + exact McNemar, same as the macro features). The
+      direction result matches the tempered expectation set by the Ch.11
+      diagnostic — and the point estimate is actively negative, consistent
+      with FOMC being a volatility event, not a directional-bias event…
+      except the volatility family ALSO shows nothing: the price features
+      (volatility_20/ATR/BB_width) apparently already carry the FOMC-day
+      variance the LSTM can use.
+- [x] Step 3 — Both nulls registered (`results/volatility_hypothesis_log.csv`
+      #6, `results/feature_hypothesis_log.csv` #5) and documented here +
+      ARCHITECTURE_DOCS (§3.5 and the Production-Methodology bar, now
+      0.05/5=0.01 for direction/return; CLAUDE.md refreshed). No retrain, no
+      UI change — the KEEP branch never triggered in either family. Next
+      bars: volatility 0.05/7 ≈ 0.0071, direction/return 0.05/6 ≈ 0.0083.
+      Full suite green (60 tests).
+
+## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
+
+Settles the repeatedly-flagged question: could more capacity (epochs/layers)
+help the direction/return GBM + LSTM, or are they at a Bayes-error floor?
+Read-only pass — no architecture/config change. Script reconstructed the exact
+training matrix from the persisted artifacts (cache-only macro, n=8560 matching
+the 2026-07-10 retrain); recomputed train direction metrics match
+`results/retrain.log` digit-for-digit (with_macro test metrics differ in the
+3rd decimal only because FRED cache revisions since the retrain touched a few
+test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
+
+- [x] Step 1 — Train-vs-test metrics (each model's OWN train rows: GBM
+      `[0:80%]`, LSTM `[0:70%]`; identical held-out test `[80%:100%]`):
+
+      | model | variant    | AUC train | AUC test | gap    | Acc train | Acc test | R² train | R² test |
+      |-------|------------|-----------|----------|--------|-----------|----------|----------|---------|
+      | GBM   | baseline   | 0.6157    | 0.5220   | +0.094 | 0.5796    | 0.5093   | +0.023   | −0.002  |
+      | GBM   | with_macro | 0.6166    | 0.5218   | +0.095 | 0.5897    | 0.5035   | +0.025   | −0.002  |
+      | LSTM  | baseline   | 0.5575    | 0.5046   | +0.053 | 0.5343    | 0.5154   | +0.024   | −0.007  |
+      | LSTM  | with_macro | 0.5697    | 0.5302   | +0.040 | 0.5484    | 0.5118   | +0.031   | −0.032  |
+
+      Return-head caveat: train MAE (0.39–0.41%) > test MAE (0.30%) is a
+      target-dispersion artifact (the 1999–2019 train era contains 2008 etc.);
+      R² is the cross-split-comparable number, and it says: ~2–3% of variance
+      fit in-sample, ≤ 0 out-of-sample (worse than predicting the mean).
+- [x] Step 2 — Ch.11 classification: **mild overfit above a Bayes floor at
+      chance**, for all four models. Train is modestly above chance (the models
+      already have enough capacity to memorize +0.04–0.09 AUC of noise), test
+      is at chance — the branch whose remedy is MORE regularization, never
+      more capacity. And the regularizers are already maxed in the useful
+      direction: all 4 GBM grid searches (2 heads × 2 variants) picked the
+      MINIMUM-capacity corner of the grid (`n_estimators=100, max_depth=3,
+      lr=0.01`) — larger capacity was offered and lost in TimeSeriesSplit CV.
+- [x] Step 2b — Software-defect rule-out ("fit a tiny dataset"): a fresh LSTM
+      with the exact production architecture/loss memorized 5 training rows —
+      total loss 0.796 → 0.017 (46×), direction 5/5 (probs saturated
+      0.006/0.984), return MAE 0.037% vs target scale ~0.37%. PASS: the
+      training loop/loss/scaling can learn when signal exists; flat test
+      metrics are a property of the data, not a bug.
+- [x] Step 3 — "More epochs" is mechanically moot: early stopping
+      (patience=10, restore_best_weights) fired at epoch 14 (baseline) / 13
+      (with_macro) of the 100-epoch cap — best validation weights came from
+      epoch ~4/~3. The models already stop themselves ~86 epochs before the
+      cap; raising it changes nothing.
+- [x] **Conclusion — do NOT scale epochs/layers on the direction/return
+      models.** Two independent locks: (1) extra capacity was already offered
+      and rejected (GBM CV chose the grid floor 4/4; LSTM quits after ~4
+      useful epochs); (2) what capacity does fit on train (+0.05–0.09 AUC,
+      +0.02–0.03 R²) generalizes to exactly nothing (test AUC ≈ 0.50–0.53,
+      R² ≤ 0), with Step 2b ruling out a defect. Only genuinely new
+      information can move test performance — different features (the forward
+      paper-trading arbiter) or a different target (exactly how the
+      volatility family found its validated edge). Documented in
+      ARCHITECTURE_DOCS.md §4.2.1.
+
 ## Bug fixes
 
 - [x] **H1 consensus 2-2 tie bug (live dashboard report, 2026-07-07).** A 2-2
@@ -402,6 +553,33 @@ arbiter only, mandatory GARCH baseline before any NN, its own hypothesis family.
       the `multitask_sign_agreement` metric; whether the consensus should
       reconcile it (e.g. defer the displayed return to the direction-consistent
       head) is a separate decision worth its own pass.
+
+- [x] **H1 frozen 'as of' date — stale cache served on every prediction (live
+      dashboard report, 2026-07-10).** The dashboard showed "DATA 'AS OF'
+      2026-07-07" on 2026-07-10: the H1 panel had been re-serving the same
+      pre-retrain session for three days. Root cause: `load_h1_frame` was
+      cache-first — the live fetch sat in an `elif` that was unreachable
+      whenever `results/eurusd_h1.csv` existed, so the only thing that ever
+      refreshed the H1 stream was the full retrain (`_train_pipeline.py`),
+      which happened to rewrite the cache as a side effect. Fix in
+      `src/h1_features.py::refresh_h1_frame`, now the inference load path:
+      (1) live-first with the cache as fallback; (2) a mandatory staleness
+      gate — the live chain is hit only when the cache's last COMPLETE session
+      (same `MIN_HOURS>=12` rule as `aggregate_daily_features`) is behind the
+      expected latest weekday session, so dashboard loads don't refetch when
+      current; (3) thin live pulls are merged onto cached history (dedup by
+      index, live wins) and the merged frame is rewritten to the cache, so the
+      SMA504/RSI trailing warm-ups can never be silently truncated (the H1
+      analogue of the old daily SMA_200 warm-up bug, §4.5.1); (4) the response
+      `h1` block now carries `data_source` ("live" / "cache" /
+      "live+history_backfill"), surfaced in the UI panel — same transparency
+      convention as the daily `data_source` and `macro_source`. Training keeps
+      cache-first `load_h1_frame` (the pipeline refreshes explicitly).
+      Regression tests: `test_h1_inference_refreshes_stale_cache_live_first`,
+      `test_h1_staleness_gate_skips_live_fetch_when_cache_current`,
+      `test_h1_thin_live_fetch_backfills_history_from_cache`. 55 tests pass;
+      live `/api/predict` end-to-end confirmed the served H1 day advanced
+      2026-07-07 → 2026-07-09 (the correct latest complete session).
 
 ## Working rules
 

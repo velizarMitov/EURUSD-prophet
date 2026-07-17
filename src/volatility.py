@@ -55,6 +55,41 @@ from src.features import (
     TARGET_RETURN_COLUMN, TARGET_DIRECTION_COLUMN,
     fit_lag_pca, apply_lag_pca, model_input_columns,
 )
+from src.h1_features import _rsi
+from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
+
+# Candidate INPUT features for the volatility model ONLY (hypotheses 4+ of this
+# family). Deliberately NOT added to src/features.py::FEATURE_COLUMNS — the
+# direction/return capacity question is closed (Ch.11 train-vs-test diagnostic,
+# ARCHITECTURE_DOCS.md §4.2.1); these are volatility-regime oscillators tested
+# strictly against the validated 5-seed ensemble.
+CANDIDATE_VOL_FEATURES = ['RSI_14', 'BB_percent_b']
+
+
+def add_volatility_candidate_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute the candidate volatility input features on the FULL history frame
+    (call BEFORE add_advanced_features, like the macro merge) so the rolling
+    warm-ups fall in the pre-euro era that dropna truncates anyway — the modeled
+    euro-era rows are then fully defined, exactly like SMA_200/BB_width.
+
+    * RSI_14 — the H1 module's exact `_rsi` formula (src/h1_features.py),
+      applied to the DAILY close with the conventional 14-day window. Trailing
+      window only -> the same no-look-ahead guarantee already proven for rsi_24.
+    * BB_percent_b — %B = (close - lower) / (upper - lower) over the SAME
+      20-day rolling mean/std that BB_width already uses (src/features.py:
+      upper/lower = mid ± 2σ, so the denominator 4σ·mid⁻¹ IS BB_width — %B adds
+      WHERE price sits inside the bands, which BB_width does not carry). A
+      degenerate flat window (σ=0) maps to the neutral mid-band 0.5, mirroring
+      _rsi's neutral-50 convention.
+    """
+    data = df.copy()
+    data['RSI_14'] = _rsi(data['close'], 14)
+    bb_mid = data['close'].rolling(20).mean()
+    bb_std = data['close'].rolling(20).std()
+    lower = bb_mid - 2 * bb_std
+    pct_b = (data['close'] - lower) / (4 * bb_std)
+    data['BB_percent_b'] = pct_b.mask(bb_std == 0, 0.5)
+    return data
 
 VALIDATION_CSV = 'results/volatility_validation.csv'
 
@@ -88,10 +123,12 @@ def bonferroni_alpha(family_size, family_alpha=FAMILY_ALPHA):
     return family_alpha / max(1, family_size)
 
 
-def register_volatility_hypothesis(result, base_dir='', notes=''):
+def register_volatility_hypothesis(result, base_dir='', notes='', alpha_override=None):
     """Append a newly tested volatility hypothesis (idempotent by name). The
     recorded bar reflects the family size AFTER the addition, exactly like
-    src/ablation.py::register_hypothesis."""
+    src/ablation.py::register_hypothesis. `alpha_override` records a stricter
+    pre-declared bar instead (e.g. when several hypotheses are declared up
+    front in one pass, every one is judged at the FINAL family size's bar)."""
     log = load_volatility_hypothesis_log(base_dir)
     if result['hypothesis'] in set(log['hypothesis']):
         return log
@@ -103,7 +140,8 @@ def register_volatility_hypothesis(result, base_dir='', notes=''):
         'ci_dmae_low': result['ci_dmae_low'], 'ci_dmae_high': result['ci_dmae_high'],
         'point_delta_r2': result['point_delta_r2'],
         'ci_dr2_low': result['ci_dr2_low'], 'ci_dr2_high': result['ci_dr2_high'],
-        'alpha_bonferroni': round(bonferroni_alpha(n), 4),
+        'alpha_bonferroni': round(bonferroni_alpha(n) if alpha_override is None
+                                  else alpha_override, 4),
         'cleared_bar': result['cleared_bar'],
         'verdict': result['verdict'], 'notes': notes,
     }
@@ -113,7 +151,7 @@ def register_volatility_hypothesis(result, base_dir='', notes=''):
     return out
 
 
-def build_volatility_matrix(config, base_dir=''):
+def build_volatility_matrix(config, base_dir='', extra_feature_columns=None):
     """Engineered frame + price-only post-PCA model matrix + split boundaries.
 
     The macro merge is performed ONLY to reproduce the euro-era row truncation
@@ -121,12 +159,25 @@ def build_volatility_matrix(config, base_dir=''):
     model consumes PRICE_FEATURE_COLUMNS, so no macro column ever reaches it.
     PCA and the scaler are fit on [0:70%] only — the validation arbiter block
     stays held out of every fit, as in src/ablation.py.
+
+    `extra_feature_columns` (subset of CANDIDATE_VOL_FEATURES) appends candidate
+    input columns to the model matrix for hypothesis testing — the row set is
+    identical with or without them (they are never in the dropna subset), so a
+    base-vs-challenger comparison isolates the feature itself.
     """
     ohlcv = load_history(_p(base_dir, config['data']['history_csv_path']))
     macro, _ = fetch_macro_features(
         ohlcv.index.min(), ohlcv.index.max(), config['macro'], base_dir=base_dir
     )
-    feat = add_advanced_features(merge_macro_features(ohlcv.copy(), macro))
+    merged = add_volatility_candidate_features(merge_macro_features(ohlcv.copy(), macro))
+    feat = add_advanced_features(merged)
+
+    extra = list(extra_feature_columns or [])
+    if any(c in FOMC_FEATURE_COLUMNS for c in extra):
+        # Pure calendar-geometry join (no windows) — safe post-dropna.
+        feat = add_fomc_features(feat, base_dir=base_dir)
+    assert not feat[CANDIDATE_VOL_FEATURES + extra].isna().any().any(), \
+        "candidate volatility features must be fully defined on the modeled euro-era rows"
 
     n = len(feat)
     train_fraction = config['split']['train_fraction']   # 0.80
@@ -140,7 +191,7 @@ def build_volatility_matrix(config, base_dir=''):
         variance_threshold=config['pca']['variance_threshold'],
     )
     red = apply_lag_pca(feat, lag_scaler, lag_pca, lag_columns=LAG_COLUMNS)
-    cols = model_input_columns(lag_pca, base_columns=PRICE_FEATURE_COLUMNS,
+    cols = model_input_columns(lag_pca, base_columns=PRICE_FEATURE_COLUMNS + extra,
                                lag_columns=LAG_COLUMNS)
 
     scaler = StandardScaler().fit(red[cols].iloc[:train_end])
@@ -854,11 +905,165 @@ def run_seed_ensemble_confirmation(config_path='config.json', base_dir='',
     return result
 
 
+CANDIDATE_CSV = 'results/volatility_candidate_features.csv'
+
+
+def _mt_seed_ensemble_val_preds(feat, X_scaled, split, config, seeds=ENSEMBLE_SEEDS):
+    """Mean validation-row prediction of the 5-seed 3-head MT ensemble — the
+    exact validated methodology (run_seed_ensemble_confirmation), reused for
+    both the base and each challenger feature set. Returns (ensemble_val_pred,
+    per_seed_val_maes)."""
+    y_vol = feat[TARGET_VOLATILITY_COLUMN].to_numpy()
+    y_ret = feat[TARGET_RETURN_COLUMN].to_numpy()
+    y_dir = feat[TARGET_DIRECTION_COLUMN].to_numpy()
+    val_rows = np.arange(split['train_end'], split['val_end'])
+    y_val = y_vol[val_rows]
+    preds, maes = [], []
+    for seed in seeds:
+        pv, _pr, _pd, _m = train_multitask_volatility_lstm(
+            X_scaled, y_vol, y_ret, y_dir, split, config, random_state=seed)
+        preds.append(pv[val_rows])
+        maes.append(mean_absolute_error(y_val, pv[val_rows]))
+    return np.mean(preds, axis=0), maes
+
+
+def run_candidate_feature_tests(features=None, config_path='config.json', base_dir='',
+                                out_csv=CANDIDATE_CSV, register=True):
+    """Hypotheses 4+ of the volatility family: one candidate INPUT feature at a
+    time (never bundled) added to the validated 5-seed MT ensemble's price-only
+    input set, judged on the validation arbiter against a freshly trained
+    same-seeds BASE ensemble (paired bootstrap on identical rows).
+
+    Family-bar discipline: the docs marked this family SPENT on the validation
+    arbiter after hypothesis 3; the owner re-opened it (2026-07-17) under the
+    standard Bonferroni widening instead — BOTH candidates are declared up
+    front, so EVERY comparison here is judged at the FINAL family size's bar
+    (0.05/5 = 0.01), stricter than the 0.0167 the original ensemble cleared.
+    Each candidate is compared against the SAME base ensemble, never against
+    another candidate's result. The test block [80%:100%] is never indexed.
+
+    A `features` entry may be a single column name (str) or a `(name, [cols])`
+    tuple — a BUNDLE of columns that are several views of one underlying fact
+    (e.g. the FOMC calendar trio) and therefore spend ONE hypothesis slot, not
+    one per column.
+    """
+    features = list(CANDIDATE_VOL_FEATURES if features is None else features)
+    candidates = {}   # hypothesis display name -> list of columns (order kept)
+    for f in features:
+        if isinstance(f, str):
+            candidates[f] = [f]
+        else:
+            name, cols = f
+            candidates[name] = list(cols)
+    with open(_p(base_dir, config_path)) as f:
+        config = json.load(f)
+
+    log = load_volatility_hypothesis_log(base_dir)
+    hyp_names = {name: f'volatility_input_{name.lower()}_vs_base_ensemble'
+                 for name in candidates}
+    family_size = len(set(log['hypothesis']) | set(hyp_names.values()))
+    alpha = bonferroni_alpha(family_size)
+
+    print('=' * 78)
+    print('VOLATILITY CANDIDATE INPUT FEATURES — one hypothesis per candidate')
+    print(f'  candidates (sequential, never cross-bundled): '
+          f'{ {n: c for n, c in candidates.items()} }')
+    print(f'  family size {family_size} -> Bonferroni alpha = {alpha:.4g} '
+          f'({100 * (1 - alpha):.1f}% CIs for every comparison)')
+    print('=' * 78)
+
+    # BASE: the validated feature set, retrained with the same seeds in this
+    # session so base-vs-challenger differences can only come from the feature.
+    feat0, X0, split = build_volatility_matrix(config, base_dir=base_dir)
+    y_vol = feat0[TARGET_VOLATILITY_COLUMN].to_numpy()
+    val_rows = np.arange(split['train_end'], split['val_end'])
+    y_val = y_vol[val_rows]
+
+    pred_garch, _ = garch_forecasts(feat0, split, config)
+    m_garch = _metrics(y_val, pred_garch[val_rows])
+
+    print(f'\n--- BASE 5-seed MT ensemble (current price-only inputs, {X0.shape[1]} cols) ---')
+    pred_base, base_maes = _mt_seed_ensemble_val_preds(feat0, X0, split, config)
+    m_base = _metrics(y_val, pred_base)
+    print(f'  per-seed val MAE spread: [{min(base_maes):.6f}, {max(base_maes):.6f}]')
+    print(f'  BASE ensemble : MAE={m_base["mae"]:.6f}%  R2={m_base["r2"]:+.4f}   '
+          f'(GARCH context: MAE={m_garch["mae"]:.6f}%  R2={m_garch["r2"]:+.4f})')
+
+    results = []
+    for feature, cols in candidates.items():
+        print(f'\n--- CHALLENGER: base + {feature} ({cols}) ---')
+        feat_c, X_c, split_c = build_volatility_matrix(
+            config, base_dir=base_dir, extra_feature_columns=cols)
+        assert split_c == split and len(feat_c) == len(feat0) and \
+            (feat_c.index == feat0.index).all(), \
+            'challenger row set must be identical to base (feature isolated)'
+        assert X_c.shape[1] == X0.shape[1] + len(cols)
+
+        pred_ch, ch_maes = _mt_seed_ensemble_val_preds(feat_c, X_c, split, config)
+        m_ch = _metrics(y_val, pred_ch)
+        print(f'  per-seed val MAE spread: [{min(ch_maes):.6f}, {max(ch_maes):.6f}]')
+        print(f'  +{feature} ensemble : MAE={m_ch["mae"]:.6f}%  R2={m_ch["r2"]:+.4f}')
+
+        boot = bootstrap_delta(y_val, pred_ch, pred_base, alpha=alpha, random_state=42)
+        dmae = m_base['mae'] - m_ch['mae']
+        dr2 = m_ch['r2'] - m_base['r2']
+        cleared = bool(boot['ci_dmae'][0] > 0 and boot['ci_dr2'][0] > 0)
+        verdict = (f'KEEP — +{feature} beats the validated base ensemble at the family bar'
+                   if cleared else
+                   f'DROP — +{feature} improvement indistinguishable from noise at the family bar')
+        print(f'  vs base: dMAE={dmae:+.6f}% CI[{boot["ci_dmae"][0]:+.6f}, {boot["ci_dmae"][1]:+.6f}]  '
+              f'dR2={dr2:+.4f} CI[{boot["ci_dr2"][0]:+.4f}, {boot["ci_dr2"][1]:+.4f}]  '
+              f'frac(dMAE>0)={boot["frac_dmae_positive"]:.3f}')
+        print(f'  VERDICT: {verdict}')
+
+        result = {
+            'hypothesis': hyp_names[feature],
+            'arbiter': 'validation[70:80]',
+            'n_val': len(val_rows),
+            'seeds': ' '.join(str(s) for s in ENSEMBLE_SEEDS),
+            'garch_mae': round(m_garch['mae'], 6), 'garch_r2': round(m_garch['r2'], 4),
+            'base_ensemble_mae': round(m_base['mae'], 6),
+            'base_ensemble_r2': round(m_base['r2'], 4),
+            'challenger_ensemble_mae': round(m_ch['mae'], 6),
+            'challenger_ensemble_r2': round(m_ch['r2'], 4),
+            'challenger_seed_mae_min': round(min(ch_maes), 6),
+            'challenger_seed_mae_max': round(max(ch_maes), 6),
+            'point_delta_mae': round(dmae, 6),
+            'ci_dmae_low': round(boot['ci_dmae'][0], 6), 'ci_dmae_high': round(boot['ci_dmae'][1], 6),
+            'point_delta_r2': round(dr2, 4),
+            'ci_dr2_low': round(boot['ci_dr2'][0], 4), 'ci_dr2_high': round(boot['ci_dr2'][1], 4),
+            'alpha_bar': alpha,
+            'cleared_bar': cleared,
+            'verdict': verdict,
+        }
+        results.append(result)
+        if register:
+            register_volatility_hypothesis(
+                result, base_dir=base_dir, alpha_override=alpha,
+                notes=f'candidate input {feature} (cols: {",".join(cols)}) on the validated '
+                      f'5-seed MT ensemble; family re-opened by owner 2026-07-17 (Bonferroni '
+                      f'widening, candidates pre-declared -> judged at family alpha={alpha:.4g})')
+
+    out_path = _p(base_dir, out_csv)
+    pd.DataFrame(results).to_csv(out_path, index=False)
+    print(f'\nSaved: {out_path}')
+    return results
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'multitask':
         run_multitask_experiment()
     elif len(sys.argv) > 1 and sys.argv[1] == 'ensemble':
         run_seed_ensemble_confirmation()
+    elif len(sys.argv) > 1 and sys.argv[1] == 'candidates':
+        if len(sys.argv) > 2 and sys.argv[2] == 'fomc':
+            # The calendar trio is ONE bundled hypothesis (three views of the
+            # same scheduled-meeting fact), never three Bonferroni slots.
+            run_candidate_feature_tests(
+                features=[('fomc_calendar_block', FOMC_FEATURE_COLUMNS)],
+                out_csv='results/volatility_candidate_fomc.csv')
+        else:
+            run_candidate_feature_tests()
     else:
         run()

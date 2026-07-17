@@ -29,11 +29,16 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr "127.0.0.1:8000" ^| findstr L
 )
 
 echo Starting EUR/USD Prophet at http://127.0.0.1:8000  (close this window to stop)
+echo The dashboard opens in your browser automatically once the server is ready
+echo (first start loads TensorFlow + all model artifacts: ~30-60 seconds).
 
-REM Open the dashboard in the default browser once the server has had a moment
-REM to load (TensorFlow + model artifacts take a few seconds). This runs in a
-REM separate window so it does not block the server below.
-start "" cmd /c "timeout /t 10 /nobreak >nul & start "" http://127.0.0.1:8000"
+REM Open the dashboard only when the server actually answers. A fixed delay is
+REM wrong here: the cold start takes ~25-60 s, so a 10 s timer opened the
+REM browser on a dead port ("This site can't be reached") and made the app look
+REM broken. This helper polls hidden in a separate process (never blocks the
+REM server below) and gives up after ~3 minutes if the server never comes up,
+REM leaving the real error visible in this window.
+start "" powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 180;$i++){try{Invoke-WebRequest http://127.0.0.1:8000/ -UseBasicParsing -TimeoutSec 2 | Out-Null; Start-Process 'http://127.0.0.1:8000'; break}catch{Start-Sleep -Seconds 1}}"
 
 "%PY%" api.py
 

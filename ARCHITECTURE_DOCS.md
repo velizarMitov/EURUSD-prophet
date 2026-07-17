@@ -55,7 +55,9 @@ the test-block "positive point estimates" do not survive the move.
 **(b) Every KEEP must clear a Bonferroni-corrected bar, not a flat 0.05.**
 `results/feature_hypothesis_log.csv` is the running family count of every feature
 hypothesis ever spent (seeded retroactively with the 4 already tried). The bar in
-force is `alpha = 0.05 / family_size` (currently **0.05 / 4 = 0.0125**), printed
+force is `alpha = 0.05 / family_size` (currently **0.05 / 5 = 0.01** — the 4
+original macro features plus the 2026-07-17 `fomc_calendar_block` ADD-test,
+which was rejected: Δacc 95% CI [−0.0549, −0.0035], McNemar p=0.0261), printed
 in the header of every `src/ablation.py` report so it can never be silently
 forgotten. A genuinely new feature grows the family and tightens the bar for all.
 At the current bar all four features stay **KEEP-provisional** (smallest McNemar
@@ -425,9 +427,23 @@ daily bar history `src/features.py` consumes. It is additive: it never touches
 the 7 canonical daily artifacts, has its own readiness gate, and degrades
 independently if its data or models are unavailable.
 
-**Data & features — `src/h1_features.py`:** `load_h1_frame` reads (or fetches, via
-`src/live_data.py::fetch_h1_market_data`, MT5 → yfinance → cache) a UTC-indexed H1
-OHLCV stream. Two aligned representations are built from it, sharing one daily
+**Data & features — `src/h1_features.py`:** two load paths share one UTC-indexed
+H1 OHLCV stream. TRAINING uses the cache-first `load_h1_frame` (safe because
+`_train_pipeline.py` explicitly refreshes the cache beforehand). INFERENCE uses
+`refresh_h1_frame` — live-first with a **mandatory staleness gate**: the cache is
+served untouched when its last COMPLETE session (the same `MIN_HOURS ≥ 12` rule
+`aggregate_daily_features` applies) already is the expected latest weekday
+session; only a genuinely behind cache triggers
+`src/live_data.py::fetch_h1_market_data` (MT5 → yfinance → cache). A live pull
+thin in history is merged onto the cached rows (dedup by index, live wins) and
+the merged frame rewritten to the cache, so the SMA504/RSI trailing warm-ups
+never silently truncate (the H1 analogue of the daily SMA_200 warm-up handling,
+§4.5.1); a fully failed live chain degrades to the stale cache. The chosen path
+is reported as `"live"` / `"cache"` / `"live+history_backfill"`. (Historical
+bug: inference originally used cache-first `load_h1_frame`, so the served H1
+day froze at the last retrain's cache write — pinned by
+`test_h1_inference_refreshes_stale_cache_live_first` and
+`test_h1_staleness_gate_skips_live_fetch_when_cache_current`.) Two aligned representations are built from it, sharing one daily
 index and one `shift(-1)` next-day target (`build_daily_target`, percent, same
 no-look-ahead contract as `src/features.py`):
 
@@ -486,6 +502,7 @@ context with no directional claim. `agreement=True` only on a unanimous sign.
 ```jsonc
 "h1": {
   "as_of_date": "YYYY-MM-DD",
+  "data_source": "live | cache | live+history_backfill",  // refresh_h1_frame's chosen path
   "predictions": {
     "h1_xgboost":       { "direction": "UP|DOWN", "predicted_return_pct": float },
     "h1_random_forest":  { "direction": "UP|DOWN", "predicted_return_pct": float },
@@ -531,7 +548,28 @@ Methodology):**
   than the production LSTM convention, because here validation IS the arbiter).
 - **Its own hypothesis family** (`results/volatility_hypothesis_log.csv`) —
   continuous R²/MAE metrics, separate from the 4-feature direction/return
-  family; the Bonferroni bar tightened as it grew: 0.05 → 0.025 → 0.0167.
+  family; the Bonferroni bar tightened as it grew: 0.05 → 0.025 → 0.0167,
+  then (family re-opened 2026-07-17 with two pre-declared candidate INPUT
+  features, judged at the final-family bar 0.05/5 = 0.01) → 0.01.
+  Hypotheses 4–5 — `RSI_14` (daily 14-period RSI, the H1 `_rsi` formula) and
+  `BB_percent_b` (%B from the same 20-day mean/σ as `BB_width`), each added
+  alone to the 5-seed ensemble's input set vs a same-seeds base ensemble —
+  were both **null results (DROP)**: ΔMAE CI99 [−0.0022, +0.0001] for RSI_14
+  and [−0.0025, −0.0004] for %B (the latter CI-confirmed *worse* on MAE).
+  Hypothesis 6 (bar → 0.05/6 = 0.0083) — the `fomc_calendar_block` bundle
+  (`is_fomc_day`/`days_to_next_fomc`/`days_since_last_fomc` from the
+  scheduled-meetings calendar `results/fomc_dates.csv`, built by
+  `src/fomc_calendar.py` from the official Fed pages; three views of one
+  calendar fact = ONE hypothesis slot) — also a **null result (DROP)** despite
+  the strong mechanistic prior: ΔMAE CI99.2 [−0.0024, +0.0016], ΔR²
+  [−0.0207, +0.0174] (`results/volatility_candidate_fomc.csv`); the same
+  bundle also failed the direction/return family's bar (its hypothesis #5).
+  The candidate constructors live in
+  `src/volatility.py::add_volatility_candidate_features` and
+  `src/fomc_calendar.py::add_fomc_features` (candidate-only — guarded out of
+  the direction/return `FEATURE_COLUMNS` by a unit test); the production
+  input set remains unchanged. Any future volatility hypothesis faces
+  0.05/7 ≈ 0.0071.
 - **Training-noise honesty.** Single-seed runs exposed TF/oneDNN CPU
   nondeterminism of the same order as the deltas under test (identical-seed
   dedicated-model MAE moved 0.190→0.197 between runs). Bootstrap CIs capture
@@ -652,6 +690,38 @@ near-unpredictable. A model that emitted large, swinging return forecasts on
 this target would be **overfitting noise and lying about its certainty**. The
 practical implication (also noted in §4.5): `predicted_return_pct` should be read
 as near-noise, not as a tradeable magnitude.
+
+**Corroborating evidence — the Ch.11 train-vs-test capacity diagnostic
+(2026-07-17, `results/train_vs_test_diagnostic.csv`).** The Practical
+Methodology question "would more capacity (epochs/layers) help?" was answered
+empirically against the served artifacts, so it does not need re-asking:
+
+| model | variant | ROC-AUC train | ROC-AUC test | return R² train | return R² test |
+|---|---|---|---|---|---|
+| GBM | baseline | 0.6157 | 0.5220 | +0.023 | −0.002 |
+| GBM | with_macro | 0.6166 | 0.5218 | +0.025 | −0.002 |
+| LSTM | baseline | 0.5575 | 0.5046 | +0.024 | −0.007 |
+| LSTM | with_macro | 0.5697 | 0.5302 | +0.031 | −0.032 |
+
+The pattern is a **mild overfit above a Bayes floor at chance**: every model
+already fits +0.04–0.09 AUC (and ~2–3% of return variance) of pure noise
+in-sample that generalizes to exactly nothing out-of-sample. Three
+independent facts close the question. (1) Larger capacity was already offered
+and **rejected by validation**: all four GBM grid searches picked the
+minimum-capacity corner (`n_estimators=100, max_depth=3, lr=0.01`), and LSTM
+early stopping (patience=10 of a 100-epoch cap) halted at epoch 14/13 with
+best weights from epoch ~4 — "more epochs" is mechanically a no-op. (2) The
+Ch.11 tiny-dataset check passed: a fresh production-architecture LSTM drove
+training loss to ~0 on a 5-row slice (direction 5/5, return MAE 0.037% vs
+target scale ~0.37%), ruling out a training-loop/loss/scaling defect. (3) The
+train-side gap means the Ch.11 remedy direction is *more regularization*, but
+harder regularization can only converge train toward 0.50 too — it cannot
+lift test above the floor. **Conclusion: scaling epochs/layers on the
+direction/return models is evidence-refuted; only genuinely new information
+(different features via the forward ledgers, or a different target as with
+the volatility family §3.5) can move test performance.** (Note when comparing
+splits: train MAE 0.39–0.41% vs test 0.30% reflects the train era's larger
+target dispersion, not underfitting — R² is the comparable number.)
 
 ### 4.2.2 Probability calibration — evaluated, not adopted
 

@@ -453,12 +453,14 @@ class PredictionService:
         """
         Run the auxiliary H1->Daily ensemble on the latest COMPLETE trading day.
 
-        Fetches recent H1 bars (MT5 -> yfinance -> cache), engineers that day's
-        flattened features + 24-hour tensor, and runs all four regressors. Each
-        outputs a next-day % return; its direction is that return's sign. The
-        RBF SVM consumes the scaled flat features; the scale-invariant tree
-        models consume the raw ones; the LSTM consumes the per-hour-scaled
-        tensor. Returns (per_model_dict, as_of_date_iso).
+        Fetches recent H1 bars live-first with a staleness gate (refresh_h1_frame:
+        cache served only if already current, else MT5 -> yfinance with cached
+        history backfilled under thin pulls), engineers that day's flattened
+        features + 24-hour tensor, and runs all four regressors. Each outputs a
+        next-day % return; its direction is that return's sign. The RBF SVM
+        consumes the scaled flat features; the scale-invariant tree models
+        consume the raw ones; the LSTM consumes the per-hour-scaled tensor.
+        Returns (per_model_dict, as_of_date_iso, data_source).
 
         Kept deliberately separate from the daily GBM/LSTM committee
         (compute_consensus): these are return-only regressors with no calibrated
@@ -470,7 +472,7 @@ class PredictionService:
 
         h1_cfg = self.config.get('h1', {})
         cache = os.path.join(self.base_dir, h1_cfg.get('cache_path', 'results/eurusd_h1.csv'))
-        flat_row, seq, as_of = build_h1_inference_sample(cache_path=cache, now=now)
+        flat_row, seq, as_of, h1_source = build_h1_inference_sample(cache_path=cache, now=now)
 
         X_raw = flat_row[self.h1_feature_columns].values   # enforce trained column order
         X_scaled = self.h1_feature_scaler.transform(X_raw)
@@ -487,7 +489,7 @@ class PredictionService:
             name: {"direction": "UP" if r > 0 else "DOWN", "predicted_return_pct": r}
             for name, r in raw.items()
         }
-        return per_model, as_of.date().isoformat()
+        return per_model, as_of.date().isoformat(), h1_source
 
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:
@@ -667,9 +669,10 @@ class PredictionService:
         # Any failure here (no H1 feed, etc.) degrades to an h1_error note.
         if self.h1_ready:
             try:
-                h1_per_model, h1_as_of = self._predict_h1()
+                h1_per_model, h1_as_of, h1_source = self._predict_h1()
                 response['h1'] = {
                     "as_of_date": h1_as_of,
+                    "data_source": h1_source,
                     "predictions": h1_per_model,
                     "consensus": self.compute_h1_consensus(h1_per_model),
                 }

@@ -1,23 +1,23 @@
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1783479778.234839   33664 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1783671410.856760   31412 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-I0000 00:00:1783479784.689714   33664 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+I0000 00:00:1783671416.486846   31412 port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
 WARNING:tensorflow:TensorFlow GPU support is not available on native Windows for TensorFlow >= 2.11. Even if CUDA/cuDNN are installed, GPU will not be used. Please use WSL2 or the TensorFlow-DirectML plugin.
-2026/07/08 06:06:23 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:29:29 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
 WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
 
 WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
 
 WARNING:tensorflow:From C:\Users\test\Desktop\eurusdprophet\.venv\Lib\site-packages\skops\io\_utils.py:25: The name tf.betainc is deprecated. Please use tf.math.betainc instead.
 
-2026/07/08 06:06:31 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:29:48 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
 XGBoost GPU (CUDA): available — tree training will run on RTX 4070.
 === 1. Loading historical OHLCV ===
 Loaded 15,715 bars (1971-01-11 -> 2026-06-18)
 
 === 1B. Macro Feature Ingestion (FRED: yield / USD index / policy-rate / inflation differentials) ===
 Merged macro features (per-feed source): {'yield_differential': 'FRED_api', 'usd_index': 'FRED_api', 'policy_rate_differential': 'FRED_api', 'inflation_differential': 'FRED_api'}
-Macro span: 1971-01-11 -> 2026-07-07  (17,445 observations, ['yield_differential', 'usd_index', 'policy_rate_differential', 'inflation_differential'])
+Macro span: 1971-01-11 -> 2026-07-09  (17,447 observations, ['yield_differential', 'usd_index', 'policy_rate_differential', 'inflation_differential'])
 
 === 2. Feature Engineering (Multi-Task targets, target_return in PERCENT) ===
 Shape (shared row set for all variants): (8560, 33)
@@ -54,7 +54,7 @@ Saved: results/backtest_transaction_costs_baseline.csv
 [Direction:TRAIN] Accuracy=0.5796  ROC-AUC=0.6157  (train-test ROC-AUC gap=+0.0937)
 [mlflow] skipped logging 'gbm_direction_classifier': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBClassifier'].
 [mlflow] skipped logging 'gbm_return_regressor': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBRegressor'].
-MLflow run logged: run_id=31688f1b53224f0786031042c953287a
+MLflow run logged: run_id=4a4fab9e5e8c4b2888cbef383fec3da2
 
 === [baseline] 7. Persisting GBM + PCA + global scaler artifacts ===
 Saved under models\baseline/: lag_scaler.pkl, lag_pca.pkl, global_scaler.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl
@@ -113,43 +113,47 @@ Model: "multitask_lstm_eurusd_baseline"
 
 === [baseline] 10. Training (early-stopping on the 70-80% validation block) ===
 Epoch 1/100
-94/94 - 3s - 27ms/step - direction_output_accuracy: 0.5111 - direction_output_loss: 0.6986 - loss: 1.0781 - return_output_loss: 0.3787 - return_output_mae: 0.4558 - val_direction_output_accuracy: 0.4701 - val_direction_output_loss: 0.7005 - val_loss: 0.8446 - val_return_output_loss: 0.1413 - val_return_output_mae: 0.2733
+94/94 - 5s - 55ms/step - direction_output_accuracy: 0.5047 - direction_output_loss: 0.6993 - loss: 1.0772 - return_output_loss: 0.3769 - return_output_mae: 0.4529 - val_direction_output_accuracy: 0.4677 - val_direction_output_loss: 0.7003 - val_loss: 0.8447 - val_return_output_loss: 0.1406 - val_return_output_mae: 0.2755
 Epoch 2/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5095 - direction_output_loss: 0.6942 - loss: 1.0430 - return_output_loss: 0.3475 - return_output_mae: 0.4316 - val_direction_output_accuracy: 0.4773 - val_direction_output_loss: 0.6971 - val_loss: 0.8399 - val_return_output_loss: 0.1396 - val_return_output_mae: 0.2702
+94/94 - 1s - 15ms/step - direction_output_accuracy: 0.5154 - direction_output_loss: 0.6942 - loss: 1.0458 - return_output_loss: 0.3509 - return_output_mae: 0.4313 - val_direction_output_accuracy: 0.4844 - val_direction_output_loss: 0.6982 - val_loss: 0.8415 - val_return_output_loss: 0.1395 - val_return_output_mae: 0.2718
 Epoch 3/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5209 - direction_output_loss: 0.6925 - loss: 1.0345 - return_output_loss: 0.3409 - return_output_mae: 0.4255 - val_direction_output_accuracy: 0.4677 - val_direction_output_loss: 0.6969 - val_loss: 0.8403 - val_return_output_loss: 0.1387 - val_return_output_mae: 0.2707
+94/94 - 3s - 27ms/step - direction_output_accuracy: 0.5211 - direction_output_loss: 0.6928 - loss: 1.0344 - return_output_loss: 0.3408 - return_output_mae: 0.4252 - val_direction_output_accuracy: 0.4833 - val_direction_output_loss: 0.6995 - val_loss: 0.8422 - val_return_output_loss: 0.1386 - val_return_output_mae: 0.2708
 Epoch 4/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5298 - direction_output_loss: 0.6903 - loss: 1.0315 - return_output_loss: 0.3402 - return_output_mae: 0.4251 - val_direction_output_accuracy: 0.4545 - val_direction_output_loss: 0.6967 - val_loss: 0.8404 - val_return_output_loss: 0.1393 - val_return_output_mae: 0.2708
+94/94 - 2s - 16ms/step - direction_output_accuracy: 0.5260 - direction_output_loss: 0.6906 - loss: 1.0303 - return_output_loss: 0.3388 - return_output_mae: 0.4226 - val_direction_output_accuracy: 0.4749 - val_direction_output_loss: 0.6970 - val_loss: 0.8402 - val_return_output_loss: 0.1385 - val_return_output_mae: 0.2710
 Epoch 5/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5357 - direction_output_loss: 0.6894 - loss: 1.0232 - return_output_loss: 0.3326 - return_output_mae: 0.4191 - val_direction_output_accuracy: 0.4569 - val_direction_output_loss: 0.6970 - val_loss: 0.8411 - val_return_output_loss: 0.1392 - val_return_output_mae: 0.2709
+94/94 - 3s - 28ms/step - direction_output_accuracy: 0.5266 - direction_output_loss: 0.6905 - loss: 1.0245 - return_output_loss: 0.3331 - return_output_mae: 0.4180 - val_direction_output_accuracy: 0.4773 - val_direction_output_loss: 0.6991 - val_loss: 0.8426 - val_return_output_loss: 0.1387 - val_return_output_mae: 0.2712
 Epoch 6/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5353 - direction_output_loss: 0.6892 - loss: 1.0223 - return_output_loss: 0.3321 - return_output_mae: 0.4181 - val_direction_output_accuracy: 0.4581 - val_direction_output_loss: 0.6968 - val_loss: 0.8417 - val_return_output_loss: 0.1398 - val_return_output_mae: 0.2717
+94/94 - 2s - 25ms/step - direction_output_accuracy: 0.5340 - direction_output_loss: 0.6890 - loss: 1.0215 - return_output_loss: 0.3312 - return_output_mae: 0.4191 - val_direction_output_accuracy: 0.4761 - val_direction_output_loss: 0.6990 - val_loss: 0.8431 - val_return_output_loss: 0.1389 - val_return_output_mae: 0.2717
 Epoch 7/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5459 - direction_output_loss: 0.6858 - loss: 1.0165 - return_output_loss: 0.3294 - return_output_mae: 0.4157 - val_direction_output_accuracy: 0.4581 - val_direction_output_loss: 0.6978 - val_loss: 0.8426 - val_return_output_loss: 0.1393 - val_return_output_mae: 0.2712
+94/94 - 1s - 13ms/step - direction_output_accuracy: 0.5422 - direction_output_loss: 0.6878 - loss: 1.0164 - return_output_loss: 0.3272 - return_output_mae: 0.4157 - val_direction_output_accuracy: 0.4737 - val_direction_output_loss: 0.6990 - val_loss: 0.8437 - val_return_output_loss: 0.1390 - val_return_output_mae: 0.2718
 Epoch 8/100
-94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5412 - direction_output_loss: 0.6865 - loss: 1.0176 - return_output_loss: 0.3300 - return_output_mae: 0.4174 - val_direction_output_accuracy: 0.4593 - val_direction_output_loss: 0.6967 - val_loss: 0.8415 - val_return_output_loss: 0.1392 - val_return_output_mae: 0.2712
+94/94 - 2s - 18ms/step - direction_output_accuracy: 0.5367 - direction_output_loss: 0.6878 - loss: 1.0173 - return_output_loss: 0.3285 - return_output_mae: 0.4174 - val_direction_output_accuracy: 0.4761 - val_direction_output_loss: 0.6976 - val_loss: 0.8428 - val_return_output_loss: 0.1396 - val_return_output_mae: 0.2716
 Epoch 9/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5399 - direction_output_loss: 0.6854 - loss: 1.0117 - return_output_loss: 0.3249 - return_output_mae: 0.4129 - val_direction_output_accuracy: 0.4653 - val_direction_output_loss: 0.6977 - val_loss: 0.8427 - val_return_output_loss: 0.1393 - val_return_output_mae: 0.2706
+94/94 - 2s - 16ms/step - direction_output_accuracy: 0.5378 - direction_output_loss: 0.6877 - loss: 1.0156 - return_output_loss: 0.3269 - return_output_mae: 0.4150 - val_direction_output_accuracy: 0.4761 - val_direction_output_loss: 0.6985 - val_loss: 0.8439 - val_return_output_loss: 0.1396 - val_return_output_mae: 0.2726
 Epoch 10/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5430 - direction_output_loss: 0.6841 - loss: 1.0112 - return_output_loss: 0.3259 - return_output_mae: 0.4145 - val_direction_output_accuracy: 0.4689 - val_direction_output_loss: 0.6979 - val_loss: 0.8442 - val_return_output_loss: 0.1402 - val_return_output_mae: 0.2716
+94/94 - 1s - 14ms/step - direction_output_accuracy: 0.5442 - direction_output_loss: 0.6853 - loss: 1.0114 - return_output_loss: 0.3250 - return_output_mae: 0.4137 - val_direction_output_accuracy: 0.4689 - val_direction_output_loss: 0.6980 - val_loss: 0.8438 - val_return_output_loss: 0.1400 - val_return_output_mae: 0.2732
 Epoch 11/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5581 - direction_output_loss: 0.6830 - loss: 1.0068 - return_output_loss: 0.3226 - return_output_mae: 0.4135 - val_direction_output_accuracy: 0.4880 - val_direction_output_loss: 0.6969 - val_loss: 0.8441 - val_return_output_loss: 0.1403 - val_return_output_mae: 0.2730
+94/94 - 1s - 15ms/step - direction_output_accuracy: 0.5511 - direction_output_loss: 0.6846 - loss: 1.0103 - return_output_loss: 0.3248 - return_output_mae: 0.4130 - val_direction_output_accuracy: 0.4713 - val_direction_output_loss: 0.6992 - val_loss: 0.8443 - val_return_output_loss: 0.1399 - val_return_output_mae: 0.2733
 Epoch 12/100
-94/94 - 1s - 9ms/step - direction_output_accuracy: 0.5534 - direction_output_loss: 0.6828 - loss: 1.0062 - return_output_loss: 0.3221 - return_output_mae: 0.4128 - val_direction_output_accuracy: 0.4988 - val_direction_output_loss: 0.6963 - val_loss: 0.8435 - val_return_output_loss: 0.1406 - val_return_output_mae: 0.2725
-Epoch 12: early stopping
-Restoring model weights from the end of the best epoch: 2.
-2026/07/08 06:06:43 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:06:43 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
-2026/07/08 06:15:53 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:15:53 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-Stopped after 12 epochs.
+94/94 - 3s - 28ms/step - direction_output_accuracy: 0.5501 - direction_output_loss: 0.6840 - loss: 1.0060 - return_output_loss: 0.3210 - return_output_mae: 0.4102 - val_direction_output_accuracy: 0.4749 - val_direction_output_loss: 0.6971 - val_loss: 0.8429 - val_return_output_loss: 0.1404 - val_return_output_mae: 0.2743
+Epoch 13/100
+94/94 - 3s - 29ms/step - direction_output_accuracy: 0.5437 - direction_output_loss: 0.6847 - loss: 1.0079 - return_output_loss: 0.3223 - return_output_mae: 0.4118 - val_direction_output_accuracy: 0.4653 - val_direction_output_loss: 0.6989 - val_loss: 0.8465 - val_return_output_loss: 0.1414 - val_return_output_mae: 0.2755
+Epoch 14/100
+94/94 - 2s - 16ms/step - direction_output_accuracy: 0.5521 - direction_output_loss: 0.6822 - loss: 1.0026 - return_output_loss: 0.3194 - return_output_mae: 0.4106 - val_direction_output_accuracy: 0.4701 - val_direction_output_loss: 0.7000 - val_loss: 0.8466 - val_return_output_loss: 0.1407 - val_return_output_mae: 0.2746
+Epoch 14: early stopping
+Restoring model weights from the end of the best epoch: 4.
+2026/07/10 11:30:22 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:30:22 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
+2026/07/10 11:45:59 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:45:59 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+Stopped after 14 epochs.
 
 === [baseline] 11. Evaluation (held-out test) ===
-[Return]    MSE=0.186821  MAE=0.305513  (percent units, comparable to GBM)
-[Direction] Accuracy=0.5112  ROC-AUC=0.5096
-[Multi-task check] Return-sign vs direction-head agreement: 0.5349 (weak -- shared trunk may not be justified)
-[Direction:TRAIN] Accuracy=0.5335  ROC-AUC=0.5554  (train-test ROC-AUC gap=+0.0458)
-MLflow run logged: run_id=5dc628dec0b146a78c57dcfe4505545d
+[Return]    MSE=0.185374  MAE=0.305440  (percent units, comparable to GBM)
+[Direction] Accuracy=0.5154  ROC-AUC=0.5046
+[Multi-task check] Return-sign vs direction-head agreement: 0.5319 (weak -- shared trunk may not be justified)
+[Direction:TRAIN] Accuracy=0.5343  ROC-AUC=0.5575  (train-test ROC-AUC gap=+0.0530)
+MLflow run logged: run_id=a95a7d4e6acf43b7abdbaac529154571
 
 === [baseline] 12. Persisting LSTM artifacts ===
 Saved under models\baseline/: lstm_multitask_eurusd.keras, lstm_time_steps.pkl
@@ -184,7 +188,7 @@ Saved: results/backtest_transaction_costs_with_macro.csv
 [Direction:TRAIN] Accuracy=0.5897  ROC-AUC=0.6166  (train-test ROC-AUC gap=+0.0958)
 [mlflow] skipped logging 'gbm_direction_classifier': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBClassifier'].
 [mlflow] skipped logging 'gbm_return_regressor': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBRegressor'].
-MLflow run logged: run_id=876012195409437293efbdb6055c949e
+MLflow run logged: run_id=7ce05be0901049ebbbd3f44cef30d299
 
 === [with_macro] 7. Persisting GBM + PCA + global scaler artifacts ===
 Saved under models\with_macro/: lag_scaler.pkl, lag_pca.pkl, global_scaler.pkl, best_gbm_eurusd.pkl, best_gbm_regressor_eurusd.pkl
@@ -247,129 +251,145 @@ Model: "multitask_lstm_eurusd_with_macro"
 
 === [with_macro] 10. Training (early-stopping on the 70-80% validation block) ===
 Epoch 1/100
-94/94 - 2s - 22ms/step - direction_output_accuracy: 0.5211 - direction_output_loss: 0.6986 - loss: 1.0936 - return_output_loss: 0.3941 - return_output_mae: 0.4637 - val_direction_output_accuracy: 0.4928 - val_direction_output_loss: 0.6989 - val_loss: 0.8407 - val_return_output_loss: 0.1444 - val_return_output_mae: 0.2760
+94/94 - 5s - 53ms/step - direction_output_accuracy: 0.5126 - direction_output_loss: 0.7004 - loss: 1.0888 - return_output_loss: 0.3874 - return_output_mae: 0.4611 - val_direction_output_accuracy: 0.4952 - val_direction_output_loss: 0.6938 - val_loss: 0.8377 - val_return_output_loss: 0.1414 - val_return_output_mae: 0.2765
 Epoch 2/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5218 - direction_output_loss: 0.6927 - loss: 1.0473 - return_output_loss: 0.3533 - return_output_mae: 0.4383 - val_direction_output_accuracy: 0.4904 - val_direction_output_loss: 0.7009 - val_loss: 0.8402 - val_return_output_loss: 0.1404 - val_return_output_mae: 0.2707
+94/94 - 2s - 23ms/step - direction_output_accuracy: 0.5285 - direction_output_loss: 0.6934 - loss: 1.0528 - return_output_loss: 0.3583 - return_output_mae: 0.4404 - val_direction_output_accuracy: 0.4952 - val_direction_output_loss: 0.6961 - val_loss: 0.8376 - val_return_output_loss: 0.1413 - val_return_output_mae: 0.2728
 Epoch 3/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5251 - direction_output_loss: 0.6919 - loss: 1.0375 - return_output_loss: 0.3444 - return_output_mae: 0.4305 - val_direction_output_accuracy: 0.4844 - val_direction_output_loss: 0.7023 - val_loss: 0.8415 - val_return_output_loss: 0.1388 - val_return_output_mae: 0.2697
+94/94 - 3s - 30ms/step - direction_output_accuracy: 0.5320 - direction_output_loss: 0.6910 - loss: 1.0348 - return_output_loss: 0.3426 - return_output_mae: 0.4281 - val_direction_output_accuracy: 0.4928 - val_direction_output_loss: 0.6965 - val_loss: 0.8375 - val_return_output_loss: 0.1406 - val_return_output_mae: 0.2716
 Epoch 4/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5333 - direction_output_loss: 0.6892 - loss: 1.0221 - return_output_loss: 0.3315 - return_output_mae: 0.4224 - val_direction_output_accuracy: 0.4940 - val_direction_output_loss: 0.7001 - val_loss: 0.8398 - val_return_output_loss: 0.1400 - val_return_output_mae: 0.2703
+94/94 - 3s - 27ms/step - direction_output_accuracy: 0.5244 - direction_output_loss: 0.6898 - loss: 1.0301 - return_output_loss: 0.3392 - return_output_mae: 0.4256 - val_direction_output_accuracy: 0.4880 - val_direction_output_loss: 0.6985 - val_loss: 0.8392 - val_return_output_loss: 0.1414 - val_return_output_mae: 0.2726
 Epoch 5/100
-94/94 - 1s - 6ms/step - direction_output_accuracy: 0.5352 - direction_output_loss: 0.6888 - loss: 1.0229 - return_output_loss: 0.3329 - return_output_mae: 0.4200 - val_direction_output_accuracy: 0.4928 - val_direction_output_loss: 0.7005 - val_loss: 0.8404 - val_return_output_loss: 0.1401 - val_return_output_mae: 0.2698
+94/94 - 2s - 26ms/step - direction_output_accuracy: 0.5450 - direction_output_loss: 0.6871 - loss: 1.0204 - return_output_loss: 0.3315 - return_output_mae: 0.4201 - val_direction_output_accuracy: 0.4892 - val_direction_output_loss: 0.6981 - val_loss: 0.8398 - val_return_output_loss: 0.1432 - val_return_output_mae: 0.2742
 Epoch 6/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5432 - direction_output_loss: 0.6863 - loss: 1.0167 - return_output_loss: 0.3293 - return_output_mae: 0.4176 - val_direction_output_accuracy: 0.4797 - val_direction_output_loss: 0.6997 - val_loss: 0.8405 - val_return_output_loss: 0.1399 - val_return_output_mae: 0.2701
+94/94 - 3s - 29ms/step - direction_output_accuracy: 0.5440 - direction_output_loss: 0.6862 - loss: 1.0180 - return_output_loss: 0.3302 - return_output_mae: 0.4194 - val_direction_output_accuracy: 0.4844 - val_direction_output_loss: 0.6999 - val_loss: 0.8407 - val_return_output_loss: 0.1420 - val_return_output_mae: 0.2720
 Epoch 7/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5363 - direction_output_loss: 0.6874 - loss: 1.0173 - return_output_loss: 0.3286 - return_output_mae: 0.4182 - val_direction_output_accuracy: 0.4856 - val_direction_output_loss: 0.7004 - val_loss: 0.8413 - val_return_output_loss: 0.1396 - val_return_output_mae: 0.2706
+94/94 - 3s - 29ms/step - direction_output_accuracy: 0.5471 - direction_output_loss: 0.6868 - loss: 1.0156 - return_output_loss: 0.3274 - return_output_mae: 0.4167 - val_direction_output_accuracy: 0.4737 - val_direction_output_loss: 0.7027 - val_loss: 0.8438 - val_return_output_loss: 0.1421 - val_return_output_mae: 0.2732
 Epoch 8/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5481 - direction_output_loss: 0.6840 - loss: 1.0123 - return_output_loss: 0.3268 - return_output_mae: 0.4166 - val_direction_output_accuracy: 0.4844 - val_direction_output_loss: 0.7001 - val_loss: 0.8419 - val_return_output_loss: 0.1413 - val_return_output_mae: 0.2717
+94/94 - 3s - 30ms/step - direction_output_accuracy: 0.5457 - direction_output_loss: 0.6857 - loss: 1.0141 - return_output_loss: 0.3270 - return_output_mae: 0.4161 - val_direction_output_accuracy: 0.4701 - val_direction_output_loss: 0.7035 - val_loss: 0.8440 - val_return_output_loss: 0.1422 - val_return_output_mae: 0.2730
 Epoch 9/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5489 - direction_output_loss: 0.6836 - loss: 1.0106 - return_output_loss: 0.3259 - return_output_mae: 0.4144 - val_direction_output_accuracy: 0.4749 - val_direction_output_loss: 0.6994 - val_loss: 0.8413 - val_return_output_loss: 0.1421 - val_return_output_mae: 0.2723
+94/94 - 2s - 17ms/step - direction_output_accuracy: 0.5492 - direction_output_loss: 0.6849 - loss: 1.0083 - return_output_loss: 0.3218 - return_output_mae: 0.4142 - val_direction_output_accuracy: 0.4844 - val_direction_output_loss: 0.7014 - val_loss: 0.8425 - val_return_output_loss: 0.1417 - val_return_output_mae: 0.2726
 Epoch 10/100
-94/94 - 1s - 8ms/step - direction_output_accuracy: 0.5561 - direction_output_loss: 0.6811 - loss: 1.0040 - return_output_loss: 0.3215 - return_output_mae: 0.4134 - val_direction_output_accuracy: 0.4737 - val_direction_output_loss: 0.7005 - val_loss: 0.8426 - val_return_output_loss: 0.1420 - val_return_output_mae: 0.2726
+94/94 - 2s - 19ms/step - direction_output_accuracy: 0.5440 - direction_output_loss: 0.6851 - loss: 1.0070 - return_output_loss: 0.3203 - return_output_mae: 0.4120 - val_direction_output_accuracy: 0.4916 - val_direction_output_loss: 0.6999 - val_loss: 0.8422 - val_return_output_loss: 0.1427 - val_return_output_mae: 0.2740
 Epoch 11/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5521 - direction_output_loss: 0.6816 - loss: 1.0006 - return_output_loss: 0.3176 - return_output_mae: 0.4119 - val_direction_output_accuracy: 0.4701 - val_direction_output_loss: 0.6998 - val_loss: 0.8427 - val_return_output_loss: 0.1427 - val_return_output_mae: 0.2738
+94/94 - 2s - 18ms/step - direction_output_accuracy: 0.5610 - direction_output_loss: 0.6805 - loss: 1.0001 - return_output_loss: 0.3182 - return_output_mae: 0.4119 - val_direction_output_accuracy: 0.4880 - val_direction_output_loss: 0.7036 - val_loss: 0.8439 - val_return_output_loss: 0.1424 - val_return_output_mae: 0.2733
 Epoch 12/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5610 - direction_output_loss: 0.6789 - loss: 0.9998 - return_output_loss: 0.3195 - return_output_mae: 0.4112 - val_direction_output_accuracy: 0.4773 - val_direction_output_loss: 0.7013 - val_loss: 0.8447 - val_return_output_loss: 0.1435 - val_return_output_mae: 0.2747
+94/94 - 2s - 17ms/step - direction_output_accuracy: 0.5573 - direction_output_loss: 0.6790 - loss: 1.0002 - return_output_loss: 0.3201 - return_output_mae: 0.4133 - val_direction_output_accuracy: 0.4809 - val_direction_output_loss: 0.7034 - val_loss: 0.8456 - val_return_output_loss: 0.1439 - val_return_output_mae: 0.2747
 Epoch 13/100
-94/94 - 1s - 6ms/step - direction_output_accuracy: 0.5670 - direction_output_loss: 0.6773 - loss: 0.9938 - return_output_loss: 0.3146 - return_output_mae: 0.4106 - val_direction_output_accuracy: 0.4689 - val_direction_output_loss: 0.7016 - val_loss: 0.8477 - val_return_output_loss: 0.1450 - val_return_output_mae: 0.2776
-Epoch 14/100
-94/94 - 1s - 7ms/step - direction_output_accuracy: 0.5661 - direction_output_loss: 0.6775 - loss: 0.9927 - return_output_loss: 0.3138 - return_output_mae: 0.4097 - val_direction_output_accuracy: 0.4617 - val_direction_output_loss: 0.6993 - val_loss: 0.8458 - val_return_output_loss: 0.1448 - val_return_output_mae: 0.2774
-Epoch 14: early stopping
-Restoring model weights from the end of the best epoch: 4.
-2026/07/08 06:16:05 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:16:05 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
-Stopped after 14 epochs.
+94/94 - 3s - 27ms/step - direction_output_accuracy: 0.5563 - direction_output_loss: 0.6800 - loss: 0.9982 - return_output_loss: 0.3166 - return_output_mae: 0.4105 - val_direction_output_accuracy: 0.4928 - val_direction_output_loss: 0.7033 - val_loss: 0.8443 - val_return_output_loss: 0.1438 - val_return_output_mae: 0.2745
+Epoch 13: early stopping
+Restoring model weights from the end of the best epoch: 3.
+2026/07/10 11:46:36 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:46:36 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
+Stopped after 13 epochs.
 
 === [with_macro] 11. Evaluation (held-out test) ===
-[Return]    MSE=0.188274  MAE=0.308420  (percent units, comparable to GBM)
-[Direction] Accuracy=0.5095  ROC-AUC=0.5172
-[Multi-task check] Return-sign vs direction-head agreement: 0.6300 (shared signal present)
-[Direction:TRAIN] Accuracy=0.5511  ROC-AUC=0.5769  (train-test ROC-AUC gap=+0.0597)
-MLflow run logged: run_id=d7b5b9ac8d294496adfd87ba8fbdb689
+[Return]    MSE=0.190128  MAE=0.309264  (percent units, comparable to GBM)
+[Direction] Accuracy=0.5118  ROC-AUC=0.5301
+[Multi-task check] Return-sign vs direction-head agreement: 0.6418 (shared signal present)
+[Direction:TRAIN] Accuracy=0.5484  ROC-AUC=0.5697  (train-test ROC-AUC gap=+0.0396)
+MLflow run logged: run_id=b902877abc0a4a109e64f2453c1caef0
 
 === [with_macro] 12. Persisting LSTM artifacts ===
 Saved under models\with_macro/: lstm_multitask_eurusd.keras, lstm_time_steps.pkl
 
 === 12B. Next-Day Realized Volatility ensemble ===
-[volatility] seed 42: trained + saved (test MAE=0.212194%)
-[volatility] seed 43: trained + saved (test MAE=0.217523%)
-[volatility] seed 44: trained + saved (test MAE=0.226437%)
-[volatility] seed 45: trained + saved (test MAE=0.215182%)
-[volatility] seed 46: trained + saved (test MAE=0.220234%)
-[volatility] ONE-SHOT test report: ensemble MAE=0.21755% R2=0.1129  |  GARCH(1,1) MAE=0.232573% R2=0.0356  |  persistence MAE=0.292136% R2=-0.7797
+[volatility] seed 42: trained + saved (test MAE=0.217003%)
+[volatility] seed 43: trained + saved (test MAE=0.217484%)
+[volatility] seed 44: trained + saved (test MAE=0.221857%)
+[volatility] seed 45: trained + saved (test MAE=0.218295%)
+[volatility] seed 46: trained + saved (test MAE=0.220917%)
+[volatility] ONE-SHOT test report: ensemble MAE=0.218682% R2=0.1113  |  GARCH(1,1) MAE=0.232573% R2=0.0356  |  persistence MAE=0.292136% R2=-0.7797
 [volatility] Saved under models\volatility/: volatility_lstm_seed42.keras, volatility_lstm_seed43.keras, volatility_lstm_seed44.keras, volatility_lstm_seed45.keras, volatility_lstm_seed46.keras, global_scaler.pkl, lag_scaler.pkl, lag_pca.pkl, lstm_time_steps.pkl, vol_metrics.json
-MLflow run logged: run_id=e4c23c7452d44a13becbdd1175f52984
+MLflow run logged: run_id=3d20afd8bc504c31be914aa17e8a8110
 
 === 13. H1 -> Daily Predictor (XGBoost / RandomForest / SVM / LSTM) ===
 H1 cache refreshed from MT5: 60000 bars.
-H1 datasets: flat (2499, 11), seq (2499, 24, 5), days 2016-11-15 -> 2026-07-06
+H1 datasets: flat (2499, 11), seq (2499, 24, 5), days 2016-11-17 -> 2026-07-08
 --- XGBoost [device=cuda] ---
 --- RandomForest ---
 --- SVM (RBF) ---
 --- Sequence-to-Vector LSTM ---
 Epoch 1/60
-55/55 - 2s - 29ms/step - loss: 0.2245 - mae: 0.3654 - val_loss: 0.1378 - val_mae: 0.2823
+55/55 - 3s - 61ms/step - loss: 0.2287 - mae: 0.3691 - val_loss: 0.1447 - val_mae: 0.2897
 Epoch 2/60
-55/55 - 0s - 7ms/step - loss: 0.2187 - mae: 0.3593 - val_loss: 0.1370 - val_mae: 0.2815
+55/55 - 1s - 13ms/step - loss: 0.2197 - mae: 0.3608 - val_loss: 0.1445 - val_mae: 0.2891
 Epoch 3/60
-55/55 - 0s - 8ms/step - loss: 0.2159 - mae: 0.3566 - val_loss: 0.1370 - val_mae: 0.2817
+55/55 - 1s - 23ms/step - loss: 0.2165 - mae: 0.3568 - val_loss: 0.1436 - val_mae: 0.2877
 Epoch 4/60
-55/55 - 0s - 7ms/step - loss: 0.2152 - mae: 0.3561 - val_loss: 0.1367 - val_mae: 0.2813
+55/55 - 1s - 14ms/step - loss: 0.2170 - mae: 0.3570 - val_loss: 0.1437 - val_mae: 0.2877
 Epoch 5/60
-55/55 - 0s - 5ms/step - loss: 0.2132 - mae: 0.3542 - val_loss: 0.1366 - val_mae: 0.2814
+55/55 - 1s - 24ms/step - loss: 0.2151 - mae: 0.3555 - val_loss: 0.1433 - val_mae: 0.2875
 Epoch 6/60
-55/55 - 0s - 5ms/step - loss: 0.2142 - mae: 0.3542 - val_loss: 0.1364 - val_mae: 0.2809
+55/55 - 1s - 15ms/step - loss: 0.2117 - mae: 0.3526 - val_loss: 0.1427 - val_mae: 0.2868
 Epoch 7/60
-55/55 - 0s - 5ms/step - loss: 0.2127 - mae: 0.3538 - val_loss: 0.1365 - val_mae: 0.2813
+55/55 - 1s - 21ms/step - loss: 0.2121 - mae: 0.3535 - val_loss: 0.1426 - val_mae: 0.2866
 Epoch 8/60
-55/55 - 0s - 6ms/step - loss: 0.2116 - mae: 0.3528 - val_loss: 0.1362 - val_mae: 0.2810
+55/55 - 1s - 14ms/step - loss: 0.2101 - mae: 0.3531 - val_loss: 0.1419 - val_mae: 0.2856
 Epoch 9/60
-55/55 - 0s - 7ms/step - loss: 0.2114 - mae: 0.3526 - val_loss: 0.1366 - val_mae: 0.2816
+55/55 - 1s - 23ms/step - loss: 0.2128 - mae: 0.3528 - val_loss: 0.1420 - val_mae: 0.2857
 Epoch 10/60
-55/55 - 0s - 7ms/step - loss: 0.2105 - mae: 0.3514 - val_loss: 0.1361 - val_mae: 0.2807
+55/55 - 1s - 26ms/step - loss: 0.2126 - mae: 0.3534 - val_loss: 0.1421 - val_mae: 0.2859
 Epoch 11/60
-55/55 - 0s - 6ms/step - loss: 0.2104 - mae: 0.3518 - val_loss: 0.1363 - val_mae: 0.2810
+55/55 - 1s - 22ms/step - loss: 0.2095 - mae: 0.3518 - val_loss: 0.1416 - val_mae: 0.2853
 Epoch 12/60
-55/55 - 0s - 6ms/step - loss: 0.2111 - mae: 0.3525 - val_loss: 0.1360 - val_mae: 0.2804
+55/55 - 1s - 24ms/step - loss: 0.2109 - mae: 0.3521 - val_loss: 0.1411 - val_mae: 0.2849
 Epoch 13/60
-55/55 - 0s - 5ms/step - loss: 0.2105 - mae: 0.3526 - val_loss: 0.1358 - val_mae: 0.2802
+55/55 - 1s - 22ms/step - loss: 0.2097 - mae: 0.3502 - val_loss: 0.1417 - val_mae: 0.2855
 Epoch 14/60
-55/55 - 0s - 5ms/step - loss: 0.2109 - mae: 0.3514 - val_loss: 0.1359 - val_mae: 0.2804
+55/55 - 1s - 14ms/step - loss: 0.2104 - mae: 0.3520 - val_loss: 0.1419 - val_mae: 0.2857
 Epoch 15/60
-55/55 - 0s - 5ms/step - loss: 0.2077 - mae: 0.3493 - val_loss: 0.1360 - val_mae: 0.2806
+55/55 - 1s - 23ms/step - loss: 0.2098 - mae: 0.3508 - val_loss: 0.1417 - val_mae: 0.2859
 Epoch 16/60
-55/55 - 0s - 6ms/step - loss: 0.2077 - mae: 0.3498 - val_loss: 0.1359 - val_mae: 0.2803
+55/55 - 1s - 25ms/step - loss: 0.2094 - mae: 0.3523 - val_loss: 0.1418 - val_mae: 0.2859
 Epoch 17/60
-55/55 - 0s - 6ms/step - loss: 0.2090 - mae: 0.3505 - val_loss: 0.1354 - val_mae: 0.2797
+55/55 - 1s - 25ms/step - loss: 0.2086 - mae: 0.3502 - val_loss: 0.1416 - val_mae: 0.2857
 Epoch 18/60
-55/55 - 0s - 7ms/step - loss: 0.2080 - mae: 0.3515 - val_loss: 0.1358 - val_mae: 0.2802
+55/55 - 1s - 22ms/step - loss: 0.2090 - mae: 0.3503 - val_loss: 0.1411 - val_mae: 0.2852
 Epoch 19/60
-55/55 - 0s - 6ms/step - loss: 0.2079 - mae: 0.3504 - val_loss: 0.1357 - val_mae: 0.2802
+55/55 - 1s - 13ms/step - loss: 0.2078 - mae: 0.3499 - val_loss: 0.1411 - val_mae: 0.2852
 Epoch 20/60
-55/55 - 0s - 6ms/step - loss: 0.2061 - mae: 0.3488 - val_loss: 0.1358 - val_mae: 0.2802
+55/55 - 1s - 24ms/step - loss: 0.2088 - mae: 0.3506 - val_loss: 0.1411 - val_mae: 0.2851
 Epoch 21/60
-55/55 - 0s - 6ms/step - loss: 0.2062 - mae: 0.3492 - val_loss: 0.1359 - val_mae: 0.2799
+55/55 - 1s - 24ms/step - loss: 0.2068 - mae: 0.3496 - val_loss: 0.1411 - val_mae: 0.2852
 Epoch 22/60
-55/55 - 0s - 5ms/step - loss: 0.2067 - mae: 0.3504 - val_loss: 0.1361 - val_mae: 0.2803
+55/55 - 1s - 26ms/step - loss: 0.2086 - mae: 0.3507 - val_loss: 0.1412 - val_mae: 0.2852
 Epoch 23/60
-55/55 - 0s - 5ms/step - loss: 0.2041 - mae: 0.3475 - val_loss: 0.1364 - val_mae: 0.2804
+55/55 - 1s - 15ms/step - loss: 0.2053 - mae: 0.3483 - val_loss: 0.1399 - val_mae: 0.2841
 Epoch 24/60
-55/55 - 0s - 6ms/step - loss: 0.2037 - mae: 0.3474 - val_loss: 0.1360 - val_mae: 0.2803
+55/55 - 1s - 24ms/step - loss: 0.2054 - mae: 0.3491 - val_loss: 0.1401 - val_mae: 0.2845
 Epoch 25/60
-55/55 - 0s - 6ms/step - loss: 0.2026 - mae: 0.3464 - val_loss: 0.1365 - val_mae: 0.2808
-2026/07/08 06:25:42 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:25:42 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:25:49 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:25:55 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
-2026/07/08 06:25:55 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
+55/55 - 1s - 23ms/step - loss: 0.2055 - mae: 0.3494 - val_loss: 0.1399 - val_mae: 0.2844
+Epoch 26/60
+55/55 - 1s - 23ms/step - loss: 0.2030 - mae: 0.3470 - val_loss: 0.1398 - val_mae: 0.2844
+Epoch 27/60
+55/55 - 1s - 22ms/step - loss: 0.2040 - mae: 0.3486 - val_loss: 0.1409 - val_mae: 0.2861
+Epoch 28/60
+55/55 - 1s - 16ms/step - loss: 0.2012 - mae: 0.3455 - val_loss: 0.1403 - val_mae: 0.2851
+Epoch 29/60
+55/55 - 1s - 23ms/step - loss: 0.2014 - mae: 0.3468 - val_loss: 0.1403 - val_mae: 0.2852
+Epoch 30/60
+55/55 - 1s - 21ms/step - loss: 0.1995 - mae: 0.3462 - val_loss: 0.1417 - val_mae: 0.2868
+Epoch 31/60
+55/55 - 1s - 14ms/step - loss: 0.1995 - mae: 0.3456 - val_loss: 0.1412 - val_mae: 0.2862
+Epoch 32/60
+55/55 - 1s - 27ms/step - loss: 0.1975 - mae: 0.3440 - val_loss: 0.1418 - val_mae: 0.2863
+Epoch 33/60
+55/55 - 1s - 12ms/step - loss: 0.1970 - mae: 0.3440 - val_loss: 0.1425 - val_mae: 0.2873
+Epoch 34/60
+55/55 - 1s - 13ms/step - loss: 0.1922 - mae: 0.3403 - val_loss: 0.1430 - val_mae: 0.2875
+2026/07/10 11:59:13 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:59:14 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:59:23 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:59:32 WARNING mlflow.models.model: `artifact_path` is deprecated. Please use `name` instead.
+2026/07/10 11:59:32 WARNING mlflow.keras.save: You are saving a Keras model without specifying model signature.
 
 === 14. H1 Evaluation (held-out test) ===
-[H1:xgboost       ] MAE=0.3412%  directional ROC-AUC=0.5093
-[H1:random_forest ] MAE=0.3476%  directional ROC-AUC=0.5068
-[H1:svm_rbf       ] MAE=0.3435%  directional ROC-AUC=0.4994
-[H1:lstm_seq2vec  ] MAE=0.3380%  directional ROC-AUC=0.5522
+[H1:xgboost       ] MAE=0.3376%  directional ROC-AUC=0.4954
+[H1:random_forest ] MAE=0.3454%  directional ROC-AUC=0.5004
+[H1:svm_rbf       ] MAE=0.3411%  directional ROC-AUC=0.4993
+[H1:lstm_seq2vec  ] MAE=0.3400%  directional ROC-AUC=0.5436
 [mlflow] skipped logging 'h1_xgboost': The saved sklearn model references untrusted types. If you are sure loading these types is safe, set the 'skops_trusted_types' parameter when calling 'log_model' or 'save_model' to the list of trusted types. Root error: Untrusted types found in the file: ['xgboost.core.Booster', 'xgboost.sklearn.XGBRegressor'].
-MLflow run logged: run_id=1dd94fff54004238b975bc6cefb29653
+MLflow run logged: run_id=ee84f7ec0e02404da4581c63b257171f
 
 === 15. Persisting H1 -> Daily artifacts ===
 Saved H1 artifacts: h1_xgb_regressor.pkl, h1_rf_regressor.pkl, h1_svm_regressor.pkl, h1_feature_scaler.pkl, h1_lstm_scaler.pkl, h1_lstm.keras, h1_feature_columns.pkl, h1_lstm_config.pkl

@@ -1,0 +1,9 @@
+model,variant,split,direction_accuracy,direction_roc_auc,return_mae_pct,return_r2,n_rows
+GBM,baseline,train,0.5796,0.6157,0.390825,0.023233,6848
+GBM,baseline,test,0.5093,0.522,0.302983,-0.002203,1712
+LSTM,baseline,train,0.5343,0.5575,0.408953,0.024391,5972
+LSTM,baseline,test,0.5154,0.5046,0.30544,-0.006525,1692
+GBM,with_macro,train,0.5897,0.6166,0.390744,0.024564,6848
+GBM,with_macro,test,0.5035,0.5218,0.302926,-0.002099,1712
+LSTM,with_macro,train,0.5484,0.5697,0.40829,0.030716,5972
+LSTM,with_macro,test,0.5118,0.5302,0.309258,-0.032484,1692
