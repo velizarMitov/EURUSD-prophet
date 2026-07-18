@@ -419,6 +419,49 @@ original ship gate cleared. Runner: `python -m src.volatility candidates`
       count is now 5, so any future volatility hypothesis faces
       `alpha = 0.05/6 = 0.0083`. Full suite green (58 tests).
 
+## Experiment — Standalone H1 technical-indicator LSTM (2026-07-18, research-only, VERDICT: DROP)
+
+Isolated experiment (`src/ti_lstm_h1_experimental.py`, own entry point, never
+imported by api.py / inference / _train_pipeline; zero artifacts under
+models/) testing whether an H1-native LSTM over a classic TI set beats the
+shipped H1 ensemble. Own hypothesis family
+(`results/ti_lstm_h1_hypothesis_log.csv`, n=1, bar 0.05); full run report
+`results/ti_lstm_h1_validation.csv`.
+
+- [x] **Backend**: Keras 3 on the PYTORCH backend, real CUDA on the RTX 4070
+      Laptop GPU (torch 2.11.0+cu128), process-local `KERAS_BACKEND=torch`,
+      loud-fail gate (no silent CPU fallback). Production stays on tf.keras.
+- [x] **Determinism finding (contrast with TF/oneDNN)**: two identical
+      seed-42 runs were BIT-IDENTICAL (max |Δprob| = 0.0) — Keras3/torch/cuDNN
+      is run-to-run deterministic here, so single-seed comparisons are valid
+      in this setup (the 5-seed fallback was armed but not needed).
+- [x] **Data/target**: existing H1 chain only (MT5 refreshed 60k bars live);
+      2500 complete sessions 2016-11-24 → 2026-07-16; (24, 8) right-aligned
+      hourly tensor; target = NEXT-DAY percent return / sign via the H1
+      module's `build_daily_target` shift(-1) — not next-hour. Indicators at
+      the exact specified params: %B(20, 2σ), MACD 13/34 with 8-SMA signal
+      (spec'd Fibonacci variant, not 12/26/9), trend vs SMA-504/168, RSI_24
+      (REUSED from `h1_features._rsi` — flagged assumption: period 24 per the
+      H1 module convention, not the daily-conventional 14), CCI-20 (Lambert
+      0.015), ADX-14 (Wilder; closed-form unit test verifies the recursion).
+- [x] **Architecture sweep (validation only)**: 1×32 AUC 0.506, 1×64 0.524,
+      2×32 0.514, 2×64 0.542 → 2×64 selected; early stopping fired at epochs
+      12–28 of 100 in every config (capacity self-limits, as Ch.11 predicted).
+- [x] **Step 6 comparisons (full coverage, no denominator tricks)**:
+      validation — TI 0.5421 vs existing H1 ensemble 0.5902 (caveat: the
+      ensemble TRAINED on [0:80%], so the val slice favors it), ΔAUC −0.048
+      CI95 [−0.135, +0.040]; vs daily baseline GBM 0.5325: ΔAUC +0.010
+      CI [−0.074, +0.092]. One-shot TEST block (fair — both out-of-sample):
+      TI AUC 0.5128 / acc 0.5060 vs ensemble 0.5283, ΔAUC −0.015
+      CI [−0.072, +0.042].
+- [x] **VERDICT: DROP — research-only.** No CI-confirmed edge anywhere; the
+      TI-LSTM lands at ≈0.51 out-of-sample — the same near-chance floor as
+      the reviewed paper's TI_LSTM (~52%) and this project's own Ch.11
+      evidence. NOT wired into serving (no `ti_h1_ready` gate, no API block,
+      no UI card — the KEEP branch conditions were never met). The module
+      stays as reusable research scaffolding (CUDA backend gate, indicator
+      library with closed-form tests, own hypothesis log).
+
 ## Backlog — FOMC meeting-day calendar features (added 2026-07-17, tested BOTH families)
 
 Genuinely new information (a scheduled-event calendar — nothing like it tried

@@ -760,6 +760,112 @@ def test_volatility_candidates_stay_out_of_direction_return_models():
         f"Candidate features must not enter the direction/return feature set: {overlap}"
 
 
+def test_ti_adx_matches_wilder_closed_form_on_monotone_series():
+    """ADX(14) hand-check (experimental TI module): on a strictly monotone
+    series with constant bar geometry, Wilder's recursion has CLOSED-FORM
+    values — +DM=1, -DM=0, TR=1.25 from bar 1, so with w=13/14:
+        plus_smooth_t = 1 - w^t,   atr_t = 1.25 - 0.75 * w^t,
+        +DI_t = 100 * (1 - w^t) / (1.25 - 0.75 w^t)  ->  80,
+        DX_t = 100 for every t >= 1 (since -DI = 0),
+        ADX_t = 100 * (1 - w^t)  ->  100.
+    This verifies the actual smoothing recursion, not a formula transcription."""
+    from src.ti_lstm_h1_experimental import adx
+
+    n = 41
+    t = np.arange(n, dtype=float)
+    close = pd.Series(t)
+    high = pd.Series(t + 0.25)
+    low = pd.Series(t - 0.25)
+
+    adx_line, plus_di, minus_di = adx(high, low, close, period=14)
+    w = 13.0 / 14.0
+    for k in (1, 5, 14, 40):
+        expected_plus_di = 100.0 * (1 - w ** k) / (1.25 - 0.75 * w ** k)
+        assert plus_di.iloc[k] == pytest.approx(expected_plus_di, rel=1e-9), \
+            f"+DI closed form mismatch at t={k}"
+        assert minus_di.iloc[k] == pytest.approx(0.0, abs=1e-12), \
+            "downward DM must be zero on a pure uptrend"
+        assert adx_line.iloc[k] == pytest.approx(100.0 * (1 - w ** k), rel=1e-9), \
+            f"ADX closed form mismatch at t={k}"
+    # Mirror-symmetric downtrend: -DI takes the same closed form, ADX identical.
+    # (Negation swaps the high/low roles, so the mirrored HIGH is -low.)
+    adx_dn, plus_dn, minus_dn = adx(-low, -high, -close, period=14)
+    assert np.allclose(minus_dn.iloc[1:], plus_di.iloc[1:], rtol=1e-9)
+    assert np.allclose(adx_dn.iloc[1:], adx_line.iloc[1:], rtol=1e-9)
+    # Flat market: no directional movement, no blow-ups.
+    flat = pd.Series(np.ones(n))
+    adx_f, p_f, m_f = adx(flat, flat, flat, period=14)
+    assert (adx_f == 0).all() and (p_f == 0).all() and (m_f == 0).all()
+
+
+def test_ti_indicators_closed_forms_and_specified_parameters():
+    """Analytic spot-checks of the experimental TI module's indicators on a
+    linear ramp close_t = t (window statistics have closed forms), pinning the
+    SPECIFIED parameters (MACD 13/34 with an 8-period SMA signal, CCI 20 with
+    Lambert's 0.015, Bollinger 20/2.0)."""
+    from src.ti_lstm_h1_experimental import (
+        bollinger_percent_b, macd_features, cci, trend_vs_sma)
+
+    n = 400
+    t = np.arange(n, dtype=float)
+    close = pd.Series(t + 100.0)
+    high, low = close + 0.5, close - 0.5
+
+    # CCI on a ramp: TP - SMA20 = 9.5, meandev(0..19) = 5.0 -> 9.5/(0.015*5).
+    cci_v = cci(high, low, close, period=20, c=0.015)
+    assert cci_v.iloc[-1] == pytest.approx(9.5 / (0.015 * 5.0), rel=1e-9)
+
+    # %B on a ramp: (9.5 + 2*std)/(4*std), std = std(0..19, ddof=1) = sqrt(35).
+    s = np.sqrt(35.0)
+    pb = bollinger_percent_b(close, period=20, ndev=2.0)
+    assert pb.iloc[-1] == pytest.approx((9.5 + 2 * s) / (4 * s), rel=1e-9)
+    # Flat window -> neutral mid-band.
+    pb_flat = bollinger_percent_b(pd.Series(np.ones(50)), period=20)
+    assert (pb_flat.iloc[20:] == 0.5).all()
+
+    # MACD on a ramp: EMA(span) lags a linear ramp by (span-1)/2 asymptotically,
+    # so macd -> (34-1)/2 - (13-1)/2 = 10.5 and the SMA-8 histogram -> 0.
+    macd_line, hist = macd_features(close, fast=13, slow=34, signal=8)
+    assert macd_line.iloc[-1] == pytest.approx(10.5, rel=1e-3)
+    assert hist.iloc[-1] == pytest.approx(0.0, abs=1e-6)
+
+    # trend_vs_sma on a ramp: SMA20 = close - 9.5 -> ratio has a closed form;
+    # and the undefined warm-up is neutral 0, the h1_features convention.
+    tr504 = trend_vs_sma(close, 20)
+    assert tr504.iloc[-1] == pytest.approx((close.iloc[-1] / (close.iloc[-1] - 9.5)) - 1, rel=1e-12)
+    assert (trend_vs_sma(close, 20).iloc[:19] == 0.0).all()
+
+
+def test_ti_indicators_no_lookahead_via_future_truncation():
+    """Every experimental TI indicator must be a pure trailing-window function:
+    dropping the future must leave earlier enriched rows byte-identical."""
+    from src.ti_lstm_h1_experimental import enrich_h1_with_indicators, TI_FEATURE_COLUMNS
+
+    h1 = _synthetic_h1([1.10, 1.11, 1.09, 1.12, 1.13, 1.115, 1.12])
+    full = enrich_h1_with_indicators(h1)
+    cut = len(h1) // 2
+    trunc = enrich_h1_with_indicators(h1.iloc[:cut])
+    pd.testing.assert_frame_equal(full.iloc[:cut][TI_FEATURE_COLUMNS],
+                                  trunc[TI_FEATURE_COLUMNS])
+
+
+def test_ti_dataset_target_is_next_day_return_same_convention_as_h1():
+    """The experimental TI dataset must inherit the H1->Daily target contract:
+    row t's target = next-day percent log return (shift(-1)), final day
+    dropped, tensor right-aligned to the day's last 24 bars."""
+    from src.ti_lstm_h1_experimental import build_ti_datasets
+
+    closes = [1.10, 1.11, 1.09, 1.12, 1.13]
+    X, y_ret, y_dir, index = build_ti_datasets(h1=_synthetic_h1(closes))
+
+    assert len(index) == len(closes) - 1, "final (unresolved-target) day must drop"
+    for i in range(len(index)):
+        expected = np.log(closes[i + 1] / closes[i]) * 100.0
+        assert y_ret[i] == pytest.approx(expected, rel=1e-5)
+        assert y_dir[i] == int(expected > 0)
+    assert X.shape[1:] == (24, 8), "24 hourly steps x 8 TI features"
+
+
 def test_fomc_calendar_join_resolves_known_dates_correctly():
     """The FOMC calendar join must resolve is_fomc_day / days_to_next /
     days_since_last exactly for hand-checkable dates. (No look-ahead test by
