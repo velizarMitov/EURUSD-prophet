@@ -31,6 +31,17 @@ def test_smoke_model_resolution():
         'lstm_time_steps.pkl',
         'vol_metrics.json',
     ]
+    # Observational H1 TI-LSTM: in production by explicit owner override
+    # DESPITE a DROP verdict (no demonstrated edge) — the artifacts must exist
+    # for the ti_h1_ready gate, but their presence is NOT validation (see
+    # IMPROVEMENT_LOG.md "owner override", ti_metrics.json carries
+    # validated: false).
+    TI_H1_ARTIFACTS = [
+        'ti_lstm_h1.keras',
+        'ti_scaler.pkl',
+        'ti_config.pkl',
+        'ti_metrics.json',
+    ]
     required_artifacts = [
         os.path.join('models', variant, artifact)
         for variant in ('baseline', 'with_macro')
@@ -38,6 +49,9 @@ def test_smoke_model_resolution():
     ] + [
         os.path.join('models', 'volatility', artifact)
         for artifact in VOLATILITY_ARTIFACTS
+    ] + [
+        os.path.join('models', 'ti_lstm_h1', artifact)
+        for artifact in TI_H1_ARTIFACTS
     ] + [
         os.path.join('results', 'eurusd_features.csv'),
         'config.json',

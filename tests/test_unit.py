@@ -866,6 +866,52 @@ def test_ti_dataset_target_is_next_day_return_same_convention_as_h1():
     assert X.shape[1:] == (24, 8), "24 hourly steps x 8 TI features"
 
 
+def test_history_scores_volatility_as_magnitude_mae_not_hitmiss(tmp_path, monkeypatch):
+    """The /history page must score the validated volatility forecast as a
+    MAGNITUDE error (|predicted - realized| against |ln(close_{t+1}/close_t)|*100,
+    the exact target it was validated on) and report a running MAE — never a
+    directional hit/miss. A pending row shows the forecast with an hourglass and
+    is not counted; a pre-volatility row (no vol_pred_pct) shows an em-dash."""
+    import src.tracking as tracking
+
+    log = pd.DataFrame([
+        # resolved row: as_of close 1.1000 -> realized close 1.1050
+        {'as_of_date': '2026-06-01', 'forecasting_date': '2026-06-02',
+         'as_of_close': 1.1000, 'pred_direction': 'UP', 'pred_return_pct': 0.05,
+         'pred_confidence': 0.55, 'vol_pred_pct': 0.20},
+        # pending row: no realized close for its forecast day
+        {'as_of_date': '2026-06-03', 'forecasting_date': '2026-06-30',
+         'as_of_close': 1.1100, 'pred_direction': 'DOWN', 'pred_return_pct': -0.03,
+         'pred_confidence': 0.53, 'vol_pred_pct': 0.18},
+        # pre-volatility row: vol_pred_pct is NaN -> shown as em-dash, uncounted
+        {'as_of_date': '2026-06-04', 'forecasting_date': '2026-06-05',
+         'as_of_close': 1.1200, 'pred_direction': 'UP', 'pred_return_pct': 0.02,
+         'pred_confidence': 0.54, 'vol_pred_pct': float('nan')},
+    ])
+    log_path = tmp_path / 'log.csv'
+    log.to_csv(log_path, index=False)
+
+    # Realized closes injected (no network): only the first & third forecast days
+    # have settled.
+    monkeypatch.setattr(tracking, '_actual_closes',
+                        lambda *a, **k: {'2026-06-02': 1.1050, '2026-06-05': 1.1180})
+
+    html = tracking.build_history_html(str(log_path), {'symbol': 'EURUSD'})
+
+    realized = abs(np.log(1.1050 / 1.1000)) * 100          # ~0.4535
+    err = abs(realized - 0.20)                              # ~0.2535
+    assert f"{realized:.4f}%" in html, "realized volatility (|log return|*100) must be shown"
+    assert f"err {err:.4f}" in html, "per-row |predicted - realized| volatility error must be shown"
+    assert "±0.2000%" in html and "±0.1800% ⏳" in html, \
+        "predicted magnitude must render; a pending row keeps the hourglass"
+    # Running MAE over the ONE settled volatility row, labeled as validated.
+    assert f"<b>{err:.4f}%</b> MAE over 1" in html
+    assert "validated vs GARCH(1,1)" in html
+    # The magnitude call is NOT dressed up as a direction hit: the volatility
+    # cell carries no ✅/❌ (those belong to the daily/H1 directional columns).
+    assert "±0.2000% → " in html and "✅" not in html.split("±0.2000%")[1][:40]
+
+
 def test_fomc_calendar_join_resolves_known_dates_correctly():
     """The FOMC calendar join must resolve is_fomc_day / days_to_next /
     days_since_last exactly for hand-checkable dates. (No look-ahead test by

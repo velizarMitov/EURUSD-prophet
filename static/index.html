@@ -179,6 +179,10 @@
             if (data.h1) html += renderH1(data.h1);
             else if (data.h1_error) html += `<div class="meta">H1 ensemble unavailable: ${data.h1_error}</div>`;
 
+            // --- Observational H1 TI-LSTM (owner-override ship, NOT validated) ---
+            if (data.ti_h1_forecast) html += renderTiH1(data.ti_h1_forecast);
+            else if (data.ti_h1_error) html += `<div class="meta">TI-LSTM (observational) unavailable: ${data.ti_h1_error}</div>`;
+
             dashboard.innerHTML = html;
             dashboard.classList.add('active');
         }
@@ -243,6 +247,28 @@
                 <div class="value">Expected movement magnitude: &plusmn;${vf.predicted_vol_pct.toFixed(4)}%</div>
                 <div class="sub-value">|next-day log return| forecast — says how MUCH the pair is likely to move, not which way. Volatility clustering is a real FX signal; direction near-efficiency still applies to the panels above.</div>
                 <div class="meta">${vf.model}. ${ctx}</div>
+            </div>`;
+        }
+
+        // Observational H1 TI-LSTM. This model FAILED its own hypothesis bar
+        // (DROP: negative point ΔAUC vs the H1 ensemble, CI including 0) and is
+        // in production ONLY by explicit owner override for forward observation.
+        // It must NEVER get the volatility card's validated styling, nor even
+        // the macro panel's "nominally positive" experimental framing — amber
+        // warning border + the actual test numbers, verbatim from the API block.
+        function renderTiH1(ti) {
+            const ev = ti.evidence || {};
+            const num = (v, d = 4) => (typeof v === 'number' ? v.toFixed(d) : '—');
+            const ci = Array.isArray(ev.test_dauc_ci) && typeof ev.test_dauc_ci[0] === 'number'
+                ? `[${ev.test_dauc_ci[0].toFixed(3)}, ${ev.test_dauc_ci[1].toFixed(3)}]` : '—';
+            const arrow = ti.direction === 'UP' ? '📈' : '📉';
+            const badge = `<span class="badge experimental" style="background:#b9770e;"
+                title="This model was tested against the existing H1 ensemble and FAILED its pre-registered bar (DROP verdict, results/ti_lstm_h1_hypothesis_log.csv). It is served by explicit owner decision for transparent forward observation — its presence in production is NOT validation.">⚠ Not Validated — No Demonstrated Edge (test AUC ${num(ev.test_auc, 3)}, ΔAUC CI ${ci} vs H1 ensemble included 0)</span>`;
+            return `<div class="card" style="background:#fdf6e3; border-left-color:#b9770e; border-left-width:6px;">
+                <h3>H1 Technical-Indicator LSTM (observational) ${badge}</h3>
+                <div class="value">${ti.direction} ${arrow} &mdash; P(up) ${(ti.probability_up * 100).toFixed(1)}%</div>
+                <div class="sub-value">Predicted next-day return: ${ti.predicted_return_pct.toFixed(4)}% &middot; Data 'as of' ${ti.as_of_date}</div>
+                <div class="meta">Test-block comparison it did NOT win: TI AUC ${num(ev.test_auc, 4)} vs existing H1 ensemble ${num(ev.test_h1_ensemble_auc, 4)} (ΔAUC ${num(ev.test_dauc_vs_ensemble, 4)}, CI ${ci}). Kept for transparency and forward observation via its own <a href="/paper-trading">paper-trading ledger</a> — not because it demonstrated an edge. ${ti.model}.</div>
             </div>`;
         }
 

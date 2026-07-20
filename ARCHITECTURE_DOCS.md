@@ -604,6 +604,34 @@ scaffolding and are discarded) plus `vs_garch_baseline` /
 magnitude" card labeled `✓ validated vs GARCH(1,1)` — the framing matches
 exactly what the rigorous test found, no more.
 
+### 3.6 H1 TI-LSTM (observational — NOT validated; in production by owner override)
+
+**Status warning for every future reader: this model's presence in production
+is NOT validation.** The H1-native technical-indicator LSTM
+(`src/ti_lstm_h1_experimental.py`: %B-20, MACD 13/34 with 8-SMA signal, trend
+vs SMA-504/168, RSI-24, CCI-20, ADX-14 over the last complete session's 24
+hourly bars; next-day direction/return heads) **FAILED its pre-registered
+hypothesis bar** (`results/ti_lstm_h1_hypothesis_log.csv`: DROP — one-shot
+test AUC 0.5128 vs the existing H1 ensemble's 0.5283, ΔAUC −0.015
+CI95 [−0.072, +0.042], point estimate negative). By **explicit owner decision
+(2026-07-18)** it was wired into serving anyway, for transparent forward
+observation via its own paper-trading ledger — overriding, for this one
+model, the "only ship what clears the bar" rule. Honesty contract: the
+`ti_h1_forecast` response block carries `validated: false` + the verbatim
+test numbers; the UI card is amber-warning-framed ("⚠ Not Validated — No
+Demonstrated Edge"), deliberately NOT the volatility card's validated badge
+nor the macro panel's "nominally positive" framing.
+
+Mechanics: artifacts in `models/ti_lstm_h1/` (2×64, seed 42 — the Keras 3
+**torch/CUDA** backend was verified bit-deterministic); `ti_h1_ready`
+all-or-nothing gate mirrors `vol_ready`; the `.keras` file is
+backend-portable, so serving loads it under tf.keras with **no torch
+dependency**. Retraining runs as a SUBPROCESS (`_train_pipeline.py` §12C) —
+mandatory, because KERAS_BACKEND freezes at the first keras import and the
+pipeline process already imported tf.keras. Its forward ledger is
+`results/paper_trading_log_ti_h1.csv` (config `paper_trading.ledgers.ti_h1`,
+driven by the `ti_h1_direction` prediction-log column).
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

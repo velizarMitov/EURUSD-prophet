@@ -530,9 +530,142 @@ def _register(result):
     return out
 
 
+# ---------------------------------------------------------------------------
+# PRODUCTION promotion (owner override 2026-07-18) — this model SHIPPED with a
+# DROP verdict, by explicit owner decision, for transparent forward observation
+# only. It has NO demonstrated edge (test AUC 0.5128 vs the existing H1
+# ensemble's 0.5283, ΔAUC CI [−0.072, +0.042] — includes 0, point NEGATIVE).
+# Every consumer of these artifacts must surface that status verbatim
+# (`validated: false` + the actual numbers), never the volatility model's
+# validated framing. See IMPROVEMENT_LOG.md "owner override".
+# ---------------------------------------------------------------------------
+TI_MODEL_DIR = os.path.join('models', 'ti_lstm_h1')
+TI_ARTIFACTS = ['ti_lstm_h1.keras', 'ti_scaler.pkl', 'ti_config.pkl', 'ti_metrics.json']
+PRODUCTION_ARCHITECTURE = (2, 64)   # selected on the validation slice (see run())
+
+
+def train_production_ti_model(base_dir: str = '', cache_path: str = DEFAULT_H1_CACHE):
+    """Train + persist the promoted TI-LSTM under models/ti_lstm_h1/.
+
+    Production split convention (same as the daily/volatility families):
+    scaler fit on [0:80%], the LSTM trains [0:70%] with [70%:80%] as the
+    early-stopping tail, test block untouched. Architecture = the
+    validation-selected 2x64; seed 42 (the torch backend was verified
+    bit-deterministic, so a single seeded run IS the reproducible object).
+
+    MUST run in its own process (python -m src.ti_lstm_h1_experimental
+    train-production): KERAS_BACKEND is frozen at the first keras import, so a
+    process that already imported tf.keras cannot host this torch-backend fit.
+    The saved .keras file itself is backend-portable (standard layers only) —
+    serving loads it under tf.keras with no torch dependency.
+    """
+    require_cuda()
+    out_dir = os.path.join(base_dir, TI_MODEL_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        from src.live_data import fetch_h1_market_data
+        _df, _src = fetch_h1_market_data(cache_path=os.path.join(base_dir, cache_path)
+                                         if base_dir else cache_path)
+        print(f"H1 cache refreshed from {_src}.")
+    except Exception as e:
+        print(f"H1 cache refresh skipped ({e}); using existing cache.")
+
+    X, y_ret, y_dir, index = build_ti_datasets(
+        cache_path=os.path.join(base_dir, cache_path) if base_dir else cache_path)
+    n = len(index)
+    train_end, val_end = int(n * 0.70), int(n * 0.80)
+
+    n_feat = X.shape[2]
+    scaler = StandardScaler().fit(X[:val_end].reshape(-1, n_feat))
+    X_s = scaler.transform(X.reshape(-1, n_feat)).reshape(X.shape).astype('float32')
+
+    n_layers, units = PRODUCTION_ARCHITECTURE
+    import keras
+    keras.utils.set_random_seed(42)
+    model = build_model(n_layers, units, n_feat)
+    es = keras.callbacks.EarlyStopping(monitor='val_loss', patience=10,
+                                       restore_best_weights=True, verbose=0)
+    model.fit(X_s[:train_end], {'return_output': y_ret[:train_end],
+                                'direction_output': y_dir[:train_end]},
+              validation_data=(X_s[train_end:val_end],
+                               {'return_output': y_ret[train_end:val_end],
+                                'direction_output': y_dir[train_end:val_end]}),
+              epochs=100, batch_size=32, callbacks=[es], verbose=0)
+    epochs_trained = len(model.history.history['loss'])
+    print(f"Trained {n_layers}x{units} for {epochs_trained} epochs (seed 42, CUDA).")
+
+    # Honest status metadata, carried verbatim from the experiment's run report
+    # (results/ti_lstm_h1_validation.csv) into serving.
+    evidence = {}
+    exp_csv = os.path.join(base_dir, VALIDATION_CSV) if base_dir else VALIDATION_CSV
+    if os.path.exists(exp_csv):
+        evidence = pd.read_csv(exp_csv).iloc[0].to_dict()
+    metrics = {
+        'validated': False,
+        'verdict': 'DROP on its own hypothesis bar — SHIPPED ANYWAY by explicit '
+                   'owner override (2026-07-18) for transparent forward '
+                   'observation. No demonstrated edge.',
+        'val_auc': evidence.get('ti_val_auc'),
+        'val_acc': evidence.get('ti_val_acc'),
+        'test_auc': evidence.get('test_ti_auc'),
+        'test_acc': evidence.get('test_ti_acc'),
+        'test_h1_ensemble_auc': evidence.get('test_h1_ensemble_auc'),
+        'test_dauc_vs_ensemble': evidence.get('test_dauc'),
+        'test_dauc_ci': [evidence.get('test_ci_dauc_low'), evidence.get('test_ci_dauc_high')],
+        'hypothesis_log': 'results/ti_lstm_h1_hypothesis_log.csv',
+        'architecture': f'{n_layers}x{units}',
+        'epochs_trained': epochs_trained,
+        'trained_backend': 'keras3-torch-cuda',
+        'n_days': n, 'trained_through': str(index[train_end - 1].date()),
+    }
+
+    model.save(os.path.join(out_dir, 'ti_lstm_h1.keras'))
+    import joblib
+    joblib.dump(scaler, os.path.join(out_dir, 'ti_scaler.pkl'))
+    joblib.dump({'hours': HOURS_PER_DAY, 'features': list(TI_FEATURE_COLUMNS)},
+                os.path.join(out_dir, 'ti_config.pkl'))
+    with open(os.path.join(out_dir, 'ti_metrics.json'), 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Saved under {out_dir}/: {', '.join(TI_ARTIFACTS)}")
+    return metrics
+
+
+def build_ti_inference_sample(cache_path: str = DEFAULT_H1_CACHE, now=None, h1=None):
+    """Latest COMPLETE session's (1, 24, 8) TI tensor for live serving —
+    mirrors h1_features.build_ti/build_h1_inference_sample: live-first
+    staleness-gated load (refresh_h1_frame), the still-forming current UTC day
+    dropped, right-aligned last 24 bars. Returns (tensor, as_of, source).
+    Pure pandas/numpy — no keras/torch needed at serving time."""
+    from src.h1_features import refresh_h1_frame, _to_utc
+
+    now = _to_utc(now)
+    if h1 is None:
+        h1, source = refresh_h1_frame(cache_path, now=now)
+    else:
+        source = "preloaded"
+    h1 = enrich_h1_with_indicators(h1)
+
+    today = now.normalize()
+    g = h1[h1['date'] < today].groupby('date')
+    counts = g.size()
+    complete = counts[counts >= MIN_HOURS]
+    if not len(complete):
+        raise RuntimeError("No completed H1 trading day available for TI inference.")
+    as_of = complete.index[-1]
+
+    day = h1[h1['date'] == as_of]
+    arr = day[TI_FEATURE_COLUMNS].to_numpy(dtype=np.float32)[-HOURS_PER_DAY:]
+    X = np.zeros((1, HOURS_PER_DAY, len(TI_FEATURE_COLUMNS)), dtype=np.float32)
+    X[0, HOURS_PER_DAY - len(arr):, :] = arr
+    return X, as_of, source
+
+
 if __name__ == '__main__':
     import sys
     if sys.argv[1:2] == ['quick']:
         require_cuda()
+    elif sys.argv[1:2] == ['train-production']:
+        train_production_ti_model()
     else:
         run()

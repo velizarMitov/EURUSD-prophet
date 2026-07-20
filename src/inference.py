@@ -128,6 +128,34 @@ class PredictionService:
             and None not in (self.vol_lag_scaler, self.vol_lag_pca,
                              self.vol_global_scaler, self.vol_time_steps)
         )
+
+        # H1 TI-LSTM (models/ti_lstm_h1/): shipped by EXPLICIT OWNER OVERRIDE
+        # (2026-07-18) DESPITE a DROP verdict on its own hypothesis bar — it has
+        # NO demonstrated edge (test AUC ~0.51, ΔAUC CI vs the H1 ensemble
+        # includes 0 with a negative point estimate). Served for transparent
+        # forward observation ONLY; every response block carries
+        # `validated: false` + the real numbers, and the UI must keep the
+        # warning framing (never the volatility model's validated badge).
+        # The .keras artifact was trained on the Keras3/torch backend but is
+        # backend-portable (standard layers), so it loads here under tf.keras —
+        # serving has no torch dependency. All-or-nothing gate like vol_ready.
+        self.ti_model = None
+        self.ti_scaler = self.ti_config = self.ti_metrics = None
+        try:
+            ti_dir = os.path.join(models_dir, 'ti_lstm_h1')
+            self.ti_scaler = joblib.load(os.path.join(ti_dir, 'ti_scaler.pkl'))
+            self.ti_config = joblib.load(os.path.join(ti_dir, 'ti_config.pkl'))
+            with open(os.path.join(ti_dir, 'ti_metrics.json')) as f:
+                self.ti_metrics = json.load(f)
+            os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+            from tensorflow.keras.models import load_model
+            self.ti_model = load_model(os.path.join(ti_dir, 'ti_lstm_h1.keras'))
+        except Exception as e:
+            self.load_errors.append(f"H1 TI-LSTM (observational): {e}")
+
+        self.ti_h1_ready = None not in (
+            self.ti_model, self.ti_scaler, self.ti_config, self.ti_metrics,
+        )
         # Independent per-variant readiness gates (the names the API surfaces).
         self.baseline_ready = self._variant_ready('baseline')
         self.macro_ready = self._variant_ready('with_macro')
@@ -491,6 +519,52 @@ class PredictionService:
         }
         return per_model, as_of.date().isoformat(), h1_source
 
+    def _predict_ti_h1(self, now=None) -> dict:
+        """
+        Run the observational H1 TI-LSTM on the latest complete session's
+        (1, 24, 8) technical-indicator tensor. The block is HARD-LABELED
+        unvalidated: this model shipped by explicit owner override DESPITE a
+        DROP verdict (no demonstrated edge; negative point ΔAUC vs the H1
+        ensemble on the one-shot test comparison). Client code can key off
+        `validated: false`; the evidence numbers ride along verbatim so no
+        consumer has to trust a bare badge.
+        """
+        from .ti_lstm_h1_experimental import build_ti_inference_sample
+
+        h1_cfg = self.config.get('h1', {})
+        cache = os.path.join(self.base_dir, h1_cfg.get('cache_path', 'results/eurusd_h1.csv'))
+        X, as_of, source = build_ti_inference_sample(cache_path=cache, now=now)
+
+        n_feat = X.shape[2]
+        X_s = self.ti_scaler.transform(X.reshape(-1, n_feat)).reshape(X.shape).astype('float32')
+        pred_ret, prob_up = self.ti_model.predict(X_s, verbose=0)
+        pred_ret = float(pred_ret.ravel()[0])
+        prob_up = float(prob_up.ravel()[0])
+
+        m = self.ti_metrics or {}
+        return {
+            "as_of_date": as_of.date().isoformat(),
+            "data_source": source,
+            "direction": "UP" if prob_up >= 0.5 else "DOWN",
+            "probability_up": prob_up,
+            "predicted_return_pct": pred_ret,
+            "model": f"H1 technical-indicator LSTM ({m.get('architecture', '2x64')}, "
+                     f"%B/MACD-13-34-8/SMA504-168/RSI24/CCI20/ADX14)",
+            "validated": False,
+            "status": "NOT VALIDATED — NO DEMONSTRATED EDGE. Shipped by explicit "
+                      "owner override for transparent forward observation only; "
+                      "it FAILED its own hypothesis bar (DROP).",
+            "evidence": {
+                "test_auc": m.get('test_auc'),
+                "test_acc": m.get('test_acc'),
+                "test_h1_ensemble_auc": m.get('test_h1_ensemble_auc'),
+                "test_dauc_vs_ensemble": m.get('test_dauc_vs_ensemble'),
+                "test_dauc_ci": m.get('test_dauc_ci'),
+                "val_auc": m.get('val_auc'),
+                "hypothesis_log": m.get('hypothesis_log'),
+            },
+        }
+
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:
         """Aggregate the four return-only H1 regressors into one call, using the
@@ -678,6 +752,17 @@ class PredictionService:
                 }
             except Exception as e:
                 response['h1_error'] = str(e)
+
+        # Observational H1 TI-LSTM — kept a SEPARATE block from the validated
+        # H1 ensemble above (different validation history, separately
+        # attributable). Hard-labeled `validated: false` (owner-override ship,
+        # DROP verdict); failure degrades to ti_h1_error, never breaking the
+        # validated panels.
+        if self.ti_h1_ready:
+            try:
+                response['ti_h1_forecast'] = self._predict_ti_h1()
+            except Exception as e:
+                response['ti_h1_error'] = str(e)
 
         # Best-effort: log this forecast for the /history prediction-vs-actual
         # table and the dual paper-trading ledgers. Logging must never break a

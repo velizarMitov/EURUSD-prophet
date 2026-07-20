@@ -7,6 +7,7 @@ renders an HTML table so the model can be compared with reality over time.
 """
 import os
 
+import numpy as np
 import pandas as pd
 
 from .live_data import fetch_live_market_data, drop_incomplete_bars
@@ -17,7 +18,10 @@ LOG_COLUMNS = [
     'gbm_direction', 'lstm_direction',
     'baseline_direction', 'baseline_return_pct', 'baseline_confidence',
     'variant_agreement',
-    'h1_direction', 'h1_return_pct', 'h1_agreement', 'logged_at',
+    'h1_direction', 'h1_return_pct', 'h1_agreement',
+    'vol_pred_pct',   # next-day realized-volatility forecast (magnitude, validated vs GARCH(1,1))
+    'ti_h1_direction', 'ti_h1_return_pct',   # observational TI-LSTM (NOT validated — owner-override ship)
+    'logged_at',
 ]
 
 
@@ -40,6 +44,7 @@ def log_prediction(result: dict, log_path: str) -> None:
     base_cons = baseline_block.get('consensus', {})
     bar = result.get('bar_used', {})
     h1_cons = result.get('h1', {}).get('consensus', {})   # auxiliary intraday ensemble
+    vol_block = result.get('volatility_forecast', {})     # the ONE validated (vs GARCH) forecast
     row = {
         'as_of_date': result.get('as_of_date'),
         'forecasting_date': result.get('forecasting_date'),
@@ -56,6 +61,14 @@ def log_prediction(result: dict, log_path: str) -> None:
         'h1_direction': h1_cons.get('direction'),
         'h1_return_pct': h1_cons.get('predicted_return_pct'),
         'h1_agreement': h1_cons.get('confidence'),   # fraction of H1 models agreeing, NOT a probability
+        # Next-day realized-volatility forecast: a MAGNITUDE (direction-free),
+        # scored at render time as |predicted - realized| against the same
+        # |log return|*100 target the model was validated on.
+        'vol_pred_pct': vol_block.get('predicted_vol_pct'),
+        # Observational TI-LSTM (validated: false — owner-override ship): logged
+        # so its own forward paper-trading ledger can accumulate transparently.
+        'ti_h1_direction': result.get('ti_h1_forecast', {}).get('direction'),
+        'ti_h1_return_pct': result.get('ti_h1_forecast', {}).get('predicted_return_pct'),
         'logged_at': pd.Timestamp.utcnow().isoformat(),
     }
 
@@ -109,6 +122,7 @@ def build_history_html(log_path: str, data_cfg: dict,
 
     body_rows, n_resolved, n_correct = [], 0, 0
     n_h1_resolved, n_h1_correct = 0, 0
+    n_vol_resolved, sum_vol_abs_err = 0, 0.0
     for _, r in log.iterrows():
         actual_close = closes.get(str(r['forecasting_date']))
         resolved = actual_close is not None and pd.notna(r.get('as_of_close'))
@@ -124,6 +138,26 @@ def build_history_html(log_path: str, data_cfg: dict,
             actual_cell = f"{actual_dir} ({actual_ret:+.4f}%)"
         else:
             css, status, actual_cell = 'pending', '⏳ pending', '—'
+
+        # Next-day realized-volatility forecast — a MAGNITUDE call (how much, not
+        # which way), so it is NOT scored hit/miss. It is compared to the SAME
+        # target it was validated on: realized = |ln(close_{t+1}/close_t)|*100,
+        # and the running |predicted - realized| MAE is tracked (the exact metric
+        # that beat GARCH on the validation arbiter). Absent on pre-volatility
+        # log rows -> shown as an em-dash, never counted.
+        vol_pred = r.get('vol_pred_pct')
+        has_vol = pd.notna(vol_pred)
+        if has_vol and resolved:
+            realized_vol = abs(np.log(actual_close / r['as_of_close'])) * 100
+            vol_err = abs(realized_vol - float(vol_pred))
+            n_vol_resolved += 1
+            sum_vol_abs_err += vol_err
+            vol_cell = (f"±{float(vol_pred):.4f}% → {realized_vol:.4f}% "
+                        f"(err {vol_err:.4f})")
+        elif has_vol:
+            vol_cell = f"±{float(vol_pred):.4f}% ⏳"
+        else:
+            vol_cell = '—'
 
         # H1 auxiliary ensemble, scored against the SAME realised session (it
         # forecasts the same next-day close). Absent on rows logged before H1
@@ -149,6 +183,7 @@ def build_history_html(log_path: str, data_cfg: dict,
             f"<td>{_fmt(r.get('pred_direction'))} ({_pct(r.get('pred_return_pct'))})</td>"
             f"<td>{_conf(r.get('pred_confidence'))}</td>"
             f"<td>{h1_pred_cell} {h1_status}</td>"
+            f"<td>{vol_cell}</td>"
             f"<td>{actual_cell}</td>"
             f"<td>{status}</td>"
             f"</tr>"
@@ -160,11 +195,19 @@ def build_history_html(log_path: str, data_cfg: dict,
     h1_rate = (f" &nbsp;|&nbsp; H1 ensemble: {n_h1_correct}/{n_h1_resolved} &nbsp;·&nbsp; "
                f"<b>{n_h1_correct / n_h1_resolved:.0%}</b>"
                if n_h1_resolved else "")
-    hit_rate = daily_rate + h1_rate
+    # Volatility is scored by MAE (the validated-vs-GARCH metric), not a hit-rate:
+    # it is a magnitude forecast, so an honest scorecard reports average error,
+    # never a directional "% correct".
+    vol_rate = (f" &nbsp;|&nbsp; Volatility (magnitude): <b>{sum_vol_abs_err / n_vol_resolved:.4f}%</b> "
+                f"MAE over {n_vol_resolved} &nbsp;·&nbsp; validated vs GARCH(1,1)"
+                if n_vol_resolved else "")
+    hit_rate = daily_rate + h1_rate + vol_rate
     table = (
         "<table><thead><tr>"
         "<th>Data as of</th><th>Forecast for</th><th>Daily predicted</th>"
-        "<th>Confidence</th><th>H1 ensemble</th><th>Actual market</th><th>Result</th>"
+        "<th>Confidence</th><th>H1 ensemble</th>"
+        "<th>Next-day volatility (pred&nbsp;&rarr;&nbsp;realized)</th>"
+        "<th>Actual market</th><th>Result</th>"
         "</tr></thead><tbody>" + "".join(body_rows) + "</tbody></table>"
     )
     return _wrap(title, table, hit_rate)

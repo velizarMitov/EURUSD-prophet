@@ -44,6 +44,10 @@
       "with_macro": {
         "direction_column": "pred_direction",
         "log_path": "results/paper_trading_log_macro.csv"
+      },
+      "ti_h1": {
+        "direction_column": "ti_h1_direction",
+        "log_path": "results/paper_trading_log_ti_h1.csv"
       }
     }
   },

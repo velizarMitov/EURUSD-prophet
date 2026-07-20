@@ -419,6 +419,43 @@ original ship gate cleared. Runner: `python -m src.volatility candidates`
       count is now 5, so any future volatility hypothesis faces
       `alpha = 0.05/6 = 0.0083`. Full suite green (58 tests).
 
+## OWNER OVERRIDE — H1 TI-LSTM wired into production DESPITE its DROP verdict (2026-07-18)
+
+**Read this before trusting the TI-LSTM panel: its presence in production is
+NOT validation.** By explicit owner decision (2026-07-18), the H1
+technical-indicator LSTM below — which FAILED its own pre-registered
+hypothesis bar (DROP: test AUC 0.5128 vs the existing H1 ensemble's 0.5283,
+ΔAUC −0.015 CI [−0.072, +0.042] — includes 0, point estimate NEGATIVE) — was
+promoted to serving anyway, for **transparent forward observation only**.
+This overrides the original "only ship if it clears the bar" rule for this
+one model. It does NOT get the volatility model's validated framing, nor the
+macro features' "nominally positive, unproven" framing — its labels state
+plainly that it demonstrated no edge.
+
+- [x] Artifacts `models/ti_lstm_h1/` (2×64, seed 42, 13 epochs, CUDA;
+      `ti_metrics.json` carries `validated: false` + the real numbers) —
+      trained via `python -m src.ti_lstm_h1_experimental train-production`.
+- [x] `ti_h1_ready` all-or-nothing gate in `src/inference.py` (mirrors
+      `vol_ready`); distinct `ti_h1_forecast` response block with
+      `validated: false` + verbatim test evidence — never merged into the H1
+      ensemble's block. The torch-trained `.keras` is backend-portable and
+      serves under tf.keras (verified) — serving has NO torch dependency.
+- [x] Amber warning UI card: "⚠ Not Validated — No Demonstrated Edge (test
+      AUC ≈0.51, ΔAUC CI included 0 vs H1 ensemble)" with the actual numbers
+      rendered from the API block, visually distinct from the validated
+      volatility card.
+- [x] Retrain flow §12C in `_train_pipeline.py`: runs the TI retrain as a
+      SUBPROCESS — mandatory, not just safer: KERAS_BACKEND freezes at the
+      first keras import and the pipeline process already imported tf.keras.
+      Verified end-to-end: a TF-backend host process spawned the CUDA torch
+      subprocess (rc=0) and hot-reloaded the fresh artifact.
+- [x] Third forward paper-trading ledger
+      (`results/paper_trading_log_ti_h1.csv`, driven by the new
+      `ti_h1_direction` log column) — the honest way to watch it: forward
+      P&L accumulation, no historical-edge claim.
+- [x] Full suite green; live end-to-end `/api/predict` confirmed all panels
+      (validated + observational) render together.
+
 ## Experiment — Standalone H1 technical-indicator LSTM (2026-07-18, research-only, VERDICT: DROP)
 
 Isolated experiment (`src/ti_lstm_h1_experimental.py`, own entry point, never

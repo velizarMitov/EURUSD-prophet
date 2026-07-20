@@ -183,10 +183,12 @@ def build_and_save(log_path: str, data_cfg: dict, out_path: str,
     return ledger, summarize(ledger)
 
 
-# Human-readable panel titles for the two model variants' ledgers.
+# Human-readable panel titles for the configured ledgers.
 VARIANT_LABELS = {
     'baseline': 'Price-Only Model (baseline)',
     'with_macro': 'With Macro Features (experimental)',
+    'ti_h1': ('H1 TI-LSTM — ⚠ NOT VALIDATED, no demonstrated edge '
+              '(owner-override ship, observational only)'),
 }
 
 

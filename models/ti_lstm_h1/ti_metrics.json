@@ -1,0 +1,20 @@
+{
+  "validated": false,
+  "verdict": "DROP on its own hypothesis bar \u2014 SHIPPED ANYWAY by explicit owner override (2026-07-18) for transparent forward observation. No demonstrated edge.",
+  "val_auc": 0.5421,
+  "val_acc": 0.492,
+  "test_auc": 0.5128,
+  "test_acc": 0.506,
+  "test_h1_ensemble_auc": 0.5283,
+  "test_dauc_vs_ensemble": -0.0154,
+  "test_dauc_ci": [
+    -0.0722,
+    0.042
+  ],
+  "hypothesis_log": "results/ti_lstm_h1_hypothesis_log.csv",
+  "architecture": "2x64",
+  "epochs_trained": 13,
+  "trained_backend": "keras3-torch-cuda",
+  "n_days": 2500,
+  "trained_through": "2023-08-23"
+}

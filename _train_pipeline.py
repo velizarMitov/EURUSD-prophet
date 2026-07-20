@@ -511,6 +511,37 @@ except Exception as _vol_err:
     traceback.print_exc()
 
 # ===========================================================================
+# 12C. H1 TI-LSTM (observational — owner-override ship, NOT validated)
+# ===========================================================================
+# This model FAILED its own hypothesis bar (DROP: test AUC ~0.51, negative
+# point ΔAUC vs the existing H1 ensemble) and is retrained here ONLY because
+# the owner explicitly shipped it for transparent forward observation
+# (IMPROVEMENT_LOG.md "owner override", 2026-07-18). It trains on the Keras 3
+# PYTORCH backend with CUDA; KERAS_BACKEND is frozen at the first keras
+# import and THIS process already imported tf.keras above, so an in-process
+# fit is IMPOSSIBLE — the subprocess is a hard requirement, not just safer
+# isolation. The saved .keras artifact is backend-portable and serves under
+# tf.keras. Failure degrades to a warning; every validated family above is
+# unaffected.
+print("\n=== 12C. H1 TI-LSTM (observational, torch-backend subprocess) ===")
+try:
+    import subprocess
+    import sys as _sys
+    _ti = subprocess.run(
+        [_sys.executable, '-m', 'src.ti_lstm_h1_experimental', 'train-production'],
+        cwd=os.path.dirname(os.path.abspath(__file__)) or '.',
+        capture_output=True, text=True, timeout=3600,
+    )
+    print(_ti.stdout[-1500:])
+    if _ti.returncode != 0:
+        print(f"WARNING: TI-LSTM retrain subprocess failed (rc={_ti.returncode}). "
+              f"stderr tail: {_ti.stderr[-800:]}  — the observational panel will "
+              f"keep serving the previous artifacts; validated families unaffected.")
+except Exception as _ti_err:
+    print(f"WARNING: TI-LSTM retrain step skipped ({_ti_err}). "
+          f"Validated families unaffected.")
+
+# ===========================================================================
 # H1 -> Daily Predictor (auxiliary multi-model ensemble)
 # ===========================================================================
 # ADDITIVE to the daily pipeline above -- it never touches the per-variant daily
