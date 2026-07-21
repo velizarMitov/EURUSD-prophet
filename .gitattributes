@@ -1,0 +1,7 @@
+* text=auto
+*.keras binary
+*.pkl binary
+*.h5 binary
+*.py text eol=lf
+*.csv text eol=lf
+*.md text eol=lf
