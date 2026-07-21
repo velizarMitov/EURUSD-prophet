@@ -459,6 +459,31 @@ def test_fetch_cot_features_returns_none_when_nothing_reachable(monkeypatch, tmp
     assert (out['cot_eur_zscore'] == 0.0).all() and (out['cot_usdindex_zscore'] == 0.0).all()
 
 
+def test_weekly_cot_asof_join_backward_no_lookahead():
+    """The weekly-horizon side-check (src/cot_weekly_check.py) joins COT by
+    AVAILABILITY date with merge_asof(direction='backward'): a week-ending Tuesday
+    must carry the last COT reading ALREADY PUBLIC by that Tuesday, never one
+    whose availability date is still in the future; and the target must be the
+    strictly-forward weekly return (last week, with no next, dropped)."""
+    from src.cot_weekly_check import weekly_cot_target_frame
+
+    tuesdays = pd.DatetimeIndex(['2020-01-07', '2020-01-14', '2020-01-21', '2020-01-28'])
+    weekly_close = pd.Series([1.10, 1.11, 1.12, 1.13], index=tuesdays)
+    cot_frame = pd.DataFrame(
+        {'cot_eur_zscore': [0.5, 1.0, 2.0], 'cot_usdindex_zscore': [-0.5, -1.0, -2.0]},
+        index=pd.DatetimeIndex(['2020-01-03', '2020-01-10', '2020-01-17'], tz='UTC'),  # Friday publishes
+    )
+    out = weekly_cot_target_frame(weekly_close, cot_frame)
+    e = out['cot_eur_zscore']
+    assert e.loc[pd.Timestamp('2020-01-07')] == pytest.approx(0.5), "Jan 7: only the Jan 3 reading is public."
+    assert e.loc[pd.Timestamp('2020-01-14')] == pytest.approx(1.0), \
+        "Jan 14: the Jan 17 reading is still FUTURE -> must use Jan 10, no look-ahead."
+    assert e.loc[pd.Timestamp('2020-01-21')] == pytest.approx(2.0), "Jan 21: Jan 17 reading now public."
+    assert pd.Timestamp('2020-01-28') not in out.index, "Final week has no forward return -> dropped."
+    assert out['fwd_weekly_ret'].loc[pd.Timestamp('2020-01-07')] == pytest.approx(np.log(1.11 / 1.10)), \
+        "Target is the strictly-forward (next-week) weekly log return."
+
+
 def test_compute_consensus_agreement_averages():
     """When both models agree on direction, the consensus must average their
     confidence/return rather than just picking one arbitrarily."""

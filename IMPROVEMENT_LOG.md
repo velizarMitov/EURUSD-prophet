@@ -659,6 +659,42 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       triggered no retrain. A null (here, negative) result honestly recorded —
       not a failure hidden. New COT claims need genuinely new forward data. See
       ARCHITECTURE_DOCS.md §4.3.2.
+- [x] **COT weekly-horizon side-check — exploratory, own family, DROP
+      (2026-07-21).** Follow-up to the above: does COT positioning carry an edge
+      on a WEEKLY horizon (its documented use — multi-week reversals), even
+      though it failed both DAILY families? Added `src/cot_weekly_check.py`: daily
+      close (`results/eurusd_features.csv`) resampled to weekly **W-TUE** bars
+      (last close, aligned to CFTC's Tuesday as-of cadence); target = forward
+      weekly log return (`shift(-1)` weekly, direction = sign); predictors =
+      `cot_eur_zscore`/`cot_usdindex_zscore` joined by **availability date**
+      (`merge_asof` backward — each Tuesday close carries only the last COT
+      reading already public, the same-week as_of report published ~3 days later
+      excluded; the weekly analogue of `add_cot_features`, unit-tested by
+      `test_weekly_cot_asof_join_backward_no_lookahead`). Chronological 70/80
+      split at weekly resolution (992 analysis weeks 2007-06→2026-06; train 694,
+      **val 99**, test 199 reserved and untouched).
+      **This is a SEPARATE hypothesis family** (different target horizon → not
+      comparable to the daily/volatility bars): logged ONLY in the new
+      `results/cot_weekly_hypothesis_log.csv` at alpha=0.05 (first test; a future
+      weekly-COT test becomes #2 and tightens it). The daily
+      `feature_hypothesis_log.csv` and `volatility_hypothesis_log.csv` were NOT
+      touched.
+      **Pre-registered ONE battery, run once, no iterating** (Spearman primary +
+      logistic corroborating; decision governed by the primary to bar cherry-
+      picking):
+        * PRIMARY Spearman rho on validation — `cot_eur_zscore` rho **+0.061**
+          CI [−0.125, +0.243]; `cot_usdindex_zscore` rho **+0.061** CI
+          [−0.145, +0.257] — **both straddle 0**.
+        * CORROBORATING logistic(2 z-scores → direction): val acc **0.5354** ==
+          the train-majority baseline exactly (Δacc **+0.0000**, CI
+          [−0.152, +0.172], McNemar **p=1.0**) — the model collapses to the base
+          rate; the z-scores add no separating signal.
+      **Verdict DROP — no weekly COT edge.** Stated power caveat: 99 validation
+      weeks only detect |rho| ≳ 0.2, so a null is *weak* evidence of absence, not
+      proof. Research-only outcome — no model, no variant, no serving change (as
+      pre-committed). A genuine future test needs either a longer forward window
+      or a properly-designed weekly model; this side-check just says the raw
+      signal is not obviously there.
 
 ## Bug fixes
 

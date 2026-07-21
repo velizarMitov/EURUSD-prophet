@@ -927,6 +927,24 @@ but COT is **not** in `FEATURE_COLUMNS`, **not** served, and triggered no retrai
 `cot_staleness_days()` exists as a module diagnostic for a future forward test; it
 is wired into the live response only if COT ever ships.
 
+**Weekly-horizon side-check (also DROP, own family).** Because COT is documented
+for multi-week reversals rather than next-day moves, a separate exploratory check
+(`src/cot_weekly_check.py`) asked whether the z-scores carry a **weekly** edge —
+daily close resampled to W-TUE bars (CFTC's Tuesday cadence), target = forward
+weekly log return, predictors joined by availability date (`merge_asof` backward,
+same no-look-ahead discipline, guarded by
+`test_weekly_cot_asof_join_backward_no_lookahead`). This is a **different target
+horizon**, so it is *not* comparable to the daily direction/return or volatility
+bars and is logged in its **own** family file `results/cot_weekly_hypothesis_log.csv`
+(alpha=0.05 first test) — `feature_hypothesis_log.csv` and
+`volatility_hypothesis_log.csv` are untouched. One pre-registered battery (992
+analysis weeks, 99 validation): Spearman rho on validation was **+0.061** for both
+z-scores with 95% CIs straddling 0, and a logistic direction model collapsed
+exactly to the majority baseline (Δacc +0.000, McNemar p=1.0) → **DROP**. Honest
+power caveat: ~100 validation weeks only detect |rho| ≳ 0.2, so this is weak
+evidence of absence, and it remains **research-only** — no model, no variant, no
+serving change regardless of outcome.
+
 ### 4.4 Known defects — fixed in this branch
 
 1. **Macro cache truncation (data-loss).** `fetch_yield_differential` previously
