@@ -695,6 +695,37 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       pre-committed). A genuine future test needs either a longer forward window
       or a properly-designed weekly model; this side-check just says the raw
       signal is not obviously there.
+- [x] **COT weekly hypothesis #2 — contrarian positioning EXTREMES —
+      INCONCLUSIVE/underpowered (2026-07-21).** Second pre-registered test in the
+      SAME weekly family (target = forward weekly return), so it tightens the
+      family bar to **alpha = 0.05/2 = 0.025**; logged as row #2 of
+      `results/cot_weekly_hypothesis_log.csv` (upsert-by-name, union columns), the
+      daily `feature_hypothesis_log.csv` and `volatility_hypothesis_log.csv`
+      untouched. Reused `build_weekly_frame`/`weekly_cot_target_frame` + the same
+      70/80 split unchanged (added `run_extremes()` to `src/cot_weekly_check.py`).
+      **Pre-registered (fixed before results, no tuning):** crowded-long = z>+1.0,
+      crowded-short = z<−1.0 (~top/bottom 16% under normality — a priori, not
+      threshold-scanned); contrarian hypothesis = crowded-long → NEGATIVE forward
+      weekly return, crowded-short → POSITIVE. PRIMARY (governs verdict, bundles
+      both instruments): spread = mean(fwd|z>+1) − mean(fwd|z<−1) per z-score,
+      paired 2000-bootstrap 95% CI; KEEP-signal only if a CI is entirely below 0
+      AND the point spread is negative. Corroborating exact binomial sign tests
+      (context only). Pre-registered underpowered rule: <5 extreme weeks on a tail
+      → INCONCLUSIVE, do NOT loosen the cutoff.
+      **Outcome — INCONCLUSIVE / underpowered, and a clean vindication of the
+      pre-registration.** The validation window (~2020-10→2022-08) had one-sided
+      positioning: `cot_eur_zscore` was crowded-long **30** weeks but crowded-short
+      **0** (spread undefined); `cot_usdindex_zscore` was crowded-short **27** but
+      crowded-long only **2** (< the 5 minimum; 12% of bootstrap draws degenerate).
+      Neither z-score had enough two-sided extremes for a stable CI, so the
+      verdict is INCONCLUSIVE (`cleared_bar=False`), NOT a KEEP and NOT a clean
+      DROP. The one point estimate that could be formed (usdidx spread **+0.0026**)
+      was even the *wrong* sign for the contrarian story. A less disciplined pass
+      would have dropped the cutoff to |z|>0.5 to manufacture rows — exactly the
+      post-hoc tuning the pre-registration forbade; the threshold was left at 1.0
+      and the thin/one-sided tails reported plainly. Research-only: no model, no
+      variant, no serving change. A real test needs a longer/again-two-sided
+      forward window. See ARCHITECTURE_DOCS.md §4.3.2.
 
 ## Bug fixes
 

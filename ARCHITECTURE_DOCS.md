@@ -945,6 +945,20 @@ power caveat: ~100 validation weeks only detect |rho| ≳ 0.2, so this is weak
 evidence of absence, and it remains **research-only** — no model, no variant, no
 serving change regardless of outcome.
 
+A **second** weekly hypothesis (`run_extremes()`, same family, so the bar tightens
+to alpha=0.05/2=**0.025**) tested positioning **extremes as a contrarian signal**
+rather than linear correlation: pre-registered crowded-long = z>+1.0 /
+crowded-short = z<−1.0 (~16% tails, a priori), predicting crowded-long → negative
+and crowded-short → positive forward weekly returns, with the PRIMARY test the
+bootstrap 95% CI of `spread = mean(fwd|z>+1) − mean(fwd|z<−1)` (KEEP only if
+entirely below 0 with the expected sign) and exact binomial sign tests as
+context. **Outcome: INCONCLUSIVE / underpowered** — the validation window had
+one-sided positioning (`cot_eur_zscore` crowded-long 30 weeks / crowded-short 0;
+`cot_usdindex_zscore` crowded-short 27 / crowded-long 2), so neither z-score had
+≥5 two-sided extreme weeks for a stable CI. Per the pre-registration the cutoff
+was **not** loosened to manufacture rows; the thin tails were reported plainly
+(`cot_weekly_hypothesis_log.csv` row #2, `cleared_bar=False`). Still research-only.
+
 ### 4.4 Known defects — fixed in this branch
 
 1. **Macro cache truncation (data-loss).** `fetch_yield_differential` previously

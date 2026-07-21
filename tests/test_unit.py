@@ -484,6 +484,34 @@ def test_weekly_cot_asof_join_backward_no_lookahead():
         "Target is the strictly-forward (next-week) weekly log return."
 
 
+def test_cot_weekly_contrarian_spread_signal_and_underpowered_guard():
+    """Hypothesis-#2 core (src/cot_weekly_check._extreme_contrarian_spread,
+    driving run_extremes): a clean crowded-long→negative / crowded-short→positive
+    setup yields spread < 0 with a 95% CI entirely below 0 (KEEP-signal); and a
+    tail with fewer than MIN_EXTREME_PER_SIDE extreme weeks is flagged
+    non-computable (INCONCLUSIVE), never silently scored — the pre-registered
+    underpowered guard that forbids loosening the |z|>1 cutoff to manufacture
+    rows."""
+    from src.cot_weekly_check import _extreme_contrarian_spread, MIN_EXTREME_PER_SIDE
+
+    # Case A: strong contrarian signal, both tails well-populated (>= min/side).
+    z = np.array([2.0] * 8 + [-2.0] * 8 + [0.0] * 20)
+    y = np.array([-0.02] * 8 + [0.02] * 8 + [0.0] * 20)   # crowded-long -> neg, crowded-short -> pos
+    a = _extreme_contrarian_spread(z, y, n_boot=500, random_state=0)
+    assert a['n_long'] == 8 and a['n_short'] == 8 and a['computable']
+    assert a['point_spread'] == pytest.approx(-0.04), "mean(-0.02) - mean(+0.02) = -0.04."
+    assert a['ci_high'] < 0, "95% CI entirely below 0 -> contrarian signal."
+    assert a['signal'] is True
+
+    # Case B: one tail too thin (< MIN_EXTREME_PER_SIDE) -> inconclusive, not scored.
+    z2 = np.array([2.0] * 2 + [-2.0] * 10 + [0.0] * 20)
+    y2 = np.array([-0.02] * 2 + [0.02] * 10 + [0.0] * 20)
+    b = _extreme_contrarian_spread(z2, y2, n_boot=500, random_state=0)
+    assert b['n_long'] == 2 and b['n_long'] < MIN_EXTREME_PER_SIDE
+    assert b['computable'] is False and b['signal'] is False, \
+        "Too few crowded-long weeks -> INCONCLUSIVE, never a scored KEEP/DROP."
+
+
 def test_compute_consensus_agreement_averages():
     """When both models agree on direction, the consensus must average their
     confidence/return rather than just picking one arbitrarily."""
