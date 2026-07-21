@@ -659,6 +659,11 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       triggered no retrain. A null (here, negative) result honestly recorded —
       not a failure hidden. New COT claims need genuinely new forward data. See
       ARCHITECTURE_DOCS.md §4.3.2.
+      **Housekeeping note (2026-07-21):** the daily-COT commit `198fb3b` also
+      incidentally restaged a full regeneration of `results/eurusd_h1.csv` (an
+      unrelated H1-cache rewrite that was sitting in the working tree at commit
+      time) — it is NOT part of the COT feature work. Left as published; no
+      history rewrite.
 - [x] **COT weekly-horizon side-check — exploratory, own family, DROP
       (2026-07-21).** Follow-up to the above: does COT positioning carry an edge
       on a WEEKLY horizon (its documented use — multi-week reversals), even
