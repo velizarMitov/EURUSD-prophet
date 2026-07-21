@@ -29,17 +29,29 @@ def _assert_committee_block(block, variant):
         assert 0.0 <= c['confidence'] <= 1.0
 
 
-def test_integration_predict_endpoint():
+def test_integration_predict_endpoint(tmp_path, monkeypatch):
     """Integration test verifying the fully-automated /api/predict endpoint
     (no request body) drives the live-fetch-or-fallback pipeline end-to-end
     without arbitrary HTTP 500 runtime crashes, returning BOTH model variants
     (baseline price-only + with_macro) side by side plus the variant_agreement
-    comparison flag."""
+    comparison flag.
+
+    The prediction-log write inside predict() is redirected to a tmp file, so
+    the test NEVER touches the real tracked results/prediction_log.csv
+    (production log). Running the suite must leave that file byte-for-byte
+    unchanged — asserted here by confirming the write landed in the tmp path."""
+    import api
+    isolated_log = tmp_path / "prediction_log.csv"
+    monkeypatch.setitem(api.service.config['tracking'], 'log_path', str(isolated_log))
 
     response = client.post("/api/predict")
 
     # Strictly evaluating operational capability
     if response.status_code == 200:
+        # A successful forecast logs itself; that write must have gone to the
+        # redirected tmp path, proving the tracked production log was untouched.
+        assert isolated_log.exists(), \
+            "predict() logged to the redirected tmp path (never the tracked production log)."
         data = response.json()
         assert data.get('data_source') in ("MT5", "yfinance", "history_fallback"), "API omitted/mis-labeled the automated data source."
         assert "as_of_date" in data, "API omitted the 'Data As Of' date."
