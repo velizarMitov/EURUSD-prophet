@@ -605,6 +605,60 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       paper-trading arbiter) or a different target (exactly how the
       volatility family found its validated edge). Documented in
       ARCHITECTURE_DOCS.md §4.2.1.
+- [x] **COT (Commitment of Traders) net-speculative positioning — new candidate
+      feature, tested in BOTH families, DROPPED in both (2026-07-20).** Added
+      `src/cot_data.py`: leveraged-funds net position (long − short) for EURO FX
+      and ICE's USD INDEX (DX) futures from the CFTC "Traders in Financial
+      Futures" Socrata dataset (`gpe5-46if`), z-scored over a trailing 3-year
+      weekly window (raw contract counts are non-stationary — OI has grown for
+      two decades — so raw levels were deliberately not used). Genuinely
+      different information (positioning/sentiment), not another price/macro
+      transform. Reused the owner's working CFTC client from
+      `C:\Users\test\PycharmProjects\COTForex\cftc_api.py` (dataset id, endpoint,
+      `lev_money_positions_*` fields), ported self-contained into this repo with
+      the same API→cache→None fallback chain and merge-not-overwrite caching as
+      `src/macro_data.py`.
+      **Look-ahead discipline (the whole risk of a positioning feature):** CFTC
+      reports a Tuesday "as of" date but publishes the following Friday (~3-day
+      lag), delayed irregularly by holidays/shutdowns. Verified against the live
+      API that Socrata's true publish timestamp `:created_at` is reliable ONLY
+      for rows after the 2022-09-13 bulk reload (every earlier row carries that
+      single reload date, not its original publish). So `availability_date()` is
+      hybrid: trust `:created_at` when its lag over as_of is plausible (recent
+      rows — handles the real holiday/shutdown delays, e.g. as_of 2026-06-30 →
+      published 2026-07-06), else fall back to a CONSERVATIVE `as_of + 10 days`
+      (deep history) — never a fixed +3, which would leak during exactly those
+      gaps. The z-score is computed on the native WEEKLY cadence then ffilled by
+      availability date onto daily bars (`add_cot_features`), so a bar only ever
+      sees a reading already public. Residual honesty caveat: a pre-2022
+      multi-week shutdown could exceed the +10 buffer and be treated available a
+      few days early (a handful of deep-train rows); all live/forward data uses
+      the true `:created_at`. `cot_staleness_days()` diagnostic added, mirroring
+      the `macro_source`/`h1_data_source` convention; it is wired into serving
+      only if COT ever ships (it did not — see below — so it stays a module-level
+      diagnostic rather than dead code in the live response).
+      **Both families reject it, judged validation-only at the Bonferroni bar,
+      test block never touched:**
+        * Direction/return (bundled ONE hypothesis via `src/ablation.py cot`;
+          family 5→6, bar 0.05/6 = 0.0083): Δacc **−0.0035**, Δauc −0.0099,
+          95% CI dacc [−0.0234, +0.0175], McNemar **p=0.83** →
+          **DROP** (`feature_hypothesis_log.csv` n=6). Direction family now 0/6.
+        * Volatility (bundled ONE hypothesis via `src/volatility.py candidates
+          cot`, same 5-seed MT ensemble methodology; family 6→7, bar
+          0.05/7 = 0.0071): base ensemble MAE 0.1822% vs +COT 0.1889%, ΔMAE
+          **−0.0067%** CI **[−0.0091, −0.0045]** (entirely BELOW 0 — reliably
+          WORSE, not merely indistinguishable), ΔR² −0.0249 CI [−0.046, −0.008],
+          frac(dMAE>0)=0.000 → **DROP** (`volatility_hypothesis_log.csv` n=7).
+          The challenger's best seed (0.1824%) still lost to the base ensemble
+          mean, so it is not a training-noise artifact.
+      **Conclusion:** COT positioning carries no next-day EUR/USD edge in either
+      task — consistent with COT being documented for multi-week reversals, not
+      daily moves, and with this project's efficient-market result. Kept the
+      module + both harness hooks + tests so the finding is reproducible, but
+      COT is NOT added to `FEATURE_COLUMNS`, NOT served, NOT in any variant, and
+      triggered no retrain. A null (here, negative) result honestly recorded —
+      not a failure hidden. New COT claims need genuinely new forward data. See
+      ARCHITECTURE_DOCS.md §4.3.2.
 
 ## Bug fixes
 

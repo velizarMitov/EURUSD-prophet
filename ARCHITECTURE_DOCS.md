@@ -20,6 +20,7 @@
 | Auxiliary intraday feature engineering | `src/h1_features.py` | H1→Daily feature module for the auxiliary ensemble (§3.4) — flattened daily stats + 24h tensor, both including `Trend_vs_SMA504`/`RSI_24`. Independent of `src/features.py`. |
 | Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV (also `fetch_h1_market_data` for the H1 stream). |
 | Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
+| COT positioning data | `src/cot_data.py` | CFTC "Traders in Financial Futures" Socrata API → cache fallback chain; availability-date look-ahead logic + trailing-window z-scores. **Tested candidate — DROPPED in both families (§4.3.2), not served.** |
 | Web app (single entry point) | `api.py` | FastAPI server: serves `static/index.html` at `/`, `POST /api/predict`, `GET /history`, `POST /api/retrain`. Port 8000. |
 | Feature-ablation harness | `src/ablation.py` | Validation-only KEEP/DROP arbiter + Bonferroni-corrected significance bar (see *Production Methodology*). |
 | Forward paper-trading | `src/paper_trading.py` | Simulated cost-net P&L ledger from the prediction log; the primary going-forward arbiter. |
@@ -879,6 +880,52 @@ treated as real signal, and this is a live-money caveat, not an academic one.
 1971+ set in §4.3. Both are within noise; re-evaluating/removing the yield
 feature is tracked as a separate `IMPROVEMENT_LOG.md` follow-up, deliberately not
 changed in the same pass that added the three features (one change at a time).
+
+### 4.3.2 COT positioning — genuinely new information, tested in both families, dropped
+
+`src/cot_data.py` added weekly **net speculative positioning** (CFTC *Traders in
+Financial Futures*, leveraged-funds long − short) for **EURO FX** and **ICE's USD
+INDEX (DX)** futures as two candidate features (`cot_eur_zscore`,
+`cot_usdindex_zscore`), z-scored over a trailing 3-year weekly window. Unlike the
+FRED macro features this is a different *kind* of information — positioning /
+sentiment, not price or rates — so it was worth a dedicated hypothesis in each
+family. Raw contract counts are **not** used: open interest has grown structurally
+for two decades, so raw levels are non-stationary; the trailing z-score removes
+that drift.
+
+**Look-ahead handling (the load-bearing part).** CFTC reports a Tuesday "as of"
+date but only *publishes* the following Friday (~3-day structural lag), delayed
+irregularly by holidays and government shutdowns. The daily join therefore uses
+the **availability date**, never the as-of date. The live Socrata API exposes a
+true system publish timestamp `:created_at`, but it is reliable only for rows
+inserted after the dataset's **2022-09-13 bulk reload** (every earlier row carries
+that one reload timestamp). `availability_date()` is hybrid: trust `:created_at`
+when its lag over as-of is plausible (recent rows — captures real holiday/shutdown
+delays exactly), else fall back to a conservative **`as_of + 10 days`** (a fixed
++3 would leak during exactly those gaps). Z-scores are computed on the native
+weekly cadence and ffilled by availability date onto daily bars
+(`add_cot_features`), so a bar can only ever see a reading already public — the
+same as-of ffill discipline the monthly FRED series use. Guarded by
+`test_add_cot_features_ffill_by_availability_date_no_lookahead` and
+`test_cot_availability_date_trusts_recent_publish_but_buffers_bulk_reload`.
+
+**Result — DROP in both families** (validation-only arbiter `[70%:80%]`, test block
+never touched, each a single bundled Bonferroni hypothesis):
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py`) | Δacc **−0.0035**, Δauc −0.0099 | Δacc [−0.0234, +0.0175] | McNemar **p=0.83** | 0.05/6 = 0.0083 | **DROP** (`feature_hypothesis_log.csv` n=6) |
+| Volatility 5-seed ensemble (`src/volatility.py`) | ΔMAE **−0.0067%**, ΔR² −0.025 | ΔMAE **[−0.0091, −0.0045]** (entirely < 0) | frac(dMAE>0)=0.000 | 0.05/7 = 0.0071 | **DROP** (`volatility_hypothesis_log.csv` n=7) |
+
+In direction/return COT is indistinguishable from noise; in volatility it is
+reliably **worse** than the validated base ensemble (the CI sits wholly below
+zero, and the challenger's best of 5 seeds still lost to the base mean, so it is
+not training-noise). Consistent with COT being documented for multi-week reversals
+rather than next-day moves, and with the efficient-market result of §4.2. The
+module, both ablation hooks, and the tests are kept so the finding is reproducible,
+but COT is **not** in `FEATURE_COLUMNS`, **not** served, and triggered no retrain.
+`cot_staleness_days()` exists as a module diagnostic for a future forward test; it
+is wired into the live response only if COT ever ships.
 
 ### 4.4 Known defects — fixed in this branch
 

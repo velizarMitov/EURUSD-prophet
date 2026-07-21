@@ -30,6 +30,11 @@
       }
     }
   },
+  "cot": {
+    "socrata_url": "https://publicreporting.cftc.gov/resource/gpe5-46if.json",
+    "markets": { "cot_eur": "EURO FX", "cot_usdindex": "USD INDEX" },
+    "cache_path": "results/cot_positioning.csv"
+  },
   "tracking": {
     "log_path": "results/prediction_log.csv",
     "html_path": "results/prediction_history.html"

@@ -57,6 +57,7 @@ from src.features import (
 )
 from src.h1_features import _rsi
 from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
+from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
 
 # Candidate INPUT features for the volatility model ONLY (hypotheses 4+ of this
 # family). Deliberately NOT added to src/features.py::FEATURE_COLUMNS — the
@@ -176,6 +177,10 @@ def build_volatility_matrix(config, base_dir='', extra_feature_columns=None):
     if any(c in FOMC_FEATURE_COLUMNS for c in extra):
         # Pure calendar-geometry join (no windows) — safe post-dropna.
         feat = add_fomc_features(feat, base_dir=base_dir)
+    if any(c in COT_FEATURE_COLUMNS for c in extra):
+        # Availability-date as-of ffill, neutral 0 where COT is absent / in
+        # z-score warm-up (see src/cot_data.py) — look-ahead-safe post-dropna.
+        feat = add_cot_features(feat, base_dir=base_dir, config=config)
     assert not feat[CANDIDATE_VOL_FEATURES + extra].isna().any().any(), \
         "candidate volatility features must be fully defined on the modeled euro-era rows"
 
@@ -1063,6 +1068,12 @@ if __name__ == '__main__':
             run_candidate_feature_tests(
                 features=[('fomc_calendar_block', FOMC_FEATURE_COLUMNS)],
                 out_csv='results/volatility_candidate_fomc.csv')
+        elif len(sys.argv) > 2 and sys.argv[2] == 'cot':
+            # EUR + USD-index net-speculative positioning: ONE bundled
+            # hypothesis (a single positioning theme), one Bonferroni slot.
+            run_candidate_feature_tests(
+                features=[('cot_positioning_block', COT_FEATURE_COLUMNS)],
+                out_csv='results/volatility_candidate_cot.csv')
         else:
             run_candidate_feature_tests()
     else:

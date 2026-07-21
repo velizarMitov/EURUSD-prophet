@@ -326,6 +326,139 @@ def test_fetch_fred_feature_generic_fallback_chain(monkeypatch, tmp_path):
     assert df2['policy_rate_differential'].iloc[0] == pytest.approx(2.25)
 
 
+# ── COT (CFTC positioning) features ─────────────────────────────────────────
+
+def test_cot_availability_date_trusts_recent_publish_but_buffers_bulk_reload():
+    """The look-ahead heart of src/cot_data.py: the join date must be when the
+    weekly report was actually PUBLISHED, not its Tuesday 'as of' date.
+
+    * A plausible recent publish timestamp (:created_at a few days after as_of,
+      even a holiday-delayed 6 days) is trusted -> availability = publish + 1d.
+    * The 2022-09-13 bulk-reload artifact (created_at YEARS after as_of) is NOT
+      trusted -> availability falls back to the conservative as_of + buffer.
+    * A missing timestamp -> the conservative buffer too.
+    Never earlier than reality (erring late), for every branch."""
+    from src.cot_data import availability_date, PUBLISH_BUFFER_DAYS, CREATED_AT_TRUST_MAX_LAG_DAYS
+
+    as_of = pd.Timestamp('2026-06-30', tz='UTC')          # a Tuesday
+    # Typical 3-day (Fri) publish -> trusted, +1d safety.
+    assert availability_date(as_of, pd.Timestamp('2026-07-03T19:30Z')) == pd.Timestamp('2026-07-04', tz='UTC')
+    # Holiday-delayed 6-day publish -> still trusted (this is the whole point of
+    # using created_at over a fixed +3 offset).
+    assert availability_date(as_of, pd.Timestamp('2026-07-06T19:30Z')) == pd.Timestamp('2026-07-07', tz='UTC')
+    # Bulk-reload artifact (created 2022 for a 2006 report) -> buffer, NOT the
+    # absurd reload date, and NOT the leaky as_of.
+    old_as_of = pd.Timestamp('2006-06-13', tz='UTC')
+    got = availability_date(old_as_of, pd.Timestamp('2022-09-13T14:16:09Z'))
+    assert got == old_as_of + pd.Timedelta(days=PUBLISH_BUFFER_DAYS)
+    # Missing timestamp -> conservative buffer.
+    assert availability_date(as_of, pd.NaT) == as_of + pd.Timedelta(days=PUBLISH_BUFFER_DAYS)
+    # The trust window is bounded (a lag beyond it is treated as an artifact).
+    stale = as_of + pd.Timedelta(days=CREATED_AT_TRUST_MAX_LAG_DAYS + 5)
+    assert availability_date(as_of, stale) == as_of + pd.Timedelta(days=PUBLISH_BUFFER_DAYS)
+
+
+def test_add_cot_features_ffill_by_availability_date_no_lookahead():
+    """add_cot_features joins the z-scores by AVAILABILITY date with as-of ffill:
+    a daily bar must carry the last COT reading ALREADY PUBLIC on that date, and
+    must NOT see a reading whose publish date is still in the future."""
+    from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
+
+    # Two weekly readings, availability-dated (as the module would stamp them).
+    cot_frame = pd.DataFrame(
+        {'cot_eur_zscore': [1.0, 2.0], 'cot_usdindex_zscore': [-1.0, -2.0]},
+        index=pd.DatetimeIndex(['2020-01-03', '2020-01-10'], tz='UTC'),  # Fri publishes
+    )
+    # Daily bars straddling the second publish date.
+    days = pd.DatetimeIndex(['2020-01-06', '2020-01-09', '2020-01-10', '2020-01-13'])  # Mon..Mon
+    df = pd.DataFrame({'close': [1.1] * len(days)}, index=days)
+
+    out = add_cot_features(df, cot_frame=cot_frame)
+    e = out['cot_eur_zscore']
+    assert e.loc[days[0]] == pytest.approx(1.0), "Jan 6: only the Jan 3 reading is public yet."
+    assert e.loc[days[1]] == pytest.approx(1.0), "Jan 9: Jan 10 reading is still in the FUTURE -> no leak."
+    assert e.loc[days[2]] == pytest.approx(2.0), "Jan 10: the second reading is now public (its availability date)."
+    assert e.loc[days[3]] == pytest.approx(2.0), "Jan 13: carries the latest public reading."
+    assert set(COT_FEATURE_COLUMNS).issubset(out.columns)
+
+
+def test_add_cot_features_neutral_zero_before_cot_exists():
+    """Bars before any COT reading is available (pre-2006, or z-score warm-up)
+    must get a NEUTRAL z-score of 0 -- never NaN (which would drop the whole
+    euro-era row set) and never back-filled from the first future reading."""
+    from src.cot_data import add_cot_features
+
+    cot_frame = pd.DataFrame(
+        {'cot_eur_zscore': [1.5], 'cot_usdindex_zscore': [0.5]},
+        index=pd.DatetimeIndex(['2006-06-23'], tz='UTC'),
+    )
+    days = pd.DatetimeIndex(['1999-06-01', '2005-01-03', '2006-06-30'])
+    df = pd.DataFrame({'close': [1.1] * len(days)}, index=days)
+    out = add_cot_features(df, cot_frame=cot_frame)
+    assert out['cot_eur_zscore'].loc[days[0]] == 0.0, "Pre-2006 must be neutral 0, not back-filled."
+    assert out['cot_eur_zscore'].loc[days[1]] == 0.0, "Still before first reading -> neutral 0."
+    assert out['cot_eur_zscore'].loc[days[2]] == pytest.approx(1.5), "After the first reading is public."
+
+
+def test_cot_zscore_is_trailing_only_no_lookahead():
+    """The z-score at week t must standardize against the trailing window ending
+    AT t (only data public by t), never a window that peeks at future weeks."""
+    from src.cot_data import _compute_cot_frame, ZSCORE_MIN_WEEKS
+
+    n = ZSCORE_MIN_WEEKS + 5
+    as_of = pd.date_range('2015-01-06', periods=n, freq='7D', tz='UTC')  # weekly Tuesdays
+    net = np.arange(n, dtype=float)                                       # strictly increasing
+    raw = pd.DataFrame({'cot_eur_net': net, 'cot_usdindex_net': net[::-1],
+                        'created_at': pd.NaT}, index=as_of)
+    frame = _compute_cot_frame(raw)
+    # A strictly increasing net that only ever rises means the LAST reading is
+    # the max of its trailing window -> its z-score must be POSITIVE. A
+    # look-ahead window (including nothing future here, but the sign is the
+    # tell) computed on trailing data gives a clean positive z at the top.
+    assert frame['cot_eur_zscore'].iloc[-1] > 0, "Rising series: latest week sits above its trailing mean."
+    # Early weeks below the min-periods threshold are undefined (-> neutral 0
+    # downstream), never computed from later weeks.
+    assert frame['cot_eur_zscore'].iloc[:ZSCORE_MIN_WEEKS - 1].isna().all(), \
+        "No z-score may exist before the trailing window has min_periods of history."
+
+
+def test_fetch_cot_features_falls_back_to_cache_when_api_down(monkeypatch, tmp_path):
+    """When the CFTC API is unreachable, fetch_cot_features must reuse the cached
+    raw snapshot on disk (recomputing z-scores from it) rather than failing the
+    pipeline -- the same graceful-degradation contract as the FRED chain."""
+    import src.cot_data as cot_data
+
+    # A tiny cached raw frame (as_of index, per-market net, created_at).
+    cache = str(tmp_path / 'cot.csv')
+    idx = pd.date_range('2015-01-06', periods=cot_data.ZSCORE_MIN_WEEKS + 3, freq='7D', tz='UTC')
+    pd.DataFrame({'cot_eur_net': np.arange(len(idx), dtype=float),
+                  'cot_usdindex_net': np.arange(len(idx), dtype=float),
+                  'created_at': pd.NaT}, index=idx).to_csv(cache)
+
+    monkeypatch.setattr(cot_data, '_fetch_all_markets_via_api', lambda *a, **k: None)
+    frame, source = cot_data.fetch_cot_features(cache_path=cache)
+    assert source == 'cache'
+    assert list(frame.columns) == cot_data.COT_FEATURE_COLUMNS
+    assert frame['cot_eur_zscore'].notna().any(), "z-scores must be recomputed from the cached raw net series."
+
+
+def test_fetch_cot_features_returns_none_when_nothing_reachable(monkeypatch, tmp_path):
+    """No API and no cache at all -> (None, 'unavailable'), so add_cot_features
+    neutralizes every COT column to 0 and the pipeline degrades, never crashes."""
+    import src.cot_data as cot_data
+
+    monkeypatch.setattr(cot_data, '_fetch_all_markets_via_api', lambda *a, **k: None)
+    frame, source = cot_data.fetch_cot_features(cache_path=str(tmp_path / 'missing.csv'))
+    assert frame is None and source == 'unavailable'
+
+    # With the feed entirely unreachable (fetch -> None), add_cot_features must
+    # still neutralize every COT column to 0 so the pipeline degrades, not dies.
+    monkeypatch.setattr(cot_data, 'fetch_cot_features', lambda *a, **k: (None, 'unavailable'))
+    df = pd.DataFrame({'close': [1.1, 1.1]}, index=pd.date_range('2020-01-01', periods=2))
+    out = cot_data.add_cot_features(df, cot_frame=None)  # None frame -> all-neutral
+    assert (out['cot_eur_zscore'] == 0.0).all() and (out['cot_usdindex_zscore'] == 0.0).all()
+
+
 def test_compute_consensus_agreement_averages():
     """When both models agree on direction, the consensus must average their
     confidence/return rather than just picking one arbitrarily."""

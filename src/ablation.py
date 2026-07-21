@@ -156,8 +156,13 @@ def build_matrix(config: dict, base_dir: str = "", extra_feature_columns=None):
     extra = list(extra_feature_columns or [])
     if extra:
         from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
+        from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
         if any(c in FOMC_FEATURE_COLUMNS for c in extra):
             feat = add_fomc_features(feat, base_dir=base_dir)
+        if any(c in COT_FEATURE_COLUMNS for c in extra):
+            # Availability-date as-of ffill onto the modeled rows, neutral 0
+            # before COT exists / z-score warm-up (see src/cot_data.py).
+            feat = add_cot_features(feat, base_dir=base_dir, config=config)
         assert not feat[extra].isna().any().any(), \
             "extra candidate columns must be fully defined on the modeled rows"
 
@@ -398,5 +403,11 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ['fomc']:
         from src.fomc_calendar import FOMC_FEATURE_COLUMNS
         run_addition_test('fomc_calendar_block', FOMC_FEATURE_COLUMNS)
+    elif sys.argv[1:2] == ['cot']:
+        # The EUR + USD-index positioning pair is ONE bundled hypothesis (a
+        # single positioning theme), one Bonferroni slot — same precedent as
+        # the FOMC calendar trio and the policy-rate block.
+        from src.cot_data import COT_FEATURE_COLUMNS
+        run_addition_test('cot_positioning_block', COT_FEATURE_COLUMNS)
     else:
         run(features=sys.argv[1:] or None)
