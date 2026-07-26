@@ -804,18 +804,20 @@ have a prior track record — genuinely reused UNCHANGED, not reimplemented.
 
       **H1.1 (linear baseline) — LogisticRegression**, judged against the
       train-majority-class baseline.
-      **H1.2 (non-linear) — feed-forward MLP** (NOT an LSTM — these are
-      already-extracted cross-sectional per-event ratios, not a time series):
-      Dense(16,L2=1e-3)→Dropout(0.3)→Dense(8,L2=1e-3)→Dropout(0.3)→
-      Dense(1,sigmoid), Adam lr=0.001, ≤100 epochs, early-stop patience=10 on
-      val loss, batch_size=32 (this project's existing H1-LSTM convention) —
-      architecture FIXED, no tuning after results. H1.2's **PRIMARY** decision
-      test compares against **H1.1's own predictions on the identical
-      validation rows** (not a fresh baseline) — the real "is the extra
-      complexity worth it" question, and ALONE governs H1.2's verdict; MLP-
-      vs-majority-baseline is corroborating context only (anti-cherry-pick
-      rule, same convention as the weekly-COT Spearman-primary /
-      logistic-corroborating test).
+      **H1.2 (non-linear) — feed-forward MLP**, RAW PYTORCH (deliberately not
+      Keras, unlike every other neural model in this project — see
+      *"H1.2 framework correction"* below for why), NOT an LSTM — these are
+      already-extracted cross-sectional per-event ratios, not a time series:
+      Linear(16,L2=1e-3 via `weight_decay`)→ReLU→Dropout(0.3)→
+      Linear(8,L2=1e-3)→ReLU→Dropout(0.3)→Linear(1)→Sigmoid, Adam lr=0.001,
+      ≤100 epochs, early-stop patience=10 on val loss, batch_size=32 (this
+      project's existing H1-LSTM convention) — architecture FIXED, no tuning
+      after results. H1.2's **PRIMARY** decision test compares against
+      **H1.1's own predictions on the identical validation rows** (not a
+      fresh baseline) — the real "is the extra complexity worth it" question,
+      and ALONE governs H1.2's verdict; MLP-vs-majority-baseline is
+      corroborating context only (anti-cherry-pick rule, same convention as
+      the weekly-COT Spearman-primary / logistic-corroborating test).
 - [x] Step 4 — Paired bootstrap 2000 resamples + exact McNemar, BOTH
       hypotheses, alpha = 0.05/2 = **0.025** each (CI width itself
       alpha-scaled — 97.5% — matching the volatility-family / weekly-COT-
@@ -827,10 +829,10 @@ have a prior track record — genuinely reused UNCHANGED, not reimplemented.
       | hypothesis | comparison | val acc (challenger / reference) | Δacc | 97.5% CI | McNemar p | verdict |
       |---|---|---|---|---|---|---|
       | H1.1 LogisticRegression | vs train-majority baseline | 0.4936 / 0.5305 | −0.0370 | [−0.1061, +0.0322] | 0.2671 | **DROP** |
-      | H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.5113 / 0.4936 | +0.0177 | [−0.0209, +0.0595] | 0.3712 | **DROP** |
+      | H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.4678 / 0.4936 | −0.0257 | [−0.0643, +0.0145] | 0.1812 | **DROP** |
 
       H1.2's corroborating check (vs majority baseline) was ALSO negative
-      (Δacc −0.0193, McNemar p=0.5374) — no ambiguity to arbitrate; both
+      (Δacc −0.0627, McNemar p=0.0882) — no ambiguity to arbitrate; both
       paths agree. Non-event random-sample baseline (b), descriptive only:
       label==1 rate 0.4608 (n=4,147) — close to the event dataset's own
       45.3%, consistent with the target/stop geometric distance asymmetry
@@ -850,6 +852,39 @@ have a prior track record — genuinely reused UNCHANGED, not reimplemented.
       comparison is a genuine row-for-row comparison against whatever
       predictions are passed in, never a hidden independent baseline), and
       the FEATURE_COLUMNS-exclusion guard. Full suite green (102 tests).
+
+**H1.2 framework correction (same day, before shipping).** The first draft of
+H1.2 used Keras (`tensorflow.keras`, matching every other neural model in
+this project). Owner review flagged that a Keras implementation cannot
+demonstrate two PyTorch-specific correctness pitfalls that matter for any
+FUTURE model in this codebase written in raw PyTorch, so H1.2 was rewritten
+in raw PyTorch specifically to guard against them, in `train_h1_2_mlp`
+(`src/harmonic_event_check.py`): **(1)** PyTorch does NOT auto-toggle
+Dropout between train/eval like Keras's `.fit()`/`.predict()` — `model
+.train()` before every training batch, `model.eval()` + `torch.no_grad()`
+before every validation-loss check and the final prediction; forgetting this
+leaves Dropout active during validation with no error, silently corrupting
+both the early-stopping signal and the reported accuracy. **(2)** the
+architecture keeps an explicit `Sigmoid` output (matching the original
+`Dense(1, sigmoid)` spec), so the loss must be `BCELoss` (not
+`BCEWithLogitsLoss`), and plain `BCELoss` has no `pos_weight` argument (that
+is `BCEWithLogitsLoss`-only) — class balancing is done via an explicit
+PER-SAMPLE weight tensor (`weight[i] = class_weight[y[i]]`) rebuilt each
+batch and passed to `BCELoss(weight=...)`. Validation loss (the early-
+stopping signal) is deliberately UNWEIGHTED, matching Keras's own actual
+default (`class_weight` only affects the training loss, never `val_loss`).
+CPU-only by choice (matches this project's other neural models' determinism
+convention, even though CUDA happens to be available in this environment).
+L2=1e-3 is applied via Adam's `weight_decay` — the standard PyTorch idiom,
+stated honestly as NOT numerically identical to Keras's loss-added
+`kernel_regularizer=l2` (same L2 strength, different mechanism). **The whole
+pre-registered hypothesis was re-run once, in full, with this corrected
+implementation** (a genuine correctness fix, not post-hoc tuning of a
+hyperparameter): H1.1 reproduced identically (unaffected — still
+scikit-learn), H1.2's numbers changed (Δacc +0.0177 → −0.0257) but the
+**verdict is unchanged: DROP**. `results/harmonic_pattern_hypothesis_log.csv`
+row 2 reflects the corrected run; this document's numbers above are the final
+ones.
       Power caveat stated plainly: 622 validation events is a small-n family;
       both DROPs are correspondingly weak (not strong) evidence of absence.
 

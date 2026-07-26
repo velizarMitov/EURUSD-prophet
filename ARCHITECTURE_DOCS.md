@@ -730,12 +730,39 @@ majority class and become indistinguishable from its own baseline) /
 | hypothesis | comparison | val acc (challenger / reference) | Δacc | 97.5% CI | McNemar p | verdict |
 |---|---|---|---|---|---|---|
 | H1.1 LogisticRegression | vs train-majority baseline | 0.4936 / 0.5305 | −0.0370 | [−0.1061, +0.0322] | 0.2671 | **DROP** |
-| H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.5113 / 0.4936 | +0.0177 | [−0.0209, +0.0595] | 0.3712 | **DROP** |
+| H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.4678 / 0.4936 | −0.0257 | [−0.0643, +0.0145] | 0.1812 | **DROP** |
+
+**H1.2 is raw PyTorch, deliberately not Keras** (unlike every other neural
+model in this project — the volatility LSTM ensemble, H1 LSTM, even the
+"torch backend" H1 TI-LSTM still goes through Keras 3's `Model` API, §3.6).
+Owner review flagged that only a raw-PyTorch implementation can demonstrate
+two correctness pitfalls Keras hides automatically, so `train_h1_2_mlp`
+guards against both explicitly: **(1)** PyTorch does not auto-toggle Dropout
+between train/eval like Keras's `.fit()`/`.predict()` — `model.train()`
+before every training batch, `model.eval()` + `torch.no_grad()` before every
+validation-loss check and the final prediction (skipping this leaves Dropout
+active during validation with no error, silently corrupting both the
+early-stopping signal and the reported accuracy). **(2)** the architecture
+keeps an explicit `Sigmoid` output, so the loss must be `BCELoss` (not
+`BCEWithLogitsLoss`), and plain `BCELoss` has no `pos_weight` — class
+balancing uses an explicit per-sample weight tensor
+(`weight[i] = class_weight[y[i]]`) rebuilt each batch and passed to
+`BCELoss(weight=...)`; the validation loss driving early stopping is
+deliberately UNWEIGHTED, matching Keras's own actual default. CPU-only by
+choice (this project's other neural models' determinism convention, even
+though CUDA happens to be available here); L2=1e-3 via Adam's `weight_decay`
+(the standard PyTorch idiom — not numerically identical to Keras's
+loss-added `kernel_regularizer=l2`, same strength, different mechanism,
+stated honestly rather than glossed over). **The whole pre-registered
+hypothesis was re-run once, in full, after this correctness fix** (not
+post-hoc tuning of a hyperparameter): H1.1 reproduced identically (unaffected
+— still scikit-learn); H1.2's numbers moved (Δacc +0.0177 → −0.0257) but the
+verdict did not: **still DROP**. The table above is the final, corrected run.
 
 H1.2's PRIMARY reference is H1.1's own predictions on the IDENTICAL
 validation rows (not a fresh baseline) — the real "is the extra non-linear
 capacity worth it" question, and ALONE governs its verdict; MLP-vs-majority
-(also negative here: Δacc −0.0193, McNemar p=0.5374) is corroborating context
+(also negative here: Δacc −0.0627, McNemar p=0.0882) is corroborating context
 only, never a second path to KEEP (the anti-cherry-pick rule, matching
 `src.cot_weekly_check`'s Spearman-primary / logistic-corroborating
 precedent). The non-event random-sample baseline (b) — same triple-barrier

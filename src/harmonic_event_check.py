@@ -61,11 +61,16 @@ PRE-REGISTERED PIPELINE (fixed before looking at any result; run ONCE)
 
      H1.2 (Non-Linear Interactions) — a feed-forward MLP (NOT an LSTM — these
        are already-extracted cross-sectional ratios per event, not a time
-       series): Dense(16, L2=1e-3) -> Dropout(0.3) -> Dense(8, L2=1e-3) ->
-       Dropout(0.3) -> Dense(1, sigmoid); Adam lr=0.001; up to 100 epochs;
-       early stopping patience=10 on validation loss. Architecture FIXED, no
-       tuning after seeing results. batch_size=32 (this project's existing H1
-       LSTM convention, config.json `h1.lstm_batch`) — likewise fixed a
+       series), implemented in RAW PYTORCH (deliberately not Keras, unlike
+       every other neural model in this project — see train_h1_2_mlp's
+       docstring for the two Keras-vs-PyTorch pitfalls this guards against):
+       Linear(16, L2=1e-3 via weight_decay) -> ReLU -> Dropout(0.3) ->
+       Linear(8, L2=1e-3) -> ReLU -> Dropout(0.3) -> Linear(1) -> Sigmoid;
+       Adam lr=0.001; up to 100 epochs; early stopping patience=10 on
+       validation loss (explicit model.eval()+no_grad() each check).
+       Architecture FIXED, no tuning after seeing results. batch_size=32
+       (this project's existing H1 LSTM convention, config.json
+       `h1.lstm_batch`) — likewise fixed a
        priori, not tuned.
        PRIMARY decision test: MLP vs H1.1's OWN predictions on the IDENTICAL
        validation rows (paired bootstrap + exact McNemar) — this is the real
@@ -351,39 +356,154 @@ def train_h1_1_logistic(X_train, y_train, random_state=RANDOM_STATE):
                               max_iter=1000).fit(X_train, y_train)
 
 
+class _HarmonicMLP:
+    """H1.2's feed-forward MLP, raw PyTorch (deliberately NOT Keras — unlike
+    every other neural model in this project — see class docstring below for
+    why the two frameworks are not interchangeable here without care).
+    Architecture FIXED, no tuning after results: Linear(n_features->16) ->
+    ReLU -> Dropout(0.3) -> Linear(16->8) -> ReLU -> Dropout(0.3) ->
+    Linear(8->1) -> Sigmoid. NOT an LSTM -- these are already-extracted
+    cross-sectional per-event ratios, not a time series.
+
+    L2=1e-3 is applied via the Adam optimizer's `weight_decay` (PyTorch's
+    standard L2 idiom) -- NOT numerically identical to Keras's
+    `kernel_regularizer=l2(1e-3)` (which adds the penalty to the loss before
+    Adam's adaptive scaling; `weight_decay` on vanilla `torch.optim.Adam`
+    perturbs the gradient directly), but the same L2=1e-3 STRENGTH, stated
+    honestly as an implementation-detail difference between frameworks, not
+    silently glossed over.
+    """
+    def __init__(self, n_features):
+        import torch.nn as nn
+        self.nn = nn
+        self.module = nn.Sequential(
+            nn.Linear(n_features, 16), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(16, 8), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(8, 1), nn.Sigmoid(),
+        )
+
+    def train_mode(self):
+        self.module.train()
+
+    def eval_mode(self):
+        self.module.eval()
+
+    def __call__(self, x):
+        return self.module(x)
+
+
 def train_h1_2_mlp(X_train, y_train, X_val, y_val, random_state=RANDOM_STATE):
-    """H1.2: a small feed-forward MLP (NOT an LSTM -- these are cross-
-    sectional per-event ratios, not a time series). Architecture FIXED, no
-    tuning after results: Dense(16, L2=1e-3) -> Dropout(0.3) ->
-    Dense(8, L2=1e-3) -> Dropout(0.3) -> Dense(1, sigmoid); Adam lr=0.001;
-    up to 100 epochs; early stopping patience=10 on validation loss;
-    batch_size=32 (this project's existing H1 LSTM convention,
-    config.json h1.lstm_batch). class_weight='balanced' for the same
-    stop/target geometric-asymmetry reason as H1.1."""
-    os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
-    import tensorflow as tf
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import Dense, Dropout
-    from tensorflow.keras.regularizers import l2
-    from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.callbacks import EarlyStopping
+    """H1.2: the MLP above, trained with a MANUAL PyTorch loop (Adam lr=0.001,
+    up to 100 epochs, early stopping patience=10 on VALIDATION loss,
+    batch_size=32 -- this project's existing H1 LSTM convention,
+    config.json h1.lstm_batch).
 
-    tf.random.set_seed(random_state)
-    np.random.seed(random_state)
+    TWO PyTorch pitfalls this function deliberately guards against (neither
+    exists in Keras, whose `.fit()`/`.predict()` handle both automatically --
+    exactly why this deserves its own docstring rather than silently reusing
+    the Keras idiom the rest of this project uses for its LSTMs):
 
-    model = Sequential([
-        Dense(16, activation='relu', kernel_regularizer=l2(1e-3), input_shape=(X_train.shape[1],)),
-        Dropout(0.3),
-        Dense(8, activation='relu', kernel_regularizer=l2(1e-3)),
-        Dropout(0.3),
-        Dense(1, activation='sigmoid'),
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy',
-                  metrics=['accuracy'])
-    es = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=0)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=100, batch_size=32,
-             class_weight=_balanced_class_weight_dict(y_train), callbacks=[es], verbose=0)
+    1. PyTorch does NOT auto-toggle Dropout/BatchNorm between train and eval
+       behavior -- `model.train()` is called before every training batch,
+       and `model.eval()` (+ `torch.no_grad()`) before every validation-loss
+       computation AND the final val-set prediction. Forgetting this leaves
+       Dropout ACTIVE during validation, silently corrupting both the
+       early-stopping signal and the reported predictions with no error.
+    2. The architecture keeps an explicit Sigmoid output layer (matching the
+       original Dense(1, sigmoid) spec), so the loss must be `BCELoss`, NOT
+       `BCEWithLogitsLoss` (logits-only) -- and plain `BCELoss` has no
+       `pos_weight` argument (that is `BCEWithLogitsLoss`-only). class
+       balancing is therefore done via an explicit PER-SAMPLE weight tensor
+       (`weight[i] = class_weight[y[i]]`, from the SAME balanced class
+       weights H1.1 and the Keras draft used) passed to
+       `BCELoss(weight=...)` for EACH batch (a per-batch weight vector, not a
+       single scalar). Reason for balancing at all, same as H1.1: the closer
+       (1.0x) stop barrier is geometrically more likely to be touched before
+       the farther (1.5x) target under a pure random walk, independent of
+       any real edge; unbalanced, the model could trivially collapse to the
+       majority class and become indistinguishable from the baseline it is
+       judged against.
+
+    CPU-only, matching this project's existing determinism/simplicity
+    convention for its other neural models (TensorFlow is explicitly
+    documented elsewhere as GPU-unsupported on native Windows in this
+    environment) -- run on CPU here too even though CUDA happens to be
+    available, so results do not depend on which machine trains them.
+    """
+    import torch
+    import torch.nn.functional as F
+    from torch.utils.data import TensorDataset, DataLoader
+
+    torch.manual_seed(random_state)
+    device = torch.device('cpu')
+
+    n_features = X_train.shape[1]
+    model = _HarmonicMLP(n_features)
+    model.module.to(device)
+
+    class_weight = _balanced_class_weight_dict(y_train)   # {0: w0, 1: w1}
+    X_train_t = torch.tensor(X_train, dtype=torch.float32, device=device)
+    y_train_t = torch.tensor(y_train, dtype=torch.float32, device=device).unsqueeze(1)
+    X_val_t = torch.tensor(X_val, dtype=torch.float32, device=device)
+    y_val_t = torch.tensor(y_val, dtype=torch.float32, device=device).unsqueeze(1)
+
+    loader = DataLoader(
+        TensorDataset(X_train_t, y_train_t), batch_size=32, shuffle=True,
+        generator=torch.Generator().manual_seed(random_state),
+    )
+    optimizer = torch.optim.Adam(model.module.parameters(), lr=0.001, weight_decay=1e-3)
+
+    best_val_loss = float('inf')
+    best_state = None
+    patience, patience_left = 10, 10
+
+    for _epoch in range(100):
+        # ---- train: Dropout ACTIVE ----------------------------------------
+        model.train_mode()
+        for xb, yb in loader:
+            sample_weight = torch.tensor(
+                [class_weight[int(v.item())] for v in yb], dtype=torch.float32, device=device
+            ).unsqueeze(1)
+            optimizer.zero_grad()
+            pred = model(xb)
+            loss = F.binary_cross_entropy(pred, yb, weight=sample_weight)
+            loss.backward()
+            optimizer.step()
+
+        # ---- validate: Dropout OFF, no gradient tracking -------------------
+        model.eval_mode()
+        with torch.no_grad():
+            val_pred = model(X_val_t)
+            val_loss = F.binary_cross_entropy(val_pred, y_val_t).item()   # UNWEIGHTED, matches
+            # Keras's own default (class_weight applies to TRAINING only;
+            # EarlyStopping's val_loss is plain BCE on the validation set).
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_state = {k: v.clone() for k, v in model.module.state_dict().items()}
+            patience_left = patience
+        else:
+            patience_left -= 1
+            if patience_left <= 0:
+                break
+
+    if best_state is not None:
+        model.module.load_state_dict(best_state)   # restore_best_weights equivalent
+    model.eval_mode()
     return model
+
+
+def predict_h1_2_mlp(model, X):
+    """Final val/test prediction: model.eval() + no_grad(), exactly like the
+    validation-loss computation inside train_h1_2_mlp -- Dropout must be OFF
+    here too, or the reported predictions are corrupted the same way an
+    un-toggled validation loss would be."""
+    import torch
+    model.eval_mode()
+    with torch.no_grad():
+        X_t = torch.tensor(X, dtype=torch.float32)
+        prob = model(X_t).numpy().ravel()
+    return (prob >= 0.5).astype(int)
 
 
 # ── orchestration ─────────────────────────────────────────────────────
@@ -444,7 +564,7 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
     # ---- H1.2: MLP — PRIMARY vs H1.1, CORROBORATING vs majority -----------
     print('\n--- H1.2: MLP (non-linear interactions) ---')
     mlp = train_h1_2_mlp(X_train, y_train, X_val, y_val, random_state=random_state)
-    pred_h12_val = (mlp.predict(X_val, verbose=0).ravel() >= 0.5).astype(int)
+    pred_h12_val = predict_h1_2_mlp(mlp, X_val)
 
     r12_primary = bootstrap_delta_and_mcnemar(y_val, pred_h11_val, pred_h12_val,
                                               alpha=SUB_HYPOTHESIS_ALPHA, random_state=random_state)
@@ -509,9 +629,11 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
                   f'delta_acc={r12_corroborating["delta_acc"]:+.4f} '
                   f'CI[{r12_corroborating["ci_low"]:+.4f}, {r12_corroborating["ci_high"]:+.4f}] '
                   f'McNemar p={r12_corroborating["mcnemar_p"]:.4f}, cleared='
-                  f'{r12_corroborating["cleared"]}. MLP: Dense(16,L2=1e-3)-Dropout(0.3)-'
-                  f'Dense(8,L2=1e-3)-Dropout(0.3)-Dense(1,sigmoid), Adam lr=0.001, epochs<=100, '
-                  f'ES patience=10 on val_loss, batch_size=32, class_weight=balanced.'),
+                  f'{r12_corroborating["cleared"]}. MLP (raw PyTorch, not Keras): '
+                  f'Linear(16,L2=1e-3 via weight_decay)-ReLU-Dropout(0.3)-Linear(8,L2=1e-3)-ReLU-'
+                  f'Dropout(0.3)-Linear(1)-Sigmoid, Adam lr=0.001, epochs<=100, ES patience=10 on '
+                  f'val_loss (explicit model.train()/eval()+no_grad() toggling), batch_size=32, '
+                  f'per-sample balanced class weights via BCELoss(weight=...) each batch.'),
     }
 
     if register:
