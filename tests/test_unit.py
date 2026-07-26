@@ -1955,3 +1955,88 @@ def test_vix_features_stay_out_of_direction_return_models():
         "VIX candidate features must stay out of the model feature set."
     assert 'vix' not in MACRO_MERGE_COLUMNS, \
         "The raw VIX level must not be merged into the served model frame (ablation-only)."
+
+
+# ── Cross-family reuse: FROZEN volatility ensemble -> direction/return
+# candidate feature (hypothesis #9) ────────────────────────────────────────
+
+def test_frozen_volatility_ensemble_batch_inference_never_fits(monkeypatch):
+    """src/volatility.py::add_volatility_forecast_feature /
+    batch_predict_frozen_ensemble_vol_pct (direction/return hypothesis #9's
+    cross-family reuse of the FROZEN production volatility ensemble) must
+    perform PURE INFERENCE -- no fitting step may ever be triggered by this
+    code path, regardless of which rows (train/val/test) are passed in `feat`.
+    This is what makes reusing the once-fit-on-train-block ensemble across the
+    WHOLE historical row set look-ahead-safe: it mirrors the SAME idiom
+    src/ablation.py::build_matrix already uses (a PCA fit once on a train
+    slice, then apply_lag_pca'd across the full dataset including val/test) --
+    nothing here re-fits or peeks at any row to produce another row's
+    prediction."""
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    from src.features import PRICE_FEATURE_COLUMNS, LAG_COLUMNS
+    from src.volatility import (
+        add_volatility_forecast_feature, batch_predict_frozen_ensemble_vol_pct,
+    )
+
+    n_lag = len(LAG_COLUMNS)
+    rng = np.random.default_rng(0)
+    # Fit tiny stand-in artifacts BEFORE the fit-guard below -- this setup
+    # fitting is not part of the code path under test (it stands in for the
+    # real models/volatility/ artifacts, already fit once historically).
+    lag_scaler = StandardScaler().fit(rng.normal(size=(30, n_lag)))
+    lag_pca = PCA(n_components=3).fit(lag_scaler.transform(rng.normal(size=(30, n_lag))))
+    n_cols_after_pca = len(PRICE_FEATURE_COLUMNS) - n_lag + lag_pca.n_components_
+    global_scaler = StandardScaler().fit(rng.normal(size=(30, n_cols_after_pca)))
+
+    class _FakeSeedModel:
+        """Mimics the 3-head Keras multi-task model's .predict() interface
+        (return_output, direction_output, volatility_output) with no real
+        model load -- keeps this test fast and dependency-light."""
+        def predict(self, windows, verbose=0):
+            n = windows.shape[0]
+            zeros = np.zeros((n, 1), dtype='float32')
+            vol = np.full((n, 1), 0.42, dtype='float32')
+            return zeros, zeros, vol
+
+    artifacts = {
+        'lag_scaler': lag_scaler, 'lag_pca': lag_pca, 'global_scaler': global_scaler,
+        'time_steps': 5, 'models': [_FakeSeedModel(), _FakeSeedModel()],
+    }
+
+    # NOW guard fit/fit_transform on BOTH classes -- proves the code path
+    # under test never re-fits, whichever instance it touches.
+    def _explode(self, *a, **k):
+        raise AssertionError('fit() must never be called by frozen-ensemble batch inference')
+    monkeypatch.setattr(StandardScaler, 'fit', _explode)
+    monkeypatch.setattr(StandardScaler, 'fit_transform', _explode)
+    monkeypatch.setattr(PCA, 'fit', _explode)
+    monkeypatch.setattr(PCA, 'fit_transform', _explode)
+
+    idx = pd.date_range('2020-01-01', periods=20, freq='D')
+    feat = pd.DataFrame({c: rng.normal(size=20) for c in PRICE_FEATURE_COLUMNS}, index=idx)
+
+    # Exercised across the FULL synthetic row range (stands in for
+    # train+val+test all at once) -- must not raise despite spanning "test" rows.
+    pred = batch_predict_frozen_ensemble_vol_pct(feat, artifacts)
+    assert len(pred) == len(feat)
+    time_steps = artifacts['time_steps']
+    assert np.isnan(pred[:time_steps - 1]).all(), "no prediction before the first full window"
+    assert pred[time_steps - 1:] == pytest.approx(0.42)
+
+    out = add_volatility_forecast_feature(feat, artifacts=artifacts)
+    assert 'predicted_vol_pct' in out.columns
+    assert not out['predicted_vol_pct'].isna().any(), \
+        "warm-up rows must be neutral-filled (0.0), never NaN"
+    assert out['predicted_vol_pct'].iloc[0] == 0.0
+    assert out['predicted_vol_pct'].iloc[-1] == pytest.approx(0.42)
+
+
+def test_volatility_forecast_feature_stays_out_of_direction_return_feature_columns():
+    """Ablation-first discipline: predicted_vol_pct must NEVER leak into
+    FEATURE_COLUMNS until a hypothesis test clears the family bar -- same
+    guard as every other candidate module."""
+    from src.volatility import VOLATILITY_FORECAST_FEATURE_COLUMNS
+
+    assert not set(VOLATILITY_FORECAST_FEATURE_COLUMNS) & set(FEATURE_COLUMNS), \
+        "predicted_vol_pct must stay out of the model feature set."

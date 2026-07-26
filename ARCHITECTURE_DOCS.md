@@ -56,17 +56,19 @@ the test-block "positive point estimates" do not survive the move.
 **(b) Every KEEP must clear a Bonferroni-corrected bar, not a flat 0.05.**
 `results/feature_hypothesis_log.csv` is the running family count of every feature
 hypothesis ever spent (seeded retroactively with the 4 already tried). The bar in
-force is `alpha = 0.05 / family_size` (currently **0.05 / 8 = 0.00625** — the 4
+force is `alpha = 0.05 / family_size` (currently **0.05 / 9 ≈ 0.00556** — the 4
 original macro features, the 2026-07-17 `fomc_calendar_block` ADD-test (rejected:
 Δacc 95% CI [−0.0549, −0.0035], McNemar p=0.0261), the 2026-07-20
 `cot_positioning_block` ADD-test (rejected: Δacc CI [−0.0234, +0.0175],
 p=0.8264), the 2026-07-26 `fibonacci_retracement_block` ADD-test (rejected:
-Δacc CI [−0.0187, +0.0257], p=0.8376), and the 2026-07-26 `vix_regime_block`
-ADD-test (rejected: Δacc CI [−0.0327, +0.0105], p=0.3584)), printed in the header
-of every `src/ablation.py` report so it can never be silently forgotten. A
-genuinely new feature grows the family and tightens the bar for all. At the
-current bar all four macro features stay **KEEP-provisional** (smallest McNemar
-p = 0.56, ~90× the bar); the four ADD-test bundles are outright DROPs.
+Δacc CI [−0.0187, +0.0257], p=0.8376), the 2026-07-26 `vix_regime_block`
+ADD-test (rejected: Δacc CI [−0.0327, +0.0105], p=0.3584), and the 2026-07-26
+`volatility_forecast_block` ADD-test (rejected: Δacc CI [−0.0304, +0.0105],
+p=0.4282)), printed in the header of every `src/ablation.py` report so it can
+never be silently forgotten. A genuinely new feature grows the family and
+tightens the bar for all. At the current bar all four macro features stay
+**KEEP-provisional** (smallest McNemar p = 0.56, ~100× the bar); the five
+ADD-test bundles are outright DROPs.
 
 The Fibonacci/fractal work also **built but did not spend** a hypothesis #8
 (`dist_to_nearest_fib_extension_pct`, a 3-point extension/projection in
@@ -579,8 +581,23 @@ Methodology):**
   `src/volatility.py::add_volatility_candidate_features` and
   `src/fomc_calendar.py::add_fomc_features` (candidate-only — guarded out of
   the direction/return `FEATURE_COLUMNS` by a unit test); the production
-  input set remains unchanged. Any future volatility hypothesis faces
-  0.05/7 ≈ 0.0071.
+  input set remains unchanged. Hypothesis 7 (bar → 0.05/7 = 0.0071) —
+  `cot_positioning_block` (`cot_eur_zscore`/`cot_usdindex_zscore`, see §4.3) —
+  was a **null result (DROP)**, this time CI-confirmed *worse*: ΔMAE
+  [−0.0091, −0.0045] entirely < 0, ΔR² −0.025, frac(ΔMAE>0)=0.000. Hypothesis 8
+  (bar → 0.05/8 = 0.00625) tested `vix_regime_block` (`vix_zscore` +
+  `vix_change_pct`, `src/vix_features.py` — reused byte-for-byte from the
+  direction/return VIX hypothesis, including its conservative D-1 availability
+  convention; see §4.3) on the SAME candidate-input methodology
+  (`python -m src.volatility candidates vix`): base ensemble MAE 0.185044% /
+  R² +0.1452 vs +VIX MAE 0.187440% / R² +0.1466 — another **null result
+  (DROP)**: ΔMAE −0.002396% CI [−0.006231, +0.001763] (includes 0), ΔR² +0.0014
+  CI [−0.0444, +0.0426] (includes 0), frac(ΔMAE>0)=0.044
+  (`results/volatility_candidate_vix.csv`). Motivated by a stronger prior than
+  the direction-family test (equity-vol → FX-vol spillover is better
+  established than equity-vol → FX direction), but the price-only 5-seed
+  ensemble already carries whatever signal exists. Any future volatility
+  hypothesis faces 0.05/9 ≈ 0.0056.
 - **Training-noise honesty.** Single-seed runs exposed TF/oneDNN CPU
   nondeterminism of the same order as the deltas under test (identical-seed
   dedicated-model MAE moved 0.190→0.197 between runs). Bootstrap CIs capture
@@ -1024,6 +1041,66 @@ The point estimate is actively negative — consistent with equity fear being a
 is deliberately kept OUT of `MACRO_MERGE_COLUMNS`, so nothing enters the served
 model frame and predictions are byte-identical; reproducible via
 `python -m src.ablation vix`.
+
+**Follow-up in the VOLATILITY family (separate hypothesis, separate log, §3.5).**
+The direction result above does not settle equity-vol → FX-*volatility*
+spillover, a distinctly better-established relationship — so the SAME module
+and SAME D-1 availability convention (nothing rebuilt) were tested a second
+time as `vix_regime_block`, one bundled hypothesis, via the volatility family's
+own 5-seed multi-task LSTM ensemble methodology
+(`python -m src.volatility candidates vix`, `results/volatility_hypothesis_log.csv`,
+independent Bonferroni count — confirmed at n=7 before running, so this is
+volatility hypothesis #8, bar 0.05/8 = 0.00625):
+
+| Family | Point estimate | 95% CI | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|
+| Volatility 5-seed ensemble (`src/volatility.py candidates vix`) | ΔMAE **−0.0024%**, ΔR² +0.0014 | ΔMAE [−0.0062, +0.0018] | 0.05/8 = 0.00625 | **DROP** (`volatility_hypothesis_log.csv` n=8) |
+
+Also indistinguishable from noise — the better-motivated hypothesis fares no
+better than the direction-family test. `feature_hypothesis_log.csv` is
+untouched by this second test (different family, different target/metric); the
+weekly COT log is likewise untouched.
+
+**Volatility ensemble's own forecast as a direction/return input (direction/return
+hypothesis #9, DROP).** CROSS-FAMILY REUSE, not a new raw data source: does
+conditioning direction/return on "how much movement is expected tomorrow" — a
+signal already validated in the SEPARATE volatility family (§3.5, the only
+neural family with a CI-confirmed edge over its baseline) — help predict
+direction? Rationale: trend persistence vs. mean-reversion often differs by
+volatility regime.
+
+Implementation performs **NO retraining**: `src/volatility.py::load_frozen_volatility_ensemble`
+loads the PRODUCTION `models/volatility/` artifacts (5 seed `.keras` models +
+`lag_scaler`/`lag_pca`/`global_scaler`, fit ONCE on train[0:80%]) via
+`joblib.load`/Keras `load_model` only, and `batch_predict_frozen_ensemble_vol_pct`
+runs pure batch inference (`.transform()` + `.predict()` only) across the full
+historical row set — the exact transform/predict calls
+`src/inference.py::_predict_volatility` makes for one live window, vectorized
+over history. This is the SAME once-fit-then-applied-everywhere idiom
+`src/ablation.py::build_matrix` already uses for its own PCA; row t's
+prediction still depends only on rows ≤ t (`make_sequences`' existing
+no-look-ahead sliding-window geometry), so reusing the frozen ensemble across
+train+val+test introduces no new look-ahead surface. Guarded by
+`test_frozen_volatility_ensemble_batch_inference_never_fits`, which
+monkeypatches `StandardScaler`/`PCA`'s `fit`/`fit_transform` to raise and
+confirms the code path never triggers them.
+
+Wired into `build_matrix`'s `extra_feature_columns` handling
+(`python -m src.ablation volforecast`), single-column bundle
+(`predicted_vol_pct`), ADD-tested exactly like the other blocks:
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py volforecast`) | Δacc **−0.0093**, Δauc +0.0009 | Δacc [−0.0304, +0.0105] | McNemar **p=0.43** | 0.05/9 ≈ 0.00556 | **DROP** (`feature_hypothesis_log.csv` n=9) |
+
+Even an already-proven signal from a different family adds nothing the
+existing 27-column input set doesn't already carry. `volatility_hypothesis_log.csv`
+and the weekly COT log are untouched (this is a direction/return-only
+hypothesis). Nothing is in `FEATURE_COLUMNS`, served, or retrained. Note for the
+record: had this cleared, shipping it would introduce a **serving-order
+dependency** (the volatility ensemble must run before direction/return can
+consume its output) — a discussion point, not automatic, moot here since it
+DROPped.
 
 ### 4.4 Known defects — fixed in this branch
 

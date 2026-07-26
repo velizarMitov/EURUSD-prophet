@@ -159,6 +159,9 @@ def build_matrix(config: dict, base_dir: str = "", extra_feature_columns=None):
         from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
         from src.fibonacci_fractals import add_fibonacci_features, FIBONACCI_FEATURE_COLUMNS
         from src.vix_features import add_vix_features, VIX_FEATURE_COLUMNS
+        from src.volatility import (
+            add_volatility_forecast_feature, VOLATILITY_FORECAST_FEATURE_COLUMNS,
+        )
         if any(c in FOMC_FEATURE_COLUMNS for c in extra):
             feat = add_fomc_features(feat, base_dir=base_dir)
         if any(c in COT_FEATURE_COLUMNS for c in extra):
@@ -175,6 +178,12 @@ def build_matrix(config: dict, base_dir: str = "", extra_feature_columns=None):
             # by availability date (print + 1 business day, STEP 0), neutral 0
             # before warm-up / when unreachable (see src/vix_features.py).
             feat = add_vix_features(feat, base_dir=base_dir, config=config)
+        if any(c in VOLATILITY_FORECAST_FEATURE_COLUMNS for c in extra):
+            # Cross-family reuse, NOT a new external data source: the FROZEN
+            # production volatility ensemble (models/volatility/, fit once on
+            # train[0:80%]) run via pure batch inference (no retraining, no
+            # refit) — see src/volatility.py::add_volatility_forecast_feature.
+            feat = add_volatility_forecast_feature(feat, base_dir=base_dir)
         assert not feat[extra].isna().any().any(), \
             "extra candidate columns must be fully defined on the modeled rows"
 
@@ -444,5 +453,23 @@ if __name__ == "__main__":
                          'availability (print + 1 business day, verified in STEP 0: '
                          'FRED publishes VIXCLS with a business-day lag). z-score on '
                          'native business-day cadence, window 756 / min 252.'))
+    elif sys.argv[1:2] == ['volforecast']:
+        # Hypothesis #9: predicted_vol_pct, the FROZEN production volatility
+        # ensemble's own 5-seed-mean forecast (models/volatility/), reused as a
+        # direction/return input via pure batch inference. Cross-family reuse
+        # of an already-validated signal, NOT a fresh external data source —
+        # single-column block, one Bonferroni slot.
+        from src.volatility import VOLATILITY_FORECAST_FEATURE_COLUMNS
+        run_addition_test(
+            'volatility_forecast_block', VOLATILITY_FORECAST_FEATURE_COLUMNS,
+            note_suffix=('Cross-family reuse: predicted_vol_pct is the FROZEN production '
+                         '5-seed volatility ensemble (models/volatility/, fit once on '
+                         'train[0:80%] by train_production_volatility_model) applied via '
+                         'pure batch inference (.transform()/.predict() only, no '
+                         'retraining) -- rationale: trend persistence vs mean-reversion '
+                         'may differ by expected-volatility regime. Shipping this (if it '
+                         'ever cleared) would introduce a serving-order dependency '
+                         '(volatility model must run before direction/return can use its '
+                         'output) -- a discussion point, not automatic.'))
     else:
         run(features=sys.argv[1:] or None)

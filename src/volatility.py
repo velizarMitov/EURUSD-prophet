@@ -58,6 +58,7 @@ from src.features import (
 from src.h1_features import _rsi
 from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
 from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
+from src.vix_features import add_vix_features, VIX_FEATURE_COLUMNS
 
 # Candidate INPUT features for the volatility model ONLY (hypotheses 4+ of this
 # family). Deliberately NOT added to src/features.py::FEATURE_COLUMNS — the
@@ -181,6 +182,13 @@ def build_volatility_matrix(config, base_dir='', extra_feature_columns=None):
         # Availability-date as-of ffill, neutral 0 where COT is absent / in
         # z-score warm-up (see src/cot_data.py) — look-ahead-safe post-dropna.
         feat = add_cot_features(feat, base_dir=base_dir, config=config)
+    if any(c in VIX_FEATURE_COLUMNS for c in extra):
+        # Reuses src/vix_features.py exactly as built for direction/return
+        # hypothesis #8: same conservative D-1 (print + 1 business day)
+        # availability convention, same results/vix.csv cache, same
+        # native-cadence z-score/change — nothing rebuilt here. Neutral 0
+        # where VIX is absent / in z-score warm-up — look-ahead-safe post-dropna.
+        feat = add_vix_features(feat, base_dir=base_dir, config=config)
     assert not feat[CANDIDATE_VOL_FEATURES + extra].isna().any().any(), \
         "candidate volatility features must be fully defined on the modeled euro-era rows"
 
@@ -1055,6 +1063,117 @@ def run_candidate_feature_tests(features=None, config_path='config.json', base_d
     return results
 
 
+# ── Cross-family reuse: the FROZEN production volatility ensemble's own
+# forecast as a candidate INPUT for the direction/return model. This is
+# direction/return hypothesis #9 (results/feature_hypothesis_log.csv, tested
+# via src/ablation.py), NOT a volatility-family hypothesis — it does not touch
+# results/volatility_hypothesis_log.csv. ─────────────────────────────────────
+
+VOLATILITY_FORECAST_FEATURE_COLUMNS = ['predicted_vol_pct']
+
+
+def load_frozen_volatility_ensemble(base_dir=''):
+    """Load the PRODUCTION volatility ensemble (models/volatility/) AS ALREADY
+    FROZEN — fit ONCE on train[0:80%] by train_production_volatility_model and
+    persisted to disk. This function performs NO fitting: joblib.load and
+    Keras' load_model only. Mirrors PredictionService's own loading path
+    (src/inference.py __init__) so a candidate-feature hypothesis test reuses
+    the EXACT validated artifact, never a freshly (re-)trained stand-in.
+
+    Raises (via a plain list-length check) if any of the 5 seed models is
+    missing — the validated object is the FULL 5-seed ensemble (vol_ready is
+    all-or-nothing in src/inference.py), so this loader must never silently
+    hand back a partial, unvalidated ensemble.
+    """
+    import joblib
+
+    vol_dir = os.path.join(base_dir, VOL_MODEL_DIR) if base_dir else VOL_MODEL_DIR
+    lag_scaler = joblib.load(os.path.join(vol_dir, 'lag_scaler.pkl'))
+    lag_pca = joblib.load(os.path.join(vol_dir, 'lag_pca.pkl'))
+    global_scaler = joblib.load(os.path.join(vol_dir, 'global_scaler.pkl'))
+    time_steps = joblib.load(os.path.join(vol_dir, 'lstm_time_steps.pkl'))
+    os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+    from tensorflow.keras.models import load_model
+    models = [load_model(os.path.join(vol_dir, fname)) for fname in VOL_MODEL_FILES]
+    if len(models) != len(VOL_MODEL_FILES):
+        raise RuntimeError('Frozen volatility ensemble is incomplete — refusing a partial load '
+                           '(vol_ready is all-or-nothing).')
+    return {'lag_scaler': lag_scaler, 'lag_pca': lag_pca, 'global_scaler': global_scaler,
+            'time_steps': time_steps, 'models': models}
+
+
+def batch_predict_frozen_ensemble_vol_pct(feat: pd.DataFrame, artifacts: dict) -> np.ndarray:
+    """Full-length `predicted_vol_pct` array from the FROZEN 5-seed ensemble via
+    pure batch INFERENCE across every row of `feat`. Exactly the same
+    transform/predict calls `PredictionService._predict_volatility` makes for a
+    single live window (src/inference.py) — just vectorized over the whole
+    history instead of one sliding window at the live edge. `artifacts` is
+    already-fit (see load_frozen_volatility_ensemble); only `.transform()` and
+    `.predict()` are called below — NO `.fit()`/`.fit_transform()` anywhere in
+    this function.
+
+    Not a new look-ahead surface: the PCA/scaler/LSTM weights were fit ONCE,
+    historically, on the production train block [0:80%] — exactly the idiom
+    src/ablation.py::build_matrix already uses (a PCA fit once on [0:70%],
+    then `apply_lag_pca`'d across the WHOLE dataset including validation/test).
+    Row t's own prediction depends only on rows <= t (the sliding window ends
+    at t, `make_sequences`' existing no-look-ahead geometry); no future row
+    ever informs it, regardless of which block(s) `feat` spans.
+
+    `feat` must carry PRICE_FEATURE_COLUMNS (e.g. add_advanced_features'
+    output). Returns a float array the same length as `feat`; NaN for the
+    warm-up rows before the first full `time_steps` window exists.
+    """
+    vol_window = feat[PRICE_FEATURE_COLUMNS]
+    model_input = apply_lag_pca(vol_window, artifacts['lag_scaler'], artifacts['lag_pca'],
+                                lag_columns=LAG_COLUMNS)
+    X_scaled = artifacts['global_scaler'].transform(model_input)
+
+    time_steps = artifacts['time_steps']
+    n = len(feat)
+    pred = np.full(n, np.nan)
+    if n < time_steps:
+        return pred
+
+    # `make_sequences` only needs `y` to determine target_rows/length -- the
+    # dummy zeros are never read (we discard its `targets` return value).
+    windows, _dummy_targets, target_rows = make_sequences(X_scaled, np.zeros(n), time_steps)
+    seed_vol_preds = []
+    for m in artifacts['models']:
+        _ret, _dir, vol = m.predict(windows, verbose=0)
+        seed_vol_preds.append(vol.ravel())
+    pred[target_rows] = np.mean(seed_vol_preds, axis=0)
+    return pred
+
+
+def add_volatility_forecast_feature(df: pd.DataFrame, base_dir='', artifacts=None) -> pd.DataFrame:
+    """Add `predicted_vol_pct` — the FROZEN production volatility ensemble's own
+    5-seed-mean forecast — onto a daily engineered frame (must carry
+    PRICE_FEATURE_COLUMNS, e.g. add_advanced_features' output).
+
+    Candidate feature for direction/return HYPOTHESIS #9
+    (results/feature_hypothesis_log.csv, via src/ablation.py): does knowing
+    "how much movement is expected tomorrow" — a signal this project already
+    validated, in a DIFFERENT family (src/volatility.py's own hypothesis log)
+    — help the direction model? This is cross-family REUSE of an
+    already-proven-out signal, not a fresh external data source.
+
+    Warm-up rows (before the first full sliding window) get a neutral 0.0 —
+    the same "neutral until genuine information exists" convention as every
+    other candidate module in this project (COT/VIX z-scores, fibonacci
+    distances) — never NaN, never back-filled from a later prediction.
+
+    `artifacts` lets tests / repeated calls inject an already-loaded ensemble
+    (see load_frozen_volatility_ensemble) instead of re-loading 5 Keras models
+    from disk on every call.
+    """
+    art = artifacts or load_frozen_volatility_ensemble(base_dir=base_dir)
+    out = df.copy()
+    pred = batch_predict_frozen_ensemble_vol_pct(df, art)
+    out['predicted_vol_pct'] = np.where(np.isnan(pred), 0.0, pred)
+    return out
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == 'multitask':
@@ -1074,6 +1193,16 @@ if __name__ == '__main__':
             run_candidate_feature_tests(
                 features=[('cot_positioning_block', COT_FEATURE_COLUMNS)],
                 out_csv='results/volatility_candidate_cot.csv')
+        elif len(sys.argv) > 2 and sys.argv[2] == 'vix':
+            # VIX regime z-score + day-over-day shock: ONE bundled hypothesis
+            # (two views of one equity-risk-sentiment fact), one Bonferroni
+            # slot. Equity-vol -> FX-vol spillover is a better-established
+            # relationship than equity-vol -> FX direction (already DROPped as
+            # direction/return hypothesis #8, results/feature_hypothesis_log.csv) —
+            # a genuinely different, better-targeted hypothesis in this family.
+            run_candidate_feature_tests(
+                features=[('vix_regime_block', VIX_FEATURE_COLUMNS)],
+                out_csv='results/volatility_candidate_vix.csv')
         else:
             run_candidate_feature_tests()
     else:

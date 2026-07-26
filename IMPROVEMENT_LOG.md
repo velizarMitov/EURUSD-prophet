@@ -646,6 +646,93 @@ new module `src/vix_features.py`.
       model frame, so predictions are byte-identical. A null recorded, not a
       failure hidden. Next direction/return bar: 0.05/9 ≈ 0.00556. Full suite
       green (86 tests).
+- [x] Step 4 — SEPARATE follow-up test in the VOLATILITY family (2026-07-26,
+      `results/volatility_hypothesis_log.csv`, NOT `feature_hypothesis_log.csv`
+      — a distinct target/metric/bar per the family rules). Rationale: equity-vol
+      → FX-vol spillover is a much better-established relationship than
+      equity-vol → FX *direction* (which just dropped above) — a genuinely
+      different, better-targeted hypothesis, not a re-test of the same idea.
+      Reused `src/vix_features.py` / `results/vix.csv` and the conservative D-1
+      availability convention EXACTLY as built for Step 0–3 above — no new
+      fetch, no new look-ahead surface. Wired as one bundled candidate
+      (`vix_zscore` + `vix_change_pct`) into `build_volatility_matrix`'s
+      `extra_feature_columns`, tested via the existing
+      `run_candidate_feature_tests` 5-seed multi-task LSTM ensemble methodology
+      (`python -m src.volatility candidates vix`) — same paired bootstrap 2000
+      resamples on validation[70:80], base ensemble freshly retrained on the
+      same 5 seeds (42–46), test block reserved. Confirmed family size = 7
+      before running → this is volatility hypothesis **#8**, bar
+      `0.05/8 = 0.00625`.
+
+      | family | hypothesis # | bar | result | evidence |
+      |---|---|---|---|---|
+      | volatility | #8 | 0.05/8 = 0.00625 | **DROP** | base MAE=0.185044%/R²=+0.1452 vs +VIX MAE=0.187440%/R²=+0.1466; ΔMAE=−0.002396% CI[−0.006231, +0.001763] (includes 0); ΔR²=+0.0014 CI[−0.0444, +0.0426] (includes 0); frac(ΔMAE>0)=0.044 |
+
+      Run ONCE, no window/seed tuning after seeing the result. Registered as
+      `volatility_hypothesis_log.csv` #8. Even the better-motivated hypothesis
+      (equity-vol → FX-vol, not FX-direction) found nothing the price-only
+      5-seed ensemble doesn't already carry — consistent with the RSI_14 /
+      BB_percent_b / FOMC / COT nulls already in this family (§3.5). NOT added
+      to any input set, `models/volatility/` UNTOUCHED, no retrain. Next
+      volatility bar: 0.05/9 ≈ 0.00556. Full suite green (86 tests).
+
+## Backlog — Volatility ensemble's own forecast as a direction/return input (added 2026-07-26, hypothesis #9, VERDICT: DROP)
+
+CROSS-FAMILY REUSE, not a new raw data source: does conditioning the
+direction/return model on "how much movement is expected tomorrow" — a signal
+this project already validated in the SEPARATE volatility family (§3.5, the
+ONLY neural family with a CI-confirmed edge over its baseline) — help predict
+direction? Rationale: trend persistence vs. mean-reversion often differs by
+volatility regime, so this is a mechanistically distinct hypothesis from
+another fresh external feed, reusing information already proven out elsewhere
+in this project.
+
+- [x] Implementation — NO retraining of the volatility ensemble. New functions
+      in `src/volatility.py`:
+      `load_frozen_volatility_ensemble` loads the PRODUCTION `models/volatility/`
+      artifacts (5 seed `.keras` models + `lag_scaler`/`lag_pca`/`global_scaler`,
+      fit ONCE on train[0:80%] by `train_production_volatility_model`) via
+      `joblib.load` / Keras `load_model` only — no fitting.
+      `batch_predict_frozen_ensemble_vol_pct` runs pure batch INFERENCE
+      (`.transform()` + `.predict()` only) across the FULL historical row set to
+      produce `predicted_vol_pct` for every row — the exact same
+      transform/predict calls `src/inference.py::_predict_volatility` makes for
+      one live window, vectorized over history instead. Same idiom
+      `src/ablation.py::build_matrix` already uses for its own once-fit PCA
+      applied across train+val+test — not a new or different look-ahead
+      surface; row t's prediction still depends only on rows <= t
+      (`make_sequences`' existing sliding-window geometry). `add_volatility_forecast_feature`
+      neutral-fills warm-up rows (before the first full `time_steps` window) to
+      0.0, the same convention every other candidate module uses.
+      `test_frozen_volatility_ensemble_batch_inference_never_fits` monkeypatches
+      `StandardScaler.fit`/`fit_transform` and `PCA.fit`/`fit_transform` to raise,
+      then exercises the full code path (with synthetic already-fitted stand-in
+      artifacts) across a full synthetic row range standing in for
+      train+val+test at once — confirming no fitting step is ever triggered,
+      regardless of which rows are passed.
+- [x] Wired into `src/ablation.py::build_matrix`'s `extra_feature_columns`
+      handling (mirrors the FOMC/COT/fibonacci/VIX branches) and a
+      `python -m src.ablation volforecast` CLI entry. Single-column bundle
+      (`predicted_vol_pct`) — one Bonferroni slot. Confirmed family size = 8
+      before running → this is direction/return hypothesis **#9**, bar
+      `0.05/9 ≈ 0.00556`. ADD-test via `run_addition_test` (paired bootstrap
+      2000 resamples + exact McNemar), validation[70:80] only, test block
+      reserved, run ONCE, no tuning after seeing results.
+
+      | family | hypothesis # | bar | result | evidence |
+      |---|---|---|---|---|
+      | direction/return | #9 | 0.05/9 ≈ 0.00556 | **DROP** | Δacc = −0.0093, 95% CI [−0.0304, +0.0105] (includes 0); McNemar b=35/c=43, p=0.4282 ≫ bar; ΔAUC +0.0009 CI [−0.0136, +0.0146] |
+
+      Registered as `feature_hypothesis_log.csv` #9. `volatility_hypothesis_log.csv`
+      and the weekly COT log untouched (this is a direction/return hypothesis
+      only). Even reusing an already-proven signal from a different family
+      found nothing the existing 27-column input set doesn't already carry.
+- [x] NOT added to `FEATURE_COLUMNS`, NOT served, NOT in any variant, no
+      retrain. Even had this cleared, shipping it would introduce a
+      **serving-order dependency** (the volatility ensemble must run before
+      direction/return can consume its output) — a discussion point, not
+      automatic, on a clear KEEP; moot here since it DROPped. Next
+      direction/return bar: 0.05/10 = 0.005. Full suite green (88 tests).
 
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
