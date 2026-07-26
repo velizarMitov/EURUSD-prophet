@@ -2343,3 +2343,281 @@ def test_harmonic_features_stay_out_of_daily_feature_columns():
     from src.harmonic_event_check import MODEL_FEATURE_COLUMNS
 
     assert not (set(HARMONIC_EVENT_COLUMNS) | set(MODEL_FEATURE_COLUMNS)) & set(FEATURE_COLUMNS)
+
+
+# ── ZigZag swings (src.zigzag_swings) -- the alternative, causal ATR-scaled
+# swing basis for the harmonic-pattern hypotheses H1.3/H1.4. Highest-priority
+# test set in this whole family given the ELEVATED look-ahead risk of a
+# variable (unbounded) confirmation lag vs. the fractal path's trivial fixed
+# one -- these tests exist specifically to rule out repainting. ────────────
+
+def _zigzag_test_path():
+    """A synthetic price path built to produce ONE confirmed HIGH pivot whose
+    reveal_bar is DEMONSTRABLY later than its own pivot bar: a quiet warm-up
+    (stable small ATR), a clean rise to a peak, several bars that wobble just
+    under the ATR-scaled threshold (the peak stays an UNCONFIRMED candidate),
+    then a genuine drop that finally exceeds the threshold and confirms it."""
+    warmup = 100.0 + np.sin(np.linspace(0, 3, 20)) * 0.05   # tiny noise -> small, stable ATR
+    rise = np.linspace(warmup[-1], 110.0, 10)                # clean rise to a peak (last point)
+    wobble = np.array([109.9, 109.95, 109.8, 109.9])         # stays under threshold -> no confirm yet
+    drop = np.linspace(109.8, 95.0, 10)                      # eventually exceeds threshold -> confirms
+    return np.concatenate([warmup, rise, wobble, drop])
+
+
+def test_zigzag_pivot_invisible_before_reveal_bar():
+    """The elevated-risk-specific look-ahead guard: a pivot must be
+    PROVABLY INVISIBLE to any query truncated to end before its own
+    reveal_bar (including the pivot_bar itself and every bar up to
+    reveal_bar-1), and present exactly once the query reaches reveal_bar."""
+    from src.zigzag_swings import zigzag_swings
+
+    path = _zigzag_test_path()
+    pivots_full = zigzag_swings(path, path, path)
+    high_pivots = [p for p in pivots_full if p['kind'] == 'H'
+                  and p['level'] == pytest.approx(110.0, abs=0.01)]
+    assert len(high_pivots) == 1, "expected exactly one confirmed high pivot at the constructed peak"
+    peak = high_pivots[0]
+    assert peak['reveal_bar'] > peak['idx'], \
+        "reveal_bar must be strictly LATER than the pivot's own bar (a genuine reveal lag)"
+
+    # Invisible for every bar up to reveal_bar - 1 inclusive.
+    cut = peak['reveal_bar']
+    trunc_before = zigzag_swings(path[:cut], path[:cut], path[:cut])
+    assert not any(p['idx'] == peak['idx'] and p['kind'] == 'H' for p in trunc_before), \
+        "pivot must not exist (even unconfirmed) in any query ending before its own reveal_bar"
+
+    # Present exactly AT reveal_bar.
+    trunc_at = zigzag_swings(path[:cut + 1], path[:cut + 1], path[:cut + 1])
+    matches = [p for p in trunc_at if p['idx'] == peak['idx'] and p['kind'] == 'H']
+    assert len(matches) == 1
+    assert matches[0]['reveal_bar'] == peak['reveal_bar']
+    assert matches[0]['level'] == pytest.approx(peak['level'])
+
+
+def test_zigzag_confirmed_pivot_is_stable_under_future_extension():
+    """THE core repainting guard: a CONFIRMED pivot's (idx, level, reveal_bar)
+    must be IDENTICAL whether computed causally up to its own reveal_bar, or
+    with arbitrarily more future bars (a further whipsaw and a new trend)
+    appended afterward. This is the property a naive 'scan the whole series
+    for local extrema' implementation would violate."""
+    from src.zigzag_swings import zigzag_swings
+
+    path = _zigzag_test_path()
+    extra = np.concatenate([np.linspace(95.0, 130.0, 15), np.linspace(130.0, 80.0, 15)])
+    extended = np.concatenate([path, extra])
+
+    pivots_short = zigzag_swings(path, path, path)
+    pivots_long = zigzag_swings(extended, extended, extended)
+
+    peak_short = [p for p in pivots_short if p['kind'] == 'H'
+                 and p['level'] == pytest.approx(110.0, abs=0.01)][0]
+    matches_long = [p for p in pivots_long if p['idx'] == peak_short['idx'] and p['kind'] == 'H']
+    assert len(matches_long) == 1, "the same pivot bar must still be confirmed as a high in the extended series"
+    peak_long = matches_long[0]
+
+    assert peak_long['level'] == pytest.approx(peak_short['level'])
+    assert peak_long['reveal_bar'] == peak_short['reveal_bar']
+    assert peak_long['idx'] == peak_short['idx']
+
+
+def test_zigzag_no_reversal_produces_zero_confirmed_pivots():
+    """Threshold-sensitivity sanity check: a price path with NO reversal
+    ever exceeding the ATR-scaled threshold (a strictly monotonic rise, no
+    pullback at all) must confirm ZERO pivots -- the running candidate keeps
+    extending forever and is correctly never confirmed."""
+    from src.zigzag_swings import zigzag_swings
+
+    path = np.linspace(100.0, 200.0, 50)   # strictly increasing, no reversal whatsoever
+    pivots = zigzag_swings(path, path, path)
+    assert pivots == []
+
+
+def test_zigzag_atr_matches_features_py_atr14_formula():
+    """The pre-registered threshold (1.5 * ATR(14)) must reuse this project's
+    EXISTING ATR convention (src.features.compute_features's ATR_14 column:
+    same true-range definition, same ewm(com=13, adjust=False) Wilder
+    smoothing) -- not a second, subtly different ATR formula."""
+    from src.zigzag_swings import _atr14
+
+    rng = np.random.default_rng(0)
+    n = 30
+    close = 100 + np.cumsum(rng.normal(0, 0.5, n))
+    high = close + np.abs(rng.normal(0, 0.3, n))
+    low = close - np.abs(rng.normal(0, 0.3, n))
+
+    data = pd.DataFrame({'high': high, 'low': low, 'close': close})
+    prev_close = data['close'].shift(1)
+    true_range = pd.concat([
+        data['high'] - data['low'],
+        (data['high'] - prev_close).abs(),
+        (data['low'] - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    expected = true_range.ewm(com=13, adjust=False).mean().to_numpy()
+
+    np.testing.assert_allclose(_atr14(high, low, close), expected, equal_nan=True)
+
+
+def test_zigzag_pivots_strictly_alternate_kind():
+    """ZigZag pivots must strictly alternate H/L by construction (each
+    confirmation immediately flips the search direction) -- unlike the
+    independent per-bar fractal detector, no separate 'collapse a same-kind
+    run' step should ever be necessary."""
+    from src.zigzag_swings import zigzag_swings
+
+    rng = np.random.default_rng(1)
+    path = 100.0 + np.cumsum(rng.normal(0, 0.4, 400))
+    pivots = zigzag_swings(path, path, path)
+    assert len(pivots) >= 4, "need a handful of pivots for the alternation check to be meaningful"
+    kinds = [p['kind'] for p in pivots]
+    assert all(a != b for a, b in zip(kinds, kinds[1:])), "consecutive pivots must never share a kind"
+
+
+def test_detect_harmonic_events_from_pivots_reuses_score_xabcd_unchanged():
+    """The zigzag event path must produce byte-identical scoring to the
+    fractal event path for the SAME geometric swing -- only confirmed_at_idx
+    differs (D's own reveal_bar, not D_idx + fixed CONFIRMATION_LAG)."""
+    from src.harmonic_patterns import detect_harmonic_events_from_pivots
+
+    pivots = [
+        {'idx': 5, 'kind': 'L', 'level': 0.0, 'reveal_bar': 9},      # variable lag, NOT idx+2
+        {'idx': 10, 'kind': 'H', 'level': 100.0, 'reveal_bar': 11},
+        {'idx': 15, 'kind': 'L', 'level': 38.2, 'reveal_bar': 20},
+        {'idx': 20, 'kind': 'H', 'level': 76.39, 'reveal_bar': 21},
+        {'idx': 25, 'kind': 'L', 'level': 21.4, 'reveal_bar': 33},   # e.g. an 8-bar reveal lag
+    ]
+    events = detect_harmonic_events_from_pivots(pivots)
+    assert len(events) == 1
+    ev = events.iloc[0]
+    assert ev['pattern'] == 'gartley'
+    assert ev['best_fit_score'] == pytest.approx(1.0)
+    assert ev['direction'] == 1
+    assert ev['confirmed_at_idx'] == 33, "confirmed_at_idx must be D's OWN reveal_bar, not D_idx+2"
+    assert ev['confirmed_at_idx'] != ev['D_idx'] + 2, \
+        "must NOT silently reuse the fractal path's fixed-lag convention"
+
+
+def test_harmonic_event_check_swing_source_selects_zigzag_pivots(monkeypatch):
+    """build_event_dataset(swing_source='zigzag') must route through
+    zigzag_swings, NOT the fractal detector -- verified by monkeypatching
+    each to a call-counting sentinel and confirming only the requested one
+    fires."""
+    import src.harmonic_event_check as hec
+    from src.harmonic_patterns import HARMONIC_EVENT_COLUMNS
+
+    calls = {'fractal': 0, 'zigzag': 0}
+
+    def fake_fractal(*a, **k):
+        calls['fractal'] += 1
+        return pd.DataFrame(columns=HARMONIC_EVENT_COLUMNS)
+
+    def fake_zigzag(*a, **k):
+        calls['zigzag'] += 1
+        return []   # empty pivot list -> detect_harmonic_events_from_pivots short-circuits
+
+    monkeypatch.setattr(hec, 'detect_harmonic_events', fake_fractal)
+    monkeypatch.setattr(hec, 'zigzag_swings', fake_zigzag)
+
+    idx = pd.date_range('2020-01-01', periods=30, freq='h', tz='UTC')
+    rng = np.random.default_rng(0)
+    close = 1.1 + np.cumsum(rng.normal(0, 0.0005, 30))
+    h1 = pd.DataFrame({'open': close, 'high': close + 0.0003, 'low': close - 0.0003,
+                       'close': close, 'tick_volume': 1.0}, index=idx)
+
+    hec.build_event_dataset(h1=h1, swing_source='zigzag')
+    assert calls == {'fractal': 0, 'zigzag': 1}, \
+        "swing_source='zigzag' must call zigzag_swings and NOT the fractal detector"
+
+    calls['fractal'] = calls['zigzag'] = 0
+    hec.build_event_dataset(h1=h1, swing_source='fractal')
+    assert calls == {'fractal': 1, 'zigzag': 0}, \
+        "swing_source='fractal' must call the fractal detector and NOT zigzag_swings"
+
+
+# ── fractal-breakout drift/continuation event-study (own family) ────────────
+
+def test_signed_continuation_direction_sign_construction():
+    """A breakout_up day with a positive forward return must give POSITIVE
+    signed_continuation (momentum confirmed); a breakout_down day with the SAME
+    positive forward return must give NEGATIVE signed_continuation (momentum
+    against the breakout direction), since direction flips the sign."""
+    from src.fractal_breakout_driftcheck import compute_signed_continuation
+
+    # up-breakout at idx=0, close rises by t+2 -> positive continuation.
+    close_up = np.array([1.00, 1.00, 1.02, 1.00, 1.00])
+    up = np.array([1, 0, 0, 0, 0])
+    down = np.array([0, 0, 0, 0, 0])
+    events_up, both_up = compute_signed_continuation(close_up, up, down, horizons=(2,))
+    assert both_up == 0
+    assert events_up.loc[0, 'signed_continuation_2'] > 0, \
+        "up-breakout + positive forward return must be POSITIVE signed_continuation"
+
+    # down-breakout at idx=0, close rises by t+2 (same forward move) -> negative continuation.
+    close_down = np.array([1.00, 1.00, 1.02, 1.00, 1.00])
+    up2 = np.array([0, 0, 0, 0, 0])
+    down2 = np.array([1, 0, 0, 0, 0])
+    events_down, both_down = compute_signed_continuation(close_down, up2, down2, horizons=(2,))
+    assert both_down == 0
+    assert events_down.loc[0, 'signed_continuation_2'] < 0, \
+        "down-breakout + positive forward return must be NEGATIVE signed_continuation"
+
+
+def test_signed_continuation_both_flags_excluded_from_direction():
+    """A day where breakout_up AND breakout_down both fire has an undefined
+    direction and must be excluded entirely (not defaulted to either sign),
+    counted separately as both_excluded."""
+    from src.fractal_breakout_driftcheck import compute_signed_continuation
+
+    close = np.array([1.00, 1.00, 1.02, 1.00, 1.00])
+    up = np.array([0, 1, 0, 0, 0])
+    down = np.array([0, 1, 0, 0, 0])   # idx=1: both flags fire
+    events, both = compute_signed_continuation(close, up, down, horizons=(2,))
+    assert both == 1
+    assert 1 not in events.index
+
+
+def test_signed_continuation_insufficient_forward_history_excluded_not_padded():
+    """An event too close to the end of the array (t+N would run off the end)
+    must be excluded (NaN) for that horizon, never padded or estimated -- the
+    default max_idx=len(close) is the plain 'insufficient history' case."""
+    from src.fractal_breakout_driftcheck import compute_signed_continuation
+
+    close = np.array([1.00, 1.00, 1.00, 1.00, 1.02])
+    up = np.array([0, 0, 0, 1, 0])     # event at idx=3; idx+2=5 is OFF THE END (len=5)
+    down = np.array([0, 0, 0, 0, 0])
+    events, both = compute_signed_continuation(close, up, down, horizons=(2,))
+    assert both == 0
+    assert np.isnan(events.loc[3, 'signed_continuation_2']), \
+        "insufficient forward history must be excluded (NaN), not padded"
+
+
+def test_signed_continuation_validation_test_boundary_excludes_crossing_events():
+    """A validation-slice event whose forward window would cross INTO the
+    reserved test block must be excluded for that horizon even though the
+    underlying array physically has more rows there (max_idx enforces the
+    split boundary, not just the true end of the series) -- mirrors the
+    look-ahead discipline of every other hypothesis family in this project."""
+    from src.fractal_breakout_driftcheck import compute_signed_continuation
+
+    # 10 bars total; pretend val_end=6 (bars 6..9 are the "reserved test block").
+    close = np.array([1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.02, 1.00, 1.00, 1.00])
+    val_end = 6
+    up = np.array([0, 0, 0, 0, 1, 0, 0, 0, 0, 0])   # event at idx=4; idx+2=6 == val_end -> crosses boundary
+    down = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    events_bounded, _ = compute_signed_continuation(close, up, down, horizons=(2,), max_idx=val_end)
+    events_unbounded, _ = compute_signed_continuation(close, up, down, horizons=(2,), max_idx=None)
+
+    assert np.isnan(events_bounded.loc[4, 'signed_continuation_2']), \
+        "forward window crossing into the reserved test block must be excluded"
+    assert not np.isnan(events_unbounded.loc[4, 'signed_continuation_2']), \
+        "sanity check: the data DOES exist beyond val_end (this is a boundary rule, not missing data)"
+
+
+def test_fractal_breakout_driftcheck_split_matches_ablation_convention():
+    """The split boundaries must match src.ablation's canonical 70/80 formula
+    exactly (same train_fraction=0.80/val_fraction=0.10 convention used by
+    every other family in this project)."""
+    from src.fractal_breakout_driftcheck import _canonical_split
+
+    train_end, val_end = _canonical_split(1000, train_fraction=0.80, val_fraction=0.10)
+    assert train_end == 700
+    assert val_end == 800

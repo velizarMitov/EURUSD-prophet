@@ -888,6 +888,191 @@ ones.
       Power caveat stated plainly: 622 validation events is a small-n family;
       both DROPs are correspondingly weak (not strong) evidence of absence.
 
+## Backlog — ZigZag swing basis for the harmonic-pattern model (added 2026-07-26, SAME family, hypotheses H1.3 + H1.4, VERDICT: BOTH DROP)
+
+An ALTERNATIVE swing-point source for the same harmonic-pattern hypothesis
+family (`results/harmonic_pattern_hypothesis_log.csv`) — hypotheses #3/#4,
+family grown from 2 to 4, bar tightened to alpha = 0.05/4 = **0.0125** each.
+Not a new event universe or target: EVERYTHING else in the pipeline (event
+filter `best_fit_score>=0.5`, triple-barrier labeling, the 8 features,
+chronological 70/15/15 split, `class_weight='balanced'`, `random_state=42`,
+LogReg + PyTorch MLP) stays byte-identical to H1.1/H1.2 — only the swing
+points feeding `score_xabcd` change.
+
+**Why try a second swing basis.** A Williams fractal's 5-bar window is
+FIXED-LENGTH regardless of volatility. On H1 bars specifically, a fixed
+5-bar window is short enough that it likely flags a lot of noisy
+MICRO-swings — local wiggles that are technically "extrema" but not
+genuinely meaningful market structure — feeding XABCD scoring with
+unrepresentative points. A ZigZag whose reversal threshold ADAPTS to current
+volatility (ATR-scaled) targets cleaner, more meaningful swings: a pivot
+only confirms once price has genuinely reversed by a volatility-relative
+amount, not merely "more extreme than its 2 immediate neighbors on each
+side". On the real H1 data this produced markedly fewer, presumably
+higher-quality swings: **6,969 raw XABCD completions (vs the fractal path's
+14,144) → 2,307 clearing the 0.5 filter (vs 4,161) → 2,303 labeled events
+(vs 4,147)**.
+
+- [x] Step 1 — **Elevated look-ahead risk, stated honestly, and mitigated.**
+      A Williams fractal's confirmation lag is FIXED (exactly 2 bars,
+      trivial to reason about). A ZigZag pivot's confirmation lag
+      (`reveal_bar - idx`) is VARIABLE and UNBOUNDED — a pivot can sit
+      unconfirmed for a handful of bars or for hundreds, depending on how
+      long price takes to reverse by the ATR-scaled threshold. This is a
+      genuinely easier algorithm to get wrong in a way that REPAINTS (the
+      classic ZigZag bug: compute local extrema over the WHOLE series first,
+      then apply the threshold — using full hindsight, because "was this
+      the local max" implicitly depends on bars that had not happened yet).
+      Mitigation: new module `src/zigzag_swings.py` processes bars STRICTLY
+      IN ORDER, one at a time — no "scan the whole array for extrema" step
+      anywhere (the only vectorized computation is ATR itself, which is
+      ITSELF purely causal — `.ewm`, reusing `src.features.py`'s exact
+      `ATR_14` formula, so vectorizing that specific recurrence introduces
+      no look-ahead). Every pivot carries both `idx` (where the extreme
+      price occurred) and `reveal_bar` (when the reversal was actually
+      detected) — the variable-length analogue of `CONFIRMATION_LAG`.
+      Guarded by what is, deliberately, the **highest-priority test set in
+      this whole family**: a pivot demonstrably invisible to any query
+      truncated before its own `reveal_bar`
+      (`test_zigzag_pivot_invisible_before_reveal_bar`), and — THE core
+      repainting guard — a confirmed pivot's `(idx, level, reveal_bar)`
+      provably IDENTICAL whether computed causally up to its own
+      `reveal_bar` or with arbitrarily more future bars appended afterward
+      (`test_zigzag_confirmed_pivot_is_stable_under_future_extension`), plus
+      a threshold-sensitivity sanity check (a monotonic path with no
+      reversal at all produces zero confirmed pivots).
+- [x] Step 2 — Algorithm (pre-registered, fixed before running):
+      `threshold[t] = 1.5 * ATR(14)[t]` (reuses this project's existing
+      1.5x multiplier convention, ATR computed causally). Maintain a running
+      candidate extreme + search direction; extend the candidate on a new
+      intrabar extreme (`high`/`low`), confirm the reversal on `close`
+      crossing the ATR-scaled threshold away from the candidate — then flip
+      direction and reseed. Bootstrap (bar 0, "seeking a high") is an
+      arbitrary but immaterial, explicitly stated choice. Pivots strictly
+      alternate H/L by construction (no `_push_swing`-style same-kind
+      collapse needed, unlike the independent fractal detector).
+      New `src.harmonic_patterns.detect_harmonic_events_from_pivots` reuses
+      `score_xabcd` UNCHANGED — only the swing-point source differs; an
+      event's `confirmed_at_idx` is its own D pivot's `reveal_bar`, not
+      `D_idx + CONFIRMATION_LAG`.
+- [x] Step 3 — `src/harmonic_event_check.py`'s `build_event_dataset`/`run`
+      parametrized by `swing_source` ('fractal' | 'zigzag'); the family's
+      Bonferroni bar is now computed DYNAMICALLY at run time from however
+      many distinct hypothesis names are already registered (matching
+      `src.ablation.run` / `src.volatility.run_candidate_feature_tests`'s
+      convention) rather than a hardcoded constant — H1.1/H1.2's
+      ALREADY-LOGGED alpha (0.025) is never retroactively rewritten; only
+      this new run is judged at the freshly-tightened bar. Run via
+      `python -m src.harmonic_event_check zigzag`.
+
+      | hypothesis | comparison | val acc (challenger / reference) | Δacc | 97.5%→98.8% CI | McNemar p | verdict |
+      |---|---|---|---|---|---|---|
+      | H1.3 LogisticRegression | vs train-majority baseline | 0.5130 / 0.5043 | +0.0087 | [−0.0928, +0.1072] | 0.8856 | **DROP** |
+      | H1.4 MLP (PRIMARY) | vs H1.3's own val predictions | 0.5362 / 0.5130 | +0.0232 | [−0.0276, +0.0768] | 0.3497 | **DROP** |
+
+      H1.4's corroborating check (vs majority baseline) was directionally
+      positive but also not CI-confirmed (Δacc +0.0319, McNemar p=0.5012) —
+      consistent, not ambiguous. Non-event random-sample baseline (b),
+      descriptive only: label==1 rate 0.4637 (n=2,303) — close to this
+      dataset's own 46.3%, the same target/stop geometric-distance-asymmetry
+      pattern as the fractal run.
+- [x] Step 4 — Both rows registered as `harmonic_pattern_hypothesis_log.csv`
+      n=3/n=4. No model, serving, or API change regardless of outcome. 7 new
+      unit tests (the reveal-lag invisibility check, the repainting guard,
+      threshold-sensitivity zero-pivots, an ATR-formula-matches-`src.features`
+      equality check, strict H/L alternation, `detect_harmonic_events_from_pivots`
+      reusing `score_xabcd` unchanged with a variable `confirmed_at_idx`, and
+      a swing-source routing check). Full suite green (109 tests). Cleaner
+      swings did not translate into a detectable edge either — a materially
+      different swing basis on the SAME idea still finds nothing, modest
+      further evidence (not proof) that the underlying null is about the
+      harmonic-pattern hypothesis itself, not an artifact of the fractal
+      window's noise. Next bar in this family if a 5th hypothesis is ever
+      spent: 0.05/5 = 0.01.
+
+## Backlog — Fractal-breakout drift/continuation event-study (added 2026-07-26, NEW OWN family, VERDICT: DROP)
+
+A genuinely different question from hypothesis #7 (`feature_hypothesis_log.csv`,
+DROPped): #7 asked whether `fractal_breakout_up`/`fractal_breakout_down` help
+predict the SINGLE NEXT day's direction as an input feature. This asks the
+classic breakout-MOMENTUM thesis instead — conditional on a confirmed breakout
+today, does price keep moving in that direction over the next few days? A
+forward multi-day event-study, not a same-day feature-addition test, so it gets
+its own brand-new family log
+(`results/fractal_breakout_driftcheck_hypothesis_log.csv`) and does NOT touch
+`feature_hypothesis_log.csv`, `volatility_hypothesis_log.csv`,
+`cot_weekly_hypothesis_log.csv`, or `harmonic_pattern_hypothesis_log.csv`.
+
+Research-only, regardless of outcome: no model, feature, or serving change at
+this stage. A KEEP-signal would only be the TRIGGER to design a proper
+dedicated event-conditional model later (mirroring how the harmonic-pattern H1
+model was built, `src/harmonic_event_check.py`) — never an automatic
+feature/serving change itself.
+
+- [x] Step 1 — New module `src/fractal_breakout_driftcheck.py`. Reuses
+      `confirmed_high_low_levels()`/`add_fibonacci_features()` from
+      `src.fibonacci_fractals` UNCHANGED to get `fractal_breakout_up`/
+      `fractal_breakout_down` per day on `results/eurusd_features.csv` (the
+      same series hypothesis #7 used) — fractal detection itself is not
+      rebuilt, and the confirmation-lag look-ahead guard is already baked into
+      those columns by construction.
+- [x] Step 2 — Event definition: day t is an event iff exactly one of
+      `fractal_breakout_up[t]`/`fractal_breakout_down[t]` fires (`event_direction
+      = +1`/`-1`); the rare day where BOTH fire (3 times in the full 1971-2026
+      daily history) has an undefined direction and is excluded, counted
+      separately rather than arbitrarily signed. For each event and horizon N
+      in {2, 3, 5}: `signed_continuation_N = event_direction *
+      log(close[t+N]/close[t])`.
+- [x] Step 3 — SAME chronological daily split convention as every other family
+      (`config.json`: train_fraction=0.80/val_fraction=0.10 ->
+      train[0:70%]/validation[70%:80%]/test[80%:100%] RESERVED, identical
+      formula to `src.ablation._canonical_split`). A validation-slice event
+      whose forward window would cross INTO the reserved test block is
+      excluded for that horizon even though the underlying CSV physically has
+      more rows there (this is daily history extending to the present, not a
+      short series) — the same `max_idx` boundary parameter in
+      `compute_signed_continuation` also handles genuine "insufficient forward
+      history" at the true end of the series, so there is only one place this
+      look-ahead rule can be gotten wrong.
+- [x] Step 4 — PRE-REGISTERED test: PRIMARY = mean(signed_continuation_3) over
+      validation-slice events, paired bootstrap (2000 resamples), 95% CI;
+      KEEP-signal only if the CI is entirely > 0. CORROBORATING (context only,
+      never a second path to KEEP): the same statistic for N=2 and N=5 — if
+      N=3 is null but N=2/N=5 look significant, the verdict stays DROP (same
+      anti-cherry-pick convention as `harmonic_h1_2_mlp_vs_h1_1_primary` and
+      every other bundled hypothesis). alpha = 0.05 (first hypothesis of this
+      brand-new family).
+- [x] Step 5 — One-shot run on real data: validation-slice raw event counts
+      breakout_up=260, breakout_down=380 (both-flags-excluded=0) — a decently
+      powered 640 total, no thin-tails caveat needed this time.
+
+      | horizon | role | n used | mean signed_continuation | 95% CI | verdict contribution |
+      |---|---|---|---|---|---|
+      | N=2 | corroborating | 638 | −0.000233 | [−0.000771, +0.000343] | straddles 0 |
+      | N=3 | **PRIMARY** | 637 | −0.000155 | [−0.000856, +0.000551] | straddles 0 → **DROP** |
+      | N=5 | corroborating | 637 | −0.000112 | [−0.001001, +0.000762] | straddles 0 |
+
+      All three horizons are directionally NEGATIVE (mild reversal, not
+      momentum) but none clears the pre-registered bar — consistent with the
+      rest of this project's near-efficient-market findings; a confirmed
+      fractal breakout carries no detectable forward drift at 2/3/5-day
+      horizons. `n_used` dips slightly below the raw event counts purely from
+      the split-boundary exclusion near `val_end`, confirming that guard is
+      live, not dead code.
+- [x] Step 6 — Logged as `fractal_breakout_continuation_3day`, n=1, in the new
+      `results/fractal_breakout_driftcheck_hypothesis_log.csv`. No other
+      hypothesis log touched. 5 new unit tests (signed_continuation
+      direction-sign construction for both up/down breakouts, both-flags-
+      same-day exclusion, insufficient-forward-history exclusion, the
+      validation/test split-boundary exclusion — proven against an identical
+      unbounded run to show the data genuinely exists beyond `val_end` and is
+      deliberately not read —, and a split-formula equality check against
+      `src.ablation`'s convention). Full suite green (114 tests). No model,
+      feature, or serving change. This DROP does not retire the underlying
+      curiosity forever — it retires 3/2/5-day continuation specifically; a
+      different horizon or a volatility-conditioned variant would be hypothesis
+      #2 of this family (alpha tightening to 0.05/2 = 0.025).
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)

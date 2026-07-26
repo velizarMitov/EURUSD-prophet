@@ -189,3 +189,48 @@ def detect_harmonic_events(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(events)
     out['harmonic_pattern_score_signed'] = out['direction'] * out['best_fit_score']
     return out[HARMONIC_EVENT_COLUMNS].reset_index(drop=True)
+
+
+def detect_harmonic_events_from_pivots(pivots: list) -> pd.DataFrame:
+    """Detect harmonic events from an ALREADY-confirmed, already-alternating,
+    already-chronological sequence of swing pivots — e.g.
+    `src.zigzag_swings.zigzag_swings`' output — reusing `score_xabcd`
+    UNCHANGED. Only the swing-point SOURCE differs from `detect_harmonic_events`
+    (Williams fractals via `_harmonic_swing_walk`): each pivot here must be a
+    dict with `'idx'`, `'kind'`, `'level'`, and `'reveal_bar'` (the bar it
+    becomes knowable — VARIABLE-length here, unlike the fixed
+    `CONFIRMATION_LAG` the fractal path uses).
+
+    Because `pivots` is already causal by construction (each entry's own
+    `reveal_bar` was fixed at the moment it was produced, and a confirmed
+    pivot is never later replaced — see `src.zigzag_swings`' module
+    docstring), a static sliding window over the list introduces no
+    additional look-ahead: it is exactly equivalent to walking bar-by-bar and
+    scoring whenever a 5th consecutive pivot is revealed, just without
+    re-deriving the reveal timeline that `pivots` already encodes.
+
+    An event's `confirmed_at_idx` is its OWN D pivot's `reveal_bar` — the
+    event cannot be acted on before its own final point is itself confirmed.
+    Same `HARMONIC_EVENT_COLUMNS` shape as `detect_harmonic_events`, so
+    downstream callers do not need to know which swing source produced it.
+    """
+    if len(pivots) < 5:
+        return pd.DataFrame(columns=HARMONIC_EVENT_COLUMNS)
+
+    events = []
+    for i in range(4, len(pivots)):
+        X, A, B, C, D = pivots[i - 4], pivots[i - 3], pivots[i - 2], pivots[i - 1], pivots[i]
+        res = score_xabcd(X, A, B, C, D)
+        if res is not None:
+            events.append({
+                **res,
+                'X_idx': X['idx'], 'A_idx': A['idx'], 'B_idx': B['idx'],
+                'C_idx': C['idx'], 'D_idx': D['idx'],
+                'confirmed_at_idx': D['reveal_bar'],
+                'swing_duration_bars': D['idx'] - X['idx'],
+            })
+    if not events:
+        return pd.DataFrame(columns=HARMONIC_EVENT_COLUMNS)
+    out = pd.DataFrame(events)
+    out['harmonic_pattern_score_signed'] = out['direction'] * out['best_fit_score']
+    return out[HARMONIC_EVENT_COLUMNS].reset_index(drop=True)

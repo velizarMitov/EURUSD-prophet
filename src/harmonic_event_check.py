@@ -1,23 +1,52 @@
 """
 H1 harmonic-pattern event-conditional model — OWN hypothesis family
-(results/harmonic_pattern_hypothesis_log.csv), first hypothesis budget for
-this family (alpha=0.05), split across TWO sequentially scaled
-sub-hypotheses run together this pass (alpha=0.025 each). Separate from every
-other family in this project (daily direction/return, daily volatility,
-weekly COT) — a different event universe (H1 harmonic-pattern completions,
-not every daily/H1 bar), a different target (Lopez de Prado triple-barrier
+(results/harmonic_pattern_hypothesis_log.csv). Separate from every other
+family in this project (daily direction/return, daily volatility, weekly
+COT) — a different event universe (H1 harmonic-pattern completions, not
+every daily/H1 bar), a different target (Lopez de Prado triple-barrier
 label, not next-bar direction/return/volatility) — so it does NOT dilute or
 get diluted by any other family's Bonferroni count.
 
-Data: results/eurusd_h1.csv (via src.h1_features.load_h1_frame). Pattern
-detection reuses src.harmonic_patterns.detect_harmonic_events (which itself
-reuses src.fibonacci_fractals.detect_fractals / _push_swing UNCHANGED) fed H1
-high/low/close instead of daily. src.harmonic_patterns.py is itself NEW,
-UNVALIDATED code introduced for this hypothesis (see its module docstring) —
-only the fractal/swing PRIMITIVES it builds on have a prior track record.
+TWO SWING BASES have been tried in this family, each producing a LogReg +
+MLP pair (`run(swing_source=...)`), with the family's Bonferroni bar computed
+DYNAMICALLY at run time from however many distinct hypothesis names are
+already registered (same convention as `src.ablation.run` /
+`src.volatility.run_candidate_feature_tests`):
 
-PRE-REGISTERED PIPELINE (fixed before looking at any result; run ONCE)
-------------------------------------------------------------------------
+  'fractal' (first budget, alpha=0.05/2=0.025 each) — H1.1 (LogReg) / H1.2
+    (MLP), swing points from Williams fractals
+    (`src.harmonic_patterns.detect_harmonic_events`, which itself reuses
+    `src.fibonacci_fractals.detect_fractals` / `_push_swing` UNCHANGED),
+    fixed CONFIRMATION_LAG=2. Both DROPped.
+  'zigzag' (family grown to 4, alpha=0.05/4=0.0125 each) — H1.3 (LogReg) /
+    H1.4 (MLP), swing points from a CAUSAL, ATR(14)-scaled ZigZag
+    (`src.zigzag_swings.zigzag_swings` ->
+    `src.harmonic_patterns.detect_harmonic_events_from_pivots`, VARIABLE
+    confirmation lag = each pivot's own reveal_bar). Tried because a
+    Williams fractal's fixed 5-bar window on H1 bars likely flags a lot of
+    noisy MICRO-swings unrepresentative of genuine harmonic structure; a
+    volatility-adaptive ZigZag threshold targets cleaner, more meaningful
+    swings instead. See `src.zigzag_swings`' module docstring for the
+    elevated look-ahead risk this alternative carries (a variable, unbounded
+    confirmation lag vs. the fractal path's trivial fixed one) and how it is
+    mitigated (strictly causal walk-forward construction + an explicit
+    repainting-guard unit test).
+
+`src.harmonic_patterns.py` (both the Williams-fractal AND the ZigZag event
+paths) is itself NEW, UNVALIDATED code introduced for this family (see its
+module docstring) — only the fractal/swing PRIMITIVES it builds on
+(`src.fibonacci_fractals`) have a prior track record.
+
+Data: results/eurusd_h1.csv (via src.h1_features.load_h1_frame).
+
+Everything below this point describes the pipeline SHARED identically by
+both swing bases (event filter, triple-barrier labeling, features, split,
+models) — only the swing-point SOURCE feeding `score_xabcd` differs between
+a 'fractal' and a 'zigzag' run, so any outcome difference between them is
+attributable to that alone.
+
+PRE-REGISTERED PIPELINE (fixed before looking at any result; run ONCE per swing basis)
+------------------------------------------------------------------------------------------
 1. Event filter — H1 bars where an XABCD pattern completes (D confirmed, i.e.
    `confirmed_at_idx`, D_idx + CONFIRMATION_LAG) AND best_fit_score >= 0.5.
    No post-hoc tuning of this threshold.
@@ -107,7 +136,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 
 from src.h1_features import load_h1_frame, DEFAULT_H1_CACHE
-from src.harmonic_patterns import detect_harmonic_events
+from src.harmonic_patterns import detect_harmonic_events, detect_harmonic_events_from_pivots
+from src.zigzag_swings import zigzag_swings
 from src.triple_barrier import (
     ewma_log_return_std, horizon_vol_from_ewma_std, triple_barrier_label,
     TARGET_MULTIPLIER_DEFAULT, STOP_MULTIPLIER_DEFAULT,
@@ -116,9 +146,26 @@ from src.paper_trading import PIP_SIZE
 
 HARMONIC_LOG = 'results/harmonic_pattern_hypothesis_log.csv'
 FAMILY_ALPHA = 0.05
-SUB_HYPOTHESIS_ALPHA = FAMILY_ALPHA / 2   # 0.025 — H1.1 and H1.2, run together
 BOOTSTRAP_RESAMPLES = 2000
 RANDOM_STATE = 42   # config.json's project-wide convention
+
+# Hypothesis names per swing source (SAME family/log; the family's Bonferroni
+# bar is computed dynamically at run time from however many of these are
+# already registered — see run()'s alpha computation, matching the
+# ablation.py / volatility.py / cot_weekly_check.py dynamic-family-size
+# convention elsewhere in this project).
+HYPOTHESIS_NAMES = {
+    'fractal': {
+        'h1': 'harmonic_h1_1_logistic_vs_majority',
+        'h2': 'harmonic_h1_2_mlp_vs_h1_1_primary',
+        'label1': 'H1.1', 'label2': 'H1.2',
+    },
+    'zigzag': {
+        'h1': 'harmonic_h1_3_logistic_vs_majority_zigzag',
+        'h2': 'harmonic_h1_4_mlp_vs_h1_3_primary_zigzag',
+        'label1': 'H1.3', 'label2': 'H1.4',
+    },
+}
 
 MIN_BEST_FIT_SCORE = 0.5     # pre-registered event filter, no post-hoc tuning
 EWMA_SPAN = 24
@@ -171,8 +218,22 @@ def build_event_dataset(base_dir='', h1=None, cache_path=None,
                         min_best_fit_score=MIN_BEST_FIT_SCORE,
                         ewma_span=EWMA_SPAN, horizon_bars=HORIZON_BARS,
                         target_mult=TARGET_MULT, stop_mult=STOP_MULT,
-                        spread_pips=SPREAD_PIPS_DEFAULT, random_state=RANDOM_STATE):
+                        spread_pips=SPREAD_PIPS_DEFAULT, random_state=RANDOM_STATE,
+                        swing_source='fractal'):
     """Build the full labeled event dataset from H1 OHLC.
+
+    `swing_source` selects the swing-point basis feeding the SAME
+    `score_xabcd` ratio scoring, unchanged either way:
+      'fractal' — Williams fractals (`src.harmonic_patterns.detect_harmonic_events`,
+                  fixed CONFIRMATION_LAG=2 confirmation), H1.1/H1.2's basis.
+      'zigzag'  — ATR-scaled causal ZigZag pivots
+                  (`src.zigzag_swings.zigzag_swings` ->
+                  `src.harmonic_patterns.detect_harmonic_events_from_pivots`,
+                  VARIABLE confirmation lag = each pivot's own reveal_bar),
+                  H1.3/H1.4's basis. Everything else in this function
+                  (labeling, feature construction, baseline (b)) is IDENTICAL
+                  regardless of `swing_source`, so any outcome difference is
+                  attributable to the swing basis alone.
 
     Returns a dict:
       'h1'                the loaded H1 frame (UTC index)
@@ -190,8 +251,9 @@ def build_event_dataset(base_dir='', h1=None, cache_path=None,
 
     No look-ahead: horizon_vol[t] (via ewma_log_return_std, a causal/trailing
     pandas .ewm) depends only on bars <= t; each event's entry/direction is
-    fixed at its own confirmed_at_idx; triple_barrier_label walks strictly
-    forward from there. See tests for explicit truncation-equivalence checks.
+    fixed at its own confirmed_at_idx (fixed-lag for 'fractal', the pivot's
+    own reveal_bar for 'zigzag'); triple_barrier_label walks strictly forward
+    from there. See tests for explicit truncation-equivalence checks.
     """
     cache_path = cache_path or DEFAULT_H1_CACHE
     h1 = load_h1_frame(_p(base_dir, cache_path)) if h1 is None else h1
@@ -204,7 +266,13 @@ def build_event_dataset(base_dir='', h1=None, cache_path=None,
     horizon_vol = horizon_vol_from_ewma_std(r_ewma_std, horizon_bars)
     cost_price = spread_pips * PIP_SIZE
 
-    events_raw = detect_harmonic_events(h1[['high', 'low', 'close']])
+    if swing_source == 'fractal':
+        events_raw = detect_harmonic_events(h1[['high', 'low', 'close']])
+    elif swing_source == 'zigzag':
+        pivots = zigzag_swings(high, low, close)
+        events_raw = detect_harmonic_events_from_pivots(pivots)
+    else:
+        raise ValueError(f"unknown swing_source: {swing_source!r}")
     events_filtered = (events_raw[events_raw['best_fit_score'] >= min_best_fit_score]
                        .reset_index(drop=True))
 
@@ -508,20 +576,50 @@ def predict_h1_2_mlp(model, X):
 
 # ── orchestration ─────────────────────────────────────────────────────
 
-def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=True):
-    built = build_event_dataset(base_dir=base_dir, random_state=random_state)
+def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=True,
+        swing_source='fractal'):
+    """Run the LogReg + MLP pair for one swing basis (`swing_source`:
+    'fractal' -> H1.1/H1.2, 'zigzag' -> H1.3/H1.4). Every other step of the
+    pipeline (event filter threshold, triple-barrier labeling, 8 features,
+    chronological split, class_weight='balanced', random_state) is IDENTICAL
+    between the two — only `build_event_dataset`'s swing-point source
+    differs — so any difference in outcome between a fractal run and a
+    zigzag run is attributable to the swing basis alone.
+
+    The family's Bonferroni bar is computed DYNAMICALLY from the current
+    hypothesis log (same convention as src.ablation.run /
+    src.volatility.run_candidate_feature_tests): family_size = however many
+    DISTINCT hypothesis names are already registered, unioned with this run's
+    two names. A prior run's ALREADY-LOGGED alpha is never retroactively
+    rewritten (matches every other family log in this project) — only a NEW
+    run is judged at the newly-tightened bar.
+    """
+    names = HYPOTHESIS_NAMES[swing_source]
+    h1_name, h2_name = names['h1'], names['h2']
+    label1, label2 = names['label1'], names['label2']
+
+    out_path = _p(base_dir, out_log)
+    existing = set(pd.read_csv(out_path)['hypothesis']) if os.path.exists(out_path) else set()
+    family_size = len(existing | {h1_name, h2_name})
+    alpha = FAMILY_ALPHA / family_size
+
+    built = build_event_dataset(base_dir=base_dir, random_state=random_state,
+                                swing_source=swing_source)
     dataset = built['dataset']
     n_raw, n_filtered = len(built['events_raw']), len(built['events_filtered'])
     n_labeled = len(dataset)
 
     print('=' * 78)
-    print('H1 HARMONIC-PATTERN EVENT-CONDITIONAL MODEL — own family, first budget')
+    print(f'H1 HARMONIC-PATTERN EVENT-CONDITIONAL MODEL — swing_source={swing_source!r} '
+          f'({label1}/{label2})')
     print(f'  raw XABCD events detected: {n_raw:,}')
     print(f'  filtered (best_fit_score >= {MIN_BEST_FIT_SCORE}): {n_filtered:,}')
     print(f'  excluded (insufficient forward history): {built["excluded_insufficient_history"]:,}')
     print(f'  FINAL labeled event dataset: {n_labeled:,}')
     print(f'  baseline (b) non-event random sample: n={built["baseline_b"]["n_sample"]:,}  '
           f'label==1 rate={built["baseline_b"]["label_1_rate"]:.4f}  (descriptive context only)')
+    print(f'  hypotheses already registered: {len(existing)}  ->  family size {family_size}  '
+          f'->  BONFERRONI BAR alpha = {FAMILY_ALPHA}/{family_size} = {alpha:.4g}')
     print('=' * 78)
 
     if n_labeled < 20:
@@ -543,36 +641,36 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
     maj_class = int(round(y_train.mean()))
     pred_majority_val = np.full(len(y_val), maj_class)
 
-    # ---- H1.1: Logistic Regression vs train-majority baseline -------------
-    print('\n--- H1.1: LOGISTIC REGRESSION (linear baseline) ---')
+    # ---- H1.x: Logistic Regression vs train-majority baseline -------------
+    print(f'\n--- {label1}: LOGISTIC REGRESSION (linear baseline, swing_source={swing_source!r}) ---')
     clf = train_h1_1_logistic(X_train, y_train, random_state=random_state)
     pred_h11_val = clf.predict(X_val)
     r11 = bootstrap_delta_and_mcnemar(y_val, pred_majority_val, pred_h11_val,
-                                      alpha=SUB_HYPOTHESIS_ALPHA, random_state=random_state)
+                                      alpha=alpha, random_state=random_state)
     print(f'  train-majority baseline acc = {r11["acc_reference"]:.4f}  |  '
-          f'H1.1 val acc = {r11["acc_challenger"]:.4f}  |  delta = {r11["delta_acc"]:+.4f}')
-    print(f'  {100 * (1 - SUB_HYPOTHESIS_ALPHA):.1f}% CI[{r11["ci_low"]:+.4f}, {r11["ci_high"]:+.4f}]  '
+          f'{label1} val acc = {r11["acc_challenger"]:.4f}  |  delta = {r11["delta_acc"]:+.4f}')
+    print(f'  {100 * (1 - alpha):.1f}% CI[{r11["ci_low"]:+.4f}, {r11["ci_high"]:+.4f}]  '
           f'McNemar b={r11["mcnemar_b"]} c={r11["mcnemar_c"]} p={r11["mcnemar_p"]:.4f}  '
-          f'alpha={SUB_HYPOTHESIS_ALPHA}')
+          f'alpha={alpha:.4g}')
     verdict_h11 = (
-        'KEEP — H1.1 beats the train-majority baseline at the pre-registered bar'
+        f'KEEP — {label1} beats the train-majority baseline at the pre-registered bar'
         if r11['cleared'] else
-        'DROP — H1.1 indistinguishable from the train-majority baseline at the pre-registered bar'
+        f'DROP — {label1} indistinguishable from the train-majority baseline at the pre-registered bar'
     )
-    print(f'  VERDICT (H1.1): {verdict_h11}')
+    print(f'  VERDICT ({label1}): {verdict_h11}')
 
-    # ---- H1.2: MLP — PRIMARY vs H1.1, CORROBORATING vs majority -----------
-    print('\n--- H1.2: MLP (non-linear interactions) ---')
+    # ---- H1.y: MLP — PRIMARY vs H1.x, CORROBORATING vs majority -----------
+    print(f'\n--- {label2}: MLP (non-linear interactions) ---')
     mlp = train_h1_2_mlp(X_train, y_train, X_val, y_val, random_state=random_state)
     pred_h12_val = predict_h1_2_mlp(mlp, X_val)
 
     r12_primary = bootstrap_delta_and_mcnemar(y_val, pred_h11_val, pred_h12_val,
-                                              alpha=SUB_HYPOTHESIS_ALPHA, random_state=random_state)
+                                              alpha=alpha, random_state=random_state)
     r12_corroborating = bootstrap_delta_and_mcnemar(y_val, pred_majority_val, pred_h12_val,
-                                                    alpha=SUB_HYPOTHESIS_ALPHA, random_state=random_state)
-    print(f'  PRIMARY (MLP vs H1.1, same val rows): H1.1 acc = {r12_primary["acc_reference"]:.4f}  |  '
+                                                    alpha=alpha, random_state=random_state)
+    print(f'  PRIMARY (MLP vs {label1}, same val rows): {label1} acc = {r12_primary["acc_reference"]:.4f}  |  '
           f'MLP acc = {r12_primary["acc_challenger"]:.4f}  |  delta = {r12_primary["delta_acc"]:+.4f}')
-    print(f'    {100 * (1 - SUB_HYPOTHESIS_ALPHA):.1f}% CI[{r12_primary["ci_low"]:+.4f}, '
+    print(f'    {100 * (1 - alpha):.1f}% CI[{r12_primary["ci_low"]:+.4f}, '
           f'{r12_primary["ci_high"]:+.4f}]  McNemar b={r12_primary["mcnemar_b"]} '
           f'c={r12_primary["mcnemar_c"]} p={r12_primary["mcnemar_p"]:.4f}')
     print(f'  CORROBORATING ONLY (MLP vs train-majority baseline, context — not decision-bearing): '
@@ -580,24 +678,26 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
           f'CI[{r12_corroborating["ci_low"]:+.4f}, {r12_corroborating["ci_high"]:+.4f}]')
 
     if r12_primary['cleared']:
-        verdict_h12 = ('KEEP — MLP beats H1.1 at the pre-registered bar on the PRIMARY '
+        verdict_h12 = (f'KEEP — MLP beats {label1} at the pre-registered bar on the PRIMARY '
                        'comparison (the corroborating vs-majority result is consistent context)')
     elif r12_corroborating['cleared']:
-        verdict_h12 = ('DROP — MLP beats the majority baseline (corroborating context) but does '
-                       'NOT beat H1.1 at the pre-registered bar on the PRIMARY comparison: the '
+        verdict_h12 = (f'DROP — MLP beats the majority baseline (corroborating context) but does '
+                       f'NOT beat {label1} at the pre-registered bar on the PRIMARY comparison: the '
                        'extra non-linear capacity found nothing the linear model had not already '
                        'found (anti-cherry-pick rule)')
     else:
-        verdict_h12 = ('DROP — MLP beats neither H1.1 (primary) nor the train-majority baseline '
+        verdict_h12 = (f'DROP — MLP beats neither {label1} (primary) nor the train-majority baseline '
                        '(corroborating) at the pre-registered bar')
-    print(f'  VERDICT (H1.2): {verdict_h12}')
+    print(f'  VERDICT ({label2}): {verdict_h12}')
 
     print(f'\n  (power caveat: {len(val)} validation events — a small-n family; treat any KEEP as '
           f'preliminary and any DROP as correspondingly weak evidence of absence)')
 
     date = pd.Timestamp.utcnow().date().isoformat()
+    swing_note = (f'swing_source={swing_source!r} '
+                  f'({"Williams fractals, fixed CONFIRMATION_LAG=2" if swing_source == "fractal" else "ATR(14)*1.5 causal ZigZag pivots, variable reveal-bar lag"}). ')
     row_h11 = {
-        'date': date, 'hypothesis': 'harmonic_h1_1_logistic_vs_majority',
+        'date': date, 'hypothesis': h1_name,
         'arbiter': 'event_validation[70:85]',
         'n_events_raw': n_raw, 'n_events_filtered': n_filtered, 'n_events_labeled': n_labeled,
         'n_train': len(train), 'n_val': len(val), 'n_test': len(test),
@@ -605,8 +705,8 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
         'delta_acc': r11['delta_acc'], 'delta_acc_ci_low': r11['ci_low'],
         'delta_acc_ci_high': r11['ci_high'], 'mcnemar_b': r11['mcnemar_b'],
         'mcnemar_c': r11['mcnemar_c'], 'mcnemar_p': r11['mcnemar_p'],
-        'alpha': SUB_HYPOTHESIS_ALPHA, 'cleared_bar': r11['cleared'], 'verdict': verdict_h11,
-        'notes': (f'H1 XABCD triple-barrier events, best_fit_score>={MIN_BEST_FIT_SCORE}, '
+        'alpha': round(alpha, 4), 'cleared_bar': r11['cleared'], 'verdict': verdict_h11,
+        'notes': (f'{swing_note}H1 XABCD triple-barrier events, best_fit_score>={MIN_BEST_FIT_SCORE}, '
                   f'EWMA(span={EWMA_SPAN})*sqrt({HORIZON_BARS}) horizon_vol, target={TARGET_MULT}x/'
                   f'stop={STOP_MULT}x, cost threshold={SPREAD_PIPS_DEFAULT}pips='
                   f'{SPREAD_PIPS_DEFAULT * PIP_SIZE}. LogisticRegression(class_weight=balanced). '
@@ -615,7 +715,7 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
                   f'descriptive context only, not decision-bearing).'),
     }
     row_h12 = {
-        'date': date, 'hypothesis': 'harmonic_h1_2_mlp_vs_h1_1_primary',
+        'date': date, 'hypothesis': h2_name,
         'arbiter': 'event_validation[70:85]',
         'n_events_raw': n_raw, 'n_events_filtered': n_filtered, 'n_events_labeled': n_labeled,
         'n_train': len(train), 'n_val': len(val), 'n_test': len(test),
@@ -623,9 +723,9 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
         'delta_acc': r12_primary['delta_acc'], 'delta_acc_ci_low': r12_primary['ci_low'],
         'delta_acc_ci_high': r12_primary['ci_high'], 'mcnemar_b': r12_primary['mcnemar_b'],
         'mcnemar_c': r12_primary['mcnemar_c'], 'mcnemar_p': r12_primary['mcnemar_p'],
-        'alpha': SUB_HYPOTHESIS_ALPHA, 'cleared_bar': r12_primary['cleared'], 'verdict': verdict_h12,
-        'notes': (f'PRIMARY reference = H1.1 predictions on IDENTICAL val rows (not majority '
-                  f'baseline). CORROBORATING (context only) MLP-vs-majority: '
+        'alpha': round(alpha, 4), 'cleared_bar': r12_primary['cleared'], 'verdict': verdict_h12,
+        'notes': (f'{swing_note}PRIMARY reference = {label1} predictions on IDENTICAL val rows (not '
+                  f'majority baseline). CORROBORATING (context only) MLP-vs-majority: '
                   f'delta_acc={r12_corroborating["delta_acc"]:+.4f} '
                   f'CI[{r12_corroborating["ci_low"]:+.4f}, {r12_corroborating["ci_high"]:+.4f}] '
                   f'McNemar p={r12_corroborating["mcnemar_p"]:.4f}, cleared='
@@ -637,13 +737,17 @@ def run(base_dir='', out_log=HARMONIC_LOG, random_state=RANDOM_STATE, register=T
     }
 
     if register:
-        out_path = _p(base_dir, out_log)
         _upsert_log(row_h11, out_path)
         _upsert_log(row_h12, out_path)
         print(f'\nLogged both hypotheses: {out_path}')
 
-    return {'h1_1': row_h11, 'h1_2': row_h12, 'built': built}
+    return {label1.lower().replace('.', '_'): row_h11,
+            label2.lower().replace('.', '_'): row_h12, 'built': built}
 
 
 if __name__ == '__main__':
-    run()
+    import sys
+    if sys.argv[1:2] == ['zigzag']:
+        run(swing_source='zigzag')
+    else:
+        run(swing_source='fractal')
