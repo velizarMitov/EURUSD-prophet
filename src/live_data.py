@@ -140,6 +140,75 @@ def _fetch_h1_from_yfinance(symbol: str, days: int = 730):
     }, index=idx)
 
 
+def _fetch_m15_from_mt5(symbol: str, bars: int):
+    """M15 (15-minute) OHLCV from a live MT5 terminal. Returns a UTC-indexed
+    DataFrame (ascending) or None if no terminal is reachable. Mirrors
+    _fetch_h1_from_mt5 but requests mt5.TIMEFRAME_M15 instead of H1, and via
+    the SAME bar-count `copy_rates_from_pos` API (never tick-level data --
+    M15 OHLC bars are sufficient for the harmonic-pattern M15 hypotheses,
+    tick granularity is unneeded overhead)."""
+    try:
+        import MetaTrader5 as mt5
+    except ImportError:
+        return None
+
+    try:
+        if not mt5.initialize():
+            return None
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, bars)
+        mt5.shutdown()
+    except Exception:
+        return None
+
+    if rates is None or len(rates) == 0:
+        return None
+
+    df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df.set_index('time', inplace=True)
+    df.sort_index(inplace=True)
+    return df[['open', 'high', 'low', 'close', 'tick_volume']]
+
+
+def fetch_m15_market_data(mt5_symbol: str = "EURUSD", bars: int = 350000,
+                          cache_path: str = "results/eurusd_m15.csv"):
+    """
+    Fetch historical M15 (15-minute) EURUSD OHLCV for the harmonic-pattern
+    M15 hypotheses (H1.5/H1.6). UNLIKE fetch_live_market_data/
+    fetch_h1_market_data, MT5 is the SOLE live source here -- there is
+    deliberately NO Yahoo Finance fallback for this timeframe (Yahoo's
+    intraday history is short and inconsistent enough that mixing it into a
+    would-be MT5-native swing/pattern hypothesis is not worth the
+    provenance risk). An on-disk cache of previously-fetched MT5 bars remains
+    an acceptable OFFLINE fallback -- same "never hard-fail" convention as
+    every other fetch chain in this project -- but no other LIVE source is
+    ever tried.
+
+    Returns (dataframe, source_label) where source is "MT5", "cache", or
+    (None, None) if MT5 is unreachable and no cache exists. The returned
+    DataFrame always carries a UTC-localised DateTimeIndex.
+    """
+    df = _fetch_m15_from_mt5(mt5_symbol, bars)
+    if df is not None and len(df) > 0:
+        if cache_path:
+            try:
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                df.to_csv(cache_path)
+            except OSError:
+                pass
+        return df, "MT5"
+
+    if cache_path and os.path.exists(cache_path):
+        cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+        cached.index = (
+            cached.index.tz_localize('UTC') if cached.index.tz is None
+            else cached.index.tz_convert('UTC')
+        )
+        return cached, "cache"
+
+    return None, None
+
+
 def fetch_h1_market_data(mt5_symbol: str = "EURUSD", yf_symbol: str = "EURUSD=X",
                          bars: int = 60000, cache_path: str = "results/eurusd_h1.csv"):
     """

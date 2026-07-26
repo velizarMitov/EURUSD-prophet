@@ -2621,3 +2621,333 @@ def test_fractal_breakout_driftcheck_split_matches_ablation_convention():
     train_end, val_end = _canonical_split(1000, train_fraction=0.80, val_fraction=0.10)
     assert train_end == 700
     assert val_end == 800
+
+
+# ── volatility-scaled sizing overlay (research-only retrospective backtest) ──
+
+def test_trailing_ref_vol_is_causal_via_future_truncation():
+    """trailing_ref_vol[t] must be a purely CAUSAL rolling/expanding median --
+    appending more data AFTER day t must never change trailing_ref_vol AT or
+    BEFORE t (the standard truncation-equivalence look-ahead guard used
+    throughout this project)."""
+    from src.vol_scaled_backtest import compute_trailing_ref_vol
+
+    rng = np.random.default_rng(3)
+    idx = pd.date_range('2020-01-01', periods=400, freq='D')
+    vol_series = pd.Series(rng.uniform(0.1, 1.0, 400), index=idx)
+
+    full = compute_trailing_ref_vol(vol_series)
+    truncated = compute_trailing_ref_vol(vol_series.iloc[:150])
+
+    pd.testing.assert_series_equal(full.iloc[:150], truncated, check_names=False)
+
+
+def test_trailing_ref_vol_expanding_then_rolling_window():
+    """Before 252 observations exist, trailing_ref_vol must be an EXPANDING
+    median (using however many rows are available so far); once >= 252 exist,
+    it must be a genuine ROLLING 252-period median (older-than-252 history
+    dropped) -- both halves of the pre-registered formula."""
+    from src.vol_scaled_backtest import compute_trailing_ref_vol
+
+    idx = pd.date_range('2020-01-01', periods=300, freq='D')
+    vol_series = pd.Series(np.arange(300, dtype=float), index=idx)  # strictly increasing
+    trailing = compute_trailing_ref_vol(vol_series, window=252)
+
+    # Expanding phase: trailing[t] = median(vol_series[0:t+1]) = t/2.
+    assert trailing.iloc[10] == pytest.approx(np.median(np.arange(11)))
+    # Rolling phase (t=299, window=252): must use ONLY the trailing 252 obs
+    # (rows 48..299), not the full expanding history from row 0.
+    expected_rolling = np.median(np.arange(299 - 252 + 1, 300))
+    assert trailing.iloc[-1] == pytest.approx(expected_rolling)
+    assert trailing.iloc[-1] != pytest.approx(np.median(np.arange(300))), \
+        "must NOT still be an expanding median once the 252-window is full"
+
+
+def test_compute_vol_weight_clips_at_both_bounds():
+    """vol_weight = trailing_ref_vol / predicted_vol_pct must clip to
+    [0.25, 4.0] at BOTH ends: a near-zero predicted vol (relative to the
+    trailing reference) must saturate at the HIGH clip (4.0), and a
+    predicted vol far above the trailing reference must saturate at the LOW
+    clip (0.25) -- a mid-range ratio must pass through UNCLIPPED."""
+    from src.vol_scaled_backtest import compute_vol_weight, VOL_WEIGHT_MIN, VOL_WEIGHT_MAX
+
+    trailing = np.array([1.0, 1.0, 1.0])
+    predicted = np.array([0.01, 100.0, 1.0])   # ratios: 100 (clip high), 0.01 (clip low), 1.0 (pass through)
+    weight = compute_vol_weight(predicted, trailing)
+
+    assert weight[0] == pytest.approx(VOL_WEIGHT_MAX), "near-zero predicted vol must clip to the HIGH bound"
+    assert weight[1] == pytest.approx(VOL_WEIGHT_MIN), "predicted vol far above trailing must clip to the LOW bound"
+    assert weight[2] == pytest.approx(1.0), "a mid-range ratio must pass through unclipped"
+
+
+def test_compute_vol_weight_handles_zero_predicted_vol_defensively():
+    """A defensive edge case never expected from the real ensemble output:
+    predicted_vol_pct == 0 would otherwise divide by zero -- must saturate
+    to the HIGH clip, never raise or propagate inf/NaN."""
+    from src.vol_scaled_backtest import compute_vol_weight, VOL_WEIGHT_MAX
+
+    weight = compute_vol_weight(np.array([0.0]), np.array([1.0]))
+    assert weight[0] == pytest.approx(VOL_WEIGHT_MAX)
+    assert np.isfinite(weight).all()
+
+
+def test_moving_block_bootstrap_refuses_degenerate_short_sample():
+    """When the settled-position sample is no longer than the pre-registered
+    block length (this project's actual paper-trading ledgers are this thin
+    right now), a 'block' as long as the whole series is just a rotation of
+    every value once -- Sharpe (mean/std) is invariant to that rotation, so
+    every resample would give an IDENTICAL delta and the 'CI' would be a
+    single point. This must be refused (NaN), never silently reported as a
+    razor-thin, falsely confident interval."""
+    from src.vol_scaled_backtest import bootstrap_delta_sharpe
+
+    rng = np.random.default_rng(1)
+    original = rng.normal(0, 0.1, 10)
+    weighted = original * 1.5
+    lo, hi, degenerate = bootstrap_delta_sharpe(original, weighted, block_len=20, n_boot=200)
+    assert lo != lo and hi != hi, "n <= block_len must refuse with NaN, not a degenerate point CI"
+
+
+def test_compute_predicted_vol_series_never_fits(monkeypatch, tmp_path):
+    """src.vol_scaled_backtest.compute_predicted_vol_series must perform PURE
+    INFERENCE via the frozen volatility ensemble -- mirrors
+    test_frozen_volatility_ensemble_batch_inference_never_fits (hypothesis
+    #9's own reuse guard) but exercises THIS module's own call path
+    (build_daily_ohlcv_from_h1 -> compute_features -> dropna ->
+    batch_predict_frozen_ensemble_vol_pct), proving the sizing-overlay
+    backtest re-uses the validated artifacts without ever re-fitting them."""
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.decomposition import PCA
+    from src.features import PRICE_FEATURE_COLUMNS, LAG_COLUMNS
+    from src.vol_scaled_backtest import compute_predicted_vol_series
+
+    n_lag = len(LAG_COLUMNS)
+    rng = np.random.default_rng(0)
+    lag_scaler = StandardScaler().fit(rng.normal(size=(30, n_lag)))
+    lag_pca = PCA(n_components=3).fit(lag_scaler.transform(rng.normal(size=(30, n_lag))))
+    n_cols_after_pca = len(PRICE_FEATURE_COLUMNS) - n_lag + lag_pca.n_components_
+    global_scaler = StandardScaler().fit(rng.normal(size=(30, n_cols_after_pca)))
+
+    class _FakeSeedModel:
+        def predict(self, windows, verbose=0):
+            n = windows.shape[0]
+            zeros = np.zeros((n, 1), dtype='float32')
+            vol = np.full((n, 1), 0.42, dtype='float32')
+            return zeros, zeros, vol
+
+    artifacts = {
+        'lag_scaler': lag_scaler, 'lag_pca': lag_pca, 'global_scaler': global_scaler,
+        'time_steps': 5, 'models': [_FakeSeedModel(), _FakeSeedModel()],
+    }
+
+    def _explode(self, *a, **k):
+        raise AssertionError('fit() must never be called by the vol-scaled backtest')
+    monkeypatch.setattr(StandardScaler, 'fit', _explode)
+    monkeypatch.setattr(StandardScaler, 'fit_transform', _explode)
+    monkeypatch.setattr(PCA, 'fit', _explode)
+    monkeypatch.setattr(PCA, 'fit_transform', _explode)
+
+    closes = 1.10 + np.cumsum(rng.normal(0, 0.002, 260))
+    h1 = _synthetic_h1(closes)
+    h1_csv = tmp_path / 'h1.csv'
+    h1.to_csv(h1_csv)
+
+    vol_series = compute_predicted_vol_series(h1_csv=str(h1_csv), artifacts=artifacts)
+    assert len(vol_series) > 0
+    assert vol_series.dropna().iloc[-1] == pytest.approx(0.42)
+
+
+def test_paper_trading_module_left_untouched_by_vol_scaled_backtest():
+    """HARD BOUNDARY check: src/paper_trading.py (build_ledger/summarize/
+    build_all_ledgers and the live logging path) must be byte-for-byte
+    unmodified by the new research-only sizing-overlay backtest -- verified
+    directly against the git-tracked HEAD version of the file."""
+    import os
+    import subprocess
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    result = subprocess.run(
+        ['git', 'diff', '--quiet', 'HEAD', '--', 'src/paper_trading.py'],
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, \
+        "src/paper_trading.py must be untouched by the vol-scaled backtest work"
+
+
+# ── M15 fetch chain (harmonic-pattern hypotheses H1.5/H1.6, STEP 0) ─────────
+
+def test_fetch_m15_market_data_prefers_mt5(monkeypatch):
+    """MT5 is the sole LIVE source for M15 -- when a terminal session is
+    reachable it must be used, via the same bar-count copy_rates_from_pos
+    API as the existing H1 fetch (just TIMEFRAME_M15 instead of H1)."""
+    import sys
+    import src.live_data as live_data
+
+    rates = np.array(
+        [(1781481600 + i * 900, 1.10 + i * 0.0001, 1.11 + i * 0.0001, 1.09 + i * 0.0001,
+          1.105 + i * 0.0001, 100 + i, 5, 0) for i in range(5)],
+        dtype=[('time', '<i8'), ('open', '<f8'), ('high', '<f8'), ('low', '<f8'), ('close', '<f8'),
+               ('tick_volume', '<i8'), ('spread', '<i4'), ('real_volume', '<i8')]
+    )
+
+    class _FakeMT5:
+        TIMEFRAME_M15 = 15
+
+        @staticmethod
+        def initialize():
+            return True
+
+        @staticmethod
+        def copy_rates_from_pos(symbol, timeframe, start, count):
+            assert timeframe == _FakeMT5.TIMEFRAME_M15, "must request TIMEFRAME_M15, not another timeframe"
+            return rates
+
+        @staticmethod
+        def shutdown():
+            pass
+
+    monkeypatch.setitem(sys.modules, 'MetaTrader5', _FakeMT5)
+    df, source = live_data.fetch_m15_market_data(bars=5, cache_path=None)
+    assert source == "MT5"
+    assert len(df) == 5
+    assert list(df.columns) == ['open', 'high', 'low', 'close', 'tick_volume']
+
+
+def test_fetch_m15_market_data_never_falls_back_to_yfinance(monkeypatch):
+    """UNLIKE fetch_live_market_data/fetch_h1_market_data, M15 must NEVER
+    fall back to Yahoo Finance -- if MT5 is unreachable and no cache exists,
+    the result must be (None, None), not a yfinance call."""
+    import src.live_data as live_data
+
+    monkeypatch.setattr(live_data, '_fetch_m15_from_mt5', lambda symbol, bars: None)
+
+    def _boom_yfinance(*args, **kwargs):
+        raise AssertionError("yfinance must never be used for the M15 fetch chain.")
+    monkeypatch.setattr(live_data.yf, "Ticker", _boom_yfinance)
+
+    df, source = live_data.fetch_m15_market_data(bars=5, cache_path=None)
+    assert df is None and source is None
+
+
+def test_fetch_m15_market_data_falls_back_to_cache_when_mt5_unreachable(monkeypatch, tmp_path):
+    """When MT5 is unreachable, the on-disk cache of previously-fetched M15
+    bars is an acceptable OFFLINE fallback (same 'never hard-fail'
+    convention as every other fetch chain), even though no other LIVE
+    source is ever tried."""
+    import src.live_data as live_data
+
+    cache_path = str(tmp_path / 'm15_cache.csv')
+    cached = pd.DataFrame({
+        'open': [1.10], 'high': [1.11], 'low': [1.09], 'close': [1.105], 'tick_volume': [100.0],
+    }, index=pd.date_range('2026-06-19', periods=1, freq='15min', tz='UTC'))
+    cached.to_csv(cache_path)
+
+    monkeypatch.setattr(live_data, '_fetch_m15_from_mt5', lambda symbol, bars: None)
+    df, source = live_data.fetch_m15_market_data(bars=5, cache_path=cache_path)
+    assert source == "cache"
+    assert len(df) == 1
+
+
+# ── M15 harmonic-pattern hypotheses (H1.5/H1.6, SAME family, block bootstrap) ──
+
+def test_m15_ewma_span_and_horizon_are_the_documented_rederivation():
+    """The M15 constants must be the PRE-REGISTERED re-derivation (24h*4,
+    120 H1 bars*4) -- NOT H1's literal numbers copy-pasted -- preserving the
+    same real-world '~1 day' / '~5 trading days' meaning at M15 granularity."""
+    from src.harmonic_m15_check import M15_EWMA_SPAN, M15_HORIZON_BARS
+
+    assert M15_EWMA_SPAN == 24 * 4, "EWMA span must preserve the '~1 day of memory' meaning"
+    assert M15_HORIZON_BARS == 120 * 4, "time horizon must preserve the '~5 trading days' meaning"
+
+
+def test_event_gap_diagnostics_median_and_iqr():
+    """Median/IQR of the gap between consecutive (already-sorted) event entry
+    indices must be a plain, direct percentile computation on the diffs --
+    the honest clustering diagnostic the block-bootstrap decision leans on."""
+    from src.harmonic_m15_check import event_gap_diagnostics
+
+    entry_idx = np.array([100, 40, 0, 25, 10])   # unsorted on purpose
+    gaps = event_gap_diagnostics(entry_idx)
+    # sorted: [0, 10, 25, 40, 100] -> diffs [10, 15, 15, 60]
+    expected_q1, expected_med, expected_q3 = np.percentile([10, 15, 15, 60], [25, 50, 75])
+    assert gaps['median_gap_bars'] == pytest.approx(expected_med)
+    assert gaps['iqr_low_bars'] == pytest.approx(expected_q1)
+    assert gaps['iqr_high_bars'] == pytest.approx(expected_q3)
+
+
+def test_event_gap_diagnostics_undefined_with_fewer_than_two_events():
+    from src.harmonic_m15_check import event_gap_diagnostics
+
+    gaps = event_gap_diagnostics(np.array([5]))
+    assert gaps['median_gap_bars'] != gaps['median_gap_bars']   # NaN
+
+
+def test_circular_block_bootstrap_indices_are_contiguous_within_a_block():
+    """Each block of `block_len` resampled indices must be CONSECUTIVE
+    original positions (wrapping modulo n) -- this is what makes it a
+    MOVING-BLOCK bootstrap rather than an i.i.d. one; within a block,
+    successive resampled indices must differ by exactly 1 (mod n)."""
+    from src.harmonic_m15_check import _circular_block_bootstrap_indices
+
+    n, block_len = 50, 10
+    rng = np.random.default_rng(0)
+    idx = _circular_block_bootstrap_indices(n, block_len, rng)
+    assert len(idx) == n
+    assert idx.min() >= 0 and idx.max() < n
+    # Check contiguity within each block boundary (blocks start at multiples
+    # of block_len in the OUTPUT array, per the function's own construction).
+    for block_start in range(0, n, block_len):
+        block = idx[block_start:block_start + block_len]
+        for k in range(1, len(block)):
+            assert block[k] == (block[0] + k) % n, \
+                "resampled indices within one block must be consecutive original positions"
+
+
+def test_bootstrap_delta_and_mcnemar_block_runs_and_detects_a_clear_edge():
+    """Sanity check on the block-bootstrap primitive itself: with a
+    challenger that is CLEARLY and consistently more accurate than the
+    reference over the whole validation set, the block bootstrap must still
+    detect it (CI entirely > 0), even though it resamples in blocks rather
+    than i.i.d. rows."""
+    from src.harmonic_m15_check import bootstrap_delta_and_mcnemar_block
+
+    rng = np.random.default_rng(1)
+    n = 200
+    y_val = rng.integers(0, 2, n)
+    pred_reference = rng.integers(0, 2, n)          # ~50% accuracy, uncorrelated with y
+    pred_challenger = y_val.copy()                   # 100% accuracy
+    res = bootstrap_delta_and_mcnemar_block(y_val, pred_reference, pred_challenger,
+                                            alpha=0.05, block_len=20, n_boot=500, random_state=0)
+    assert res['acc_challenger'] == pytest.approx(1.0)
+    assert res['ci_low'] > 0
+    assert res['cleared'] is True
+
+
+def test_cost_drag_diagnostic_computes_atr_pip_ratio(tmp_path, monkeypatch):
+    """cost_drag_diagnostic must convert mean ATR(14) to PIPS via the
+    project's own PIP_SIZE and report the fixed round-trip cost as a
+    fraction of that -- the empirical grounding for the 'proportionally
+    larger drag on M15' claim, using a KNOWN constant true range so the
+    expected ATR is exactly computable by hand."""
+    from src.harmonic_m15_check import cost_drag_diagnostic
+    from src.paper_trading import PIP_SIZE
+
+    n = 60
+    # Constant true range of 0.0010 (10 pips): high-low=0.0010 every bar,
+    # close held flat so (high-prev_close)/(low-prev_close) never exceed it.
+    idx_m15 = pd.date_range('2026-01-01', periods=n, freq='15min', tz='UTC')
+    m15 = pd.DataFrame({'open': 1.10, 'high': 1.1005, 'low': 1.0995, 'close': 1.10,
+                        'tick_volume': 1.0}, index=idx_m15)
+
+    idx_h1 = pd.date_range('2026-01-01', periods=n, freq='h', tz='UTC')
+    h1 = pd.DataFrame({'open': 1.10, 'high': 1.1010, 'low': 1.0990, 'close': 1.10,
+                       'tick_volume': 1.0}, index=idx_h1)
+    h1_dir = tmp_path / 'results'
+    h1_dir.mkdir()
+    h1.to_csv(h1_dir / 'eurusd_h1.csv')
+
+    res = cost_drag_diagnostic(m15, base_dir=str(tmp_path))
+    assert res['mean_atr14_m15_pips'] == pytest.approx(0.0010 / PIP_SIZE, rel=0.05)
+    assert res['mean_atr14_h1_pips'] == pytest.approx(0.0020 / PIP_SIZE, rel=0.05)
+    assert res['cost_frac_of_atr_m15'] > res['cost_frac_of_atr_h1'], \
+        "the same fixed pip cost must be a LARGER fraction of the smaller M15 typical range"

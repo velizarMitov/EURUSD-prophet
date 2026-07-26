@@ -660,7 +660,7 @@ pipeline process already imported tf.keras. Its forward ledger is
 `results/paper_trading_log_ti_h1.csv` (config `paper_trading.ledgers.ti_h1`,
 driven by the `ti_h1_direction` prediction-log column).
 
-### 3.7 H1 harmonic-pattern event-conditional model (research-only, VERDICT: DROP, all 4 sub-hypotheses)
+### 3.7 H1/M15 harmonic-pattern event-conditional model (research-only, VERDICT: DROP, all 6 sub-hypotheses)
 
 A different kind of question from every other family in this project: not
 "what's the next-bar direction/return/volatility for every bar", but "does
@@ -842,6 +842,60 @@ nothing is modest further evidence (not proof) that the null is about the
 harmonic-pattern hypothesis itself, not an artifact of the fractal window's
 noise.
 
+**M15 timeframe — H1.5/H1.6, SAME family, VERDICT: DROP for both.** The
+IDENTICAL question asked on a FINER timeframe — SAME family log (n=4 → n=6),
+bar tightens to `0.05/6 ≈ 0.0083`, no budget reset. `src/harmonic_m15_check.py`
+reuses `build_event_dataset`/`train_h1_1_logistic`/`train_h1_2_mlp`/
+`predict_h1_2_mlp`/`_chronological_split`/`_upsert_log` from
+`src.harmonic_event_check` UNCHANGED — `build_event_dataset` is already
+timeframe-agnostic, so the M15 frame is passed straight into its existing
+`h1=` parameter. Swing basis: ZigZag ONLY (a 5-bar Williams-fractal window
+spans only 75 minutes at M15 — not worth 2 more slots re-confirming an
+even-worse-expected result).
+
+*STEP 0, verified before building*: new `src.live_data.fetch_m15_market_data`
+— MT5 ONLY (`copy_rates_from_pos(..., mt5.TIMEFRAME_M15, ...)`, same
+bar-count API as the H1 fetch; NOT tick-level; deliberately no yfinance
+fallback for this timeframe, cache remains the offline fallback). This
+broker's terminal retains M15 history to 1971; **350,000 bars** were fetched
+(`results/eurusd_m15.csv`), spanning **2012-06-25 → 2026-07-24 (~14.1
+years)** — MORE calendar span than H1.1-H1.4's own ~9.7-year source, so the
+depth check passed cleanly.
+
+*Constants RE-DERIVED* (same real-world meaning, not H1's numbers
+copy-pasted): ZigZag `k=1.5*ATR(14 bars)` unchanged (scale-invariant); EWMA
+span = **96 M15 bars** (24h×4, "~1 day"); horizon = **480 M15 bars** (120 H1
+bars×4, "~5 trading days"); target/stop (1.5x/1.0x) and `best_fit_score>=0.5`
+unchanged (timeframe-independent); cost = same absolute 1.5 pips, NOT
+relaxed.
+
+*Two tradeoffs flagged BEFORE building, both confirmed with real numbers*:
+(1) **Transaction-cost drag** — mean ATR(14) = 7.41 pips at M15 vs 14.14
+pips at H1, so the fixed 1.5-pip cost is **20.2%** of a typical M15 bar
+range vs **10.6%** at H1. (2) **Autocorrelation/clustering** — validation
+event gaps: median 18.0 M15 bars, IQR [9.0, 33.0], i.e. BELOW the 20-event
+block length used for the bootstrap. Mitigated via a NEW
+`bootstrap_delta_and_mcnemar_block` (moving-block/circular, block length =
+20 EVENTS, not bars) replacing the i.i.d. bootstrap H1.1-H1.4 used, for this
+run only — H1.1-H1.4's already-logged numbers are never retroactively
+re-analyzed under the new method. This was not a formality: H1.5's naive
+McNemar p=0.0005 looked sharp, but the block-bootstrap CI straddled zero —
+exactly the overconfidence the clustering guard exists to catch.
+
+| hypothesis | comparison | val acc (challenger / reference) | Δacc | block-bootstrap CI (99.17%) | McNemar p | verdict |
+|---|---|---|---|---|---|---|
+| H1.5 LogisticRegression | vs train-majority baseline | 0.4944 / 0.5471 | −0.0527 | [−0.1317, +0.0326] | 0.0005 | **DROP** |
+| H1.6 MLP (PRIMARY) | vs H1.5's own val predictions | 0.4986 / 0.4944 | +0.0042 | [−0.0059, +0.0151] | 0.3135 | **DROP** |
+
+42,373 raw XABCD events → 14,334 filtered → 14,309 labeled (25 excluded,
+insufficient history); split train=10,016/val=2,146/test=2,147. Registered
+as hypotheses #5/#6 (n=5/n=6); rows 1-4 unchanged at their original alphas.
+9 new unit tests (M15 fetch chain behavior, the constant re-derivation,
+event-gap diagnostics, block-bootstrap index contiguity and edge-detection,
+the ATR cost-drag diagnostic). 3x the raw events at a finer timeframe still
+finds nothing once clustering is honestly accounted for — further evidence
+the null is about the hypothesis, not H1's bar granularity.
+
 ---
 
 ### 3.8 Fractal-breakout drift/continuation event-study (research-only, NEW own family, VERDICT: DROP)
@@ -908,6 +962,72 @@ construction for both breakout types, both-flags exclusion,
 insufficient-forward-history exclusion, the validation/test split-boundary
 exclusion, and a split-formula equality check against `src.ablation`). No
 model, feature, or serving change.
+
+---
+
+### 3.9 Volatility-scaled position-sizing overlay (research-only retrospective backtest, PRELIMINARY, no production change)
+
+**HARD BOUNDARY, stated up front**: `src/vol_scaled_backtest.py` is a
+DESCRIPTIVE "what-if" report over the already-settled forward paper-trading
+ledgers (`results/paper_trading_log_baseline.csv`,
+`results/paper_trading_log_macro.csv`) — explicitly distinct from BOTH the
+feature-hypothesis families (§ Production Methodology below) AND the live
+paper-trading ledgers themselves (§3.5's sibling, `src/paper_trading.py`).
+`build_ledger`/`summarize`/`build_all_ledgers` and the live logging path are
+completely UNCHANGED (a dedicated unit test diffs the file against git HEAD).
+No execution/position-sizing/broker code was added anywhere. Real capital
+deployment remains a separate, explicit, FUTURE conversation requiring the
+owner's direct approval, exactly as `src/paper_trading.py`'s own docstring
+already states.
+
+Reuses `load_frozen_volatility_ensemble`/`batch_predict_frozen_ensemble_vol_pct`
+(`src/volatility.py`, the SAME frozen-artifact batch-inference idiom already
+established for direction/return hypothesis #9) UNCHANGED — pure inference,
+no retraining. Since `results/eurusd_features.csv`'s tail predates the
+ledgers' recent dates, price history for this report is aggregated straight
+from `results/eurusd_h1.csv` (H1 → daily OHLCV), used ONLY for this
+retrospective report.
+
+*Pre-registered sizing formula*: `trailing_ref_vol[t]` = CAUSAL
+`pandas.rolling(window=252, min_periods=1).median()` of `predicted_vol_pct`
+(expanding until 252 days exist, rolling 252-day median thereafter);
+`vol_weight[t] = trailing_ref_vol[t] / predicted_vol_pct[t]`, clipped to
+`[0.25, 4.0]`; `weighted_net_return_pct[t] = net_return_pct[t] *
+vol_weight[t]` — only the SIZE of the already-realized P&L changes, never the
+direction call. Compared per variant: cumulative net return, Sharpe-like
+ratio (identical formula to `src.paper_trading.summarize`), and max drawdown,
+original vs vol-scaled — logged to its own new
+`results/vol_scaled_sizing_backtest.csv` (not a hypothesis-log family; this
+isn't a classification-accuracy claim), via a moving-BLOCK (circular)
+bootstrap (block length 20 trading days, 2000 resamples) on the Sharpe-like
+delta.
+
+*A correctness fix caught during smoke-testing, worth stating plainly*: with
+`n <= block_len` (exactly this project's current sample sizes), a "block" as
+long as the whole series is just a cyclic rotation of every value once —
+mean/std (hence Sharpe) are invariant to that rotation, so every resample
+gives an IDENTICAL delta and the naive CI collapses to a single point — a
+razor-thin, falsely "significant" interval that is really just an artifact of
+too little data relative to the pre-registered block length.
+`bootstrap_delta_sharpe` explicitly refuses (returns NaN) rather than
+silently clamping the block length down to fit.
+
+*Real results (2026-07-26)*: settled+matched positions — **baseline n=10,
+with_macro n=17** — both far below the ~40-position threshold for a
+meaningful block bootstrap, and both trigger the `n<=block_len`
+degenerate-refusal above. Reported honestly as **PRELIMINARY/DIRECTIONAL
+ONLY, not a KEEP/DROP decision**. Directional read (context only): baseline's
+vol-scaled curve showed a smaller loss and a slightly lower max drawdown;
+with_macro's vol-scaled curve showed a very slightly larger loss AND a very
+slightly higher max drawdown — the two variants point in DIFFERENT
+directions on drawdown, underscoring why this is not yet a decision either
+way. `vol_weight` ranged ~0.82–1.48 for both variants — reported explicitly
+so the actual sizing variation isn't buried in the aggregate numbers. 7 new
+unit tests (causal truncation-equivalence, the expanding→rolling transition,
+clip bounds at both ends plus a defensive zero-predicted-vol case, the
+degenerate-short-sample bootstrap refusal, a never-fits guard mirroring
+hypothesis #9's own, and a direct git-diff check that `src/paper_trading.py`
+is untouched). No model, feature, serving, or execution change.
 
 ---
 

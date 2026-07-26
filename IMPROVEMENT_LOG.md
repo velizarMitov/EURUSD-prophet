@@ -990,6 +990,98 @@ higher-quality swings: **6,969 raw XABCD completions (vs the fractal path's
       window's noise. Next bar in this family if a 5th hypothesis is ever
       spent: 0.05/5 = 0.01.
 
+## Backlog — M15 harmonic-pattern hypotheses H1.5/H1.6 (added 2026-07-26, SAME family, VERDICT: BOTH DROP)
+
+The SAME harmonic-pattern question (does XABCD completion + triple-barrier
+labeling carry a real edge) asked on a FINER timeframe — M15 instead of H1.
+SAME family log (`results/harmonic_pattern_hypothesis_log.csv`, n=4 -> n=6);
+this does NOT reset the Bonferroni budget, it tightens it: `0.05/6 ≈ 0.0083`
+each.
+
+- [x] STEP 0 (verify before building) — new `src.live_data.fetch_m15_market_data`
+      / `_fetch_m15_from_mt5`: MT5 ONLY (`mt5.copy_rates_from_pos(symbol,
+      mt5.TIMEFRAME_M15, 0, bars)`, the same bar-count OHLCV API as the
+      existing H1 fetch — NOT tick-level data, and deliberately NO Yahoo
+      Finance fallback for this timeframe, unlike D1/H1; an on-disk cache
+      remains the offline fallback). This broker's terminal retains M15
+      history back to 1971 — comfortably deep. Fetched **350,000 bars**
+      (`results/eurusd_m15.csv`), spanning **2012-06-25 → 2026-07-24 (~14.1
+      years)** — MORE calendar span than the ~9.7 years
+      `results/eurusd_h1.csv` (H1.1-H1.4's data source) covers, so the
+      row-span-comparability check PASSED cleanly; no depth concern.
+- [x] Why M15 was tried, tradeoffs flagged BEFORE building: (1)
+      AUTOCORRELATION — M15 events cluster far more in time than H1 events;
+      mitigated via a MOVING-BLOCK (circular) bootstrap (block length = 20
+      EVENTS) replacing the i.i.d. bootstrap H1.1-H1.4 used, for THIS run
+      only. (2) SIGNAL-TO-NOISE — finer bars are proportionally noisier;
+      ZigZag's ATR-adaptive threshold is the best available mitigation, not
+      a cure. (3) TRANSACTION-COST DRAG — the same absolute 1.5-pip cost
+      sits on top of a much smaller typical M15 bar range; NOT relaxed to
+      make it easier to clear.
+- [x] Swing basis: ZigZag ONLY (`src.zigzag_swings.zigzag_swings`, algorithm
+      UNCHANGED — already generic over whatever OHLC array it's fed), NOT
+      Williams fractals — a fixed 5-bar window spans only 75 minutes at M15,
+      not worth 2 more hypothesis slots re-confirming an even-worse-expected
+      result.
+- [x] Constants RE-DERIVED (not H1's numbers copy-pasted), preserving the
+      same real-world meaning at M15 granularity: ZigZag threshold k=1.5 *
+      ATR(14 **bars**, unchanged — scale-invariant); EWMA span = **96 M15
+      bars** (24h*4, preserves "~1 day of memory"); time horizon = **480 M15
+      bars** (120 H1 bars*4, preserves "~5 trading days"); target/stop
+      multipliers (1.5x/1.0x) and `best_fit_score>=0.5` UNCHANGED
+      (timeframe-independent); cost = same absolute 1.5 pips (0.00015), NOT
+      relaxed.
+- [x] New `src/harmonic_m15_check.py` reuses `src.harmonic_event_check`'s
+      `build_event_dataset` / `train_h1_1_logistic` / `train_h1_2_mlp`
+      (identical PyTorch implementation, only the data source swaps) /
+      `predict_h1_2_mlp` / `_chronological_split` / `_upsert_log` UNCHANGED
+      — `build_event_dataset` is already timeframe-agnostic, so the M15
+      frame is simply passed into its existing `h1=` parameter with the
+      re-derived `ewma_span`/`horizon_bars`. New
+      `bootstrap_delta_and_mcnemar_block` (moving-block/circular, block
+      length in EVENTS) used for all three comparisons (H1.5 vs majority,
+      H1.6 vs H1.5 primary, H1.6 vs majority corroborating) — H1.1-H1.4
+      remain on their original i.i.d.-bootstrap numbers, never
+      retroactively re-analyzed.
+- [x] Real run (2026-07-26): 42,373 raw XABCD events -> 14,334 filtered ->
+      14,309 labeled (25 excluded, insufficient history) — split
+      train=10,016/val=2,146/test=2,147.
+
+      **Transaction-cost drag, real numbers**: mean ATR(14) = 7.41 pips at
+      M15 vs 14.14 pips at H1 — the fixed 1.5-pip cost is **20.2%** of a
+      typical M15 bar range vs **10.6%** at H1, confirming the drag concern
+      empirically rather than just asserting it.
+
+      **Clustering diagnostic**: validation-slice event gap median = 18.0
+      M15 bars, IQR [9.0, 33.0] — below the 20-event block length, i.e.
+      events ARE clustered relative to the block size, so the block
+      bootstrap is doing real work here, not a formality. Concretely: H1.5's
+      naive McNemar p=0.0005 (looks sharp) but the block-bootstrap CI
+      straddles zero ([-0.1317, +0.0326]) — exactly the failure mode the
+      autocorrelation guard exists to catch (a clustering-blind test would
+      have overstated confidence here).
+
+      | hypothesis | comparison | val acc (challenger / reference) | Δacc | block-bootstrap CI (99.17%) | McNemar p | verdict |
+      |---|---|---|---|---|---|---|
+      | H1.5 LogisticRegression | vs train-majority baseline | 0.4944 / 0.5471 | -0.0527 | [-0.1317, +0.0326] | 0.0005 | **DROP** |
+      | H1.6 MLP (PRIMARY) | vs H1.5's own val predictions | 0.4986 / 0.4944 | +0.0042 | [-0.0059, +0.0151] | 0.3135 | **DROP** |
+
+      H1.6's corroborating check (vs majority) was directionally negative
+      (Δacc -0.0485), consistent with H1.5's own DROP, not ambiguous.
+- [x] Registered as hypotheses #5/#6 in `harmonic_pattern_hypothesis_log.csv`
+      (n=5/n=6, alpha=0.0083 each); rows 1-4 unchanged at their original
+      alphas (0.025, 0.0125). 9 new unit tests (M15 fetch chain: prefers
+      MT5, never falls back to yfinance, falls back to on-disk cache; the
+      constant re-derivation check; event-gap median/IQR; block-bootstrap
+      index contiguity; block-bootstrap detects a clear edge; the ATR
+      cost-drag diagnostic against a known constant true range). Full suite
+      green (130 tests). No model, feature, or serving change. A finer
+      timeframe with 3x the raw event count STILL finds nothing once the
+      clustering-aware bootstrap is applied — further (not conclusive)
+      evidence that the underlying null is about the harmonic-pattern
+      hypothesis itself, not an artifact of H1's bar granularity. Next bar
+      in this family if a 7th hypothesis is ever spent: 0.05/7 ≈ 0.0071.
+
 ## Backlog — Fractal-breakout drift/continuation event-study (added 2026-07-26, NEW OWN family, VERDICT: DROP)
 
 A genuinely different question from hypothesis #7 (`feature_hypothesis_log.csv`,
@@ -1072,6 +1164,89 @@ feature/serving change itself.
       curiosity forever — it retires 3/2/5-day continuation specifically; a
       different horizon or a volatility-conditioned variant would be hypothesis
       #2 of this family (alpha tightening to 0.05/2 = 0.025).
+
+## Backlog — Volatility-scaled position-sizing overlay, research-only retrospective backtest (added 2026-07-26, PRELIMINARY, no production change)
+
+============================== HARD BOUNDARY ==============================
+This is a DESCRIPTIVE "what-if" report over the already-settled forward
+paper-trading ledgers (`results/paper_trading_log_baseline.csv`,
+`results/paper_trading_log_macro.csv`) — explicitly distinct from BOTH the
+feature-hypothesis families (`feature_hypothesis_log.csv`,
+`volatility_hypothesis_log.csv`, `cot_weekly_hypothesis_log.csv`,
+`harmonic_pattern_hypothesis_log.csv`, `fractal_breakout_driftcheck_hypothesis_log.csv`)
+AND the live paper-trading ledgers themselves. `src/paper_trading.py`
+(`build_ledger`/`summarize`/`build_all_ledgers`, and how future live
+positions get logged) is completely UNCHANGED — verified by a dedicated unit
+test diffing the file against git HEAD. No execution/position-sizing/
+broker code path was added anywhere. Real capital deployment remains a
+separate, explicit, FUTURE conversation requiring the owner's direct
+approval, exactly as `src/paper_trading.py`'s own docstring already states.
+==============================================================================
+
+- [x] Step 1 — New module `src/vol_scaled_backtest.py`. Reuses
+      `load_frozen_volatility_ensemble`/`batch_predict_frozen_ensemble_vol_pct`
+      (`src/volatility.py`, the SAME frozen-artifact batch-inference idiom
+      already established for direction/return hypothesis #9) UNCHANGED —
+      pure `.transform()`/`.predict()`, no retraining. Since
+      `results/eurusd_features.csv`'s tail predates the ledgers' recent
+      dates, price history for this report is aggregated straight from
+      `results/eurusd_h1.csv` (H1 -> daily OHLCV, same completeness rule as
+      `src.h1_features.aggregate_daily_features`) — used ONLY for this
+      retrospective report, touching no training/serving path.
+- [x] Step 2 — PRE-REGISTERED sizing formula: `trailing_ref_vol[t]` = a
+      CAUSAL `pandas.rolling(window=252, min_periods=1).median()` of
+      `predicted_vol_pct` (expanding until 252 days exist, genuine rolling
+      252-day median thereafter — one pandas call *is* exactly this, no
+      manual branching needed); `vol_weight[t] = trailing_ref_vol[t] /
+      predicted_vol_pct[t]`, CLIPPED to `[0.25, 4.0]` (fixed a priori
+      guardrail); `weighted_net_return_pct[t] = net_return_pct[t] *
+      vol_weight[t]` — ONLY the size of the already-realized P&L changes,
+      never the direction call.
+- [x] Step 3 — Per-variant (baseline, with_macro) comparison over the
+      matched settled+forecasted window: cumulative net return, Sharpe-like
+      ratio (identical formula to `src.paper_trading.summarize`), and max
+      drawdown, original vs vol-scaled.
+- [x] Step 4 — Statistical test logged to its own NEW
+      `results/vol_scaled_sizing_backtest.csv` (not a hypothesis-log family
+      — this isn't a classification-accuracy claim). Moving-BLOCK (circular)
+      bootstrap, block length 20 trading days, 2000 resamples, on the
+      DIFFERENCE in Sharpe-like ratio. **Important correctness fix caught
+      during smoke-testing**: with `n <= block_len` (exactly this project's
+      current sample sizes), a "block" as long as the whole series is just a
+      cyclic ROTATION of every value once — mean/std (hence Sharpe) are
+      invariant to rotation, so every resample gives an IDENTICAL delta and
+      the naive "CI" collapses to a single point, which would have looked
+      like a razor-thin, highly-significant interval purely as an artifact
+      of too little data relative to the pre-registered block length.
+      `bootstrap_delta_sharpe` now explicitly REFUSES or (returns NaN,NaN)
+      rather than silently clamping the block length down and reporting a
+      falsely confident CI — see `tests/test_unit.py::
+      test_moving_block_bootstrap_refuses_degenerate_short_sample`.
+- [x] Step 5 — Actual settled+matched counts, real data (2026-07-26):
+      **baseline n=10, with_macro n=17** — both far below the ~40-position
+      threshold for a meaningful block bootstrap, and both trigger the
+      `n<=block_len` degenerate-refusal above. Reported honestly as
+      **PRELIMINARY/DIRECTIONAL ONLY, not a KEEP/DROP decision** — paper
+      trading has only just started accumulating. Directional read (context
+      only, not decision-bearing at this n): baseline's vol-scaled curve
+      showed a smaller loss and a slightly lower max drawdown; with_macro's
+      vol-scaled curve showed a very slightly larger loss AND a very
+      slightly higher max drawdown — i.e. the two variants point in
+      DIFFERENT directions on drawdown, underscoring why this is not yet a
+      decision, in either direction. `vol_weight` ranged ~0.82-1.48 for both
+      variants (i.e. sizing moved by less than 2x either way over this short
+      window) — reported explicitly so the actual sizing variation isn't
+      buried in the aggregate numbers.
+- [x] Step 6 — 7 new unit tests: `trailing_ref_vol`'s causal-only
+      construction (truncation-equivalence), its expanding-then-rolling
+      transition, `vol_weight` clipping at BOTH bounds plus the defensive
+      zero-predicted-vol edge case, the degenerate-short-sample bootstrap
+      refusal, a never-fits guard mirroring hypothesis #9's own
+      (`test_frozen_volatility_ensemble_batch_inference_never_fits`) but
+      exercising this module's own call path end-to-end, and a direct git-
+      diff check that `src/paper_trading.py` is byte-for-byte untouched.
+      Full suite green (121 tests). No model, feature, serving, or execution
+      change.
 
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
