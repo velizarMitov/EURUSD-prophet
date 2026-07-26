@@ -734,6 +734,125 @@ in this project.
       automatic, on a clear KEEP; moot here since it DROPped. Next
       direction/return bar: 0.05/10 = 0.005. Full suite green (88 tests).
 
+## Backlog — H1 harmonic-pattern event-conditional model, TRIPLE-BARRIER labeling (added 2026-07-26, OWN family, hypotheses H1.1 + H1.2, VERDICT: BOTH DROP)
+
+A genuinely new EVENT UNIVERSE and TARGET, not another daily/H1 feature: does
+price behave differently in the ~120 H1 bars (~5 days) after a classical
+XABCD harmonic-pattern reversal signal completes? Its own hypothesis family
+(`results/harmonic_pattern_hypothesis_log.csv`, first budget alpha=0.05,
+split across two sequentially-scaled sub-hypotheses run together this pass,
+alpha=0.025 each) — separate from the daily direction/return, daily
+volatility, and weekly-COT families; none of those logs are touched.
+
+**Scope note (owner-confirmed):** `src/harmonic_patterns.py` (XABCD ratio
+scoring) did NOT already exist in this project — the initial task assumed it
+did ("reuse … UNCHANGED"). Confirmed absent by a full-repo search, flagged to
+the owner, and built as explicitly NEW, unvalidated code this pass (its own
+module docstring says so plainly). Only the fractal/swing PRIMITIVES it calls
+(`src.fibonacci_fractals.detect_fractals` / `_push_swing` / `CONFIRMATION_LAG`)
+have a prior track record — genuinely reused UNCHANGED, not reimplemented.
+
+- [x] Step 1 — `src/harmonic_patterns.py`: an XABCD pattern is 5 alternating
+      confirmed swing points (X→A→B→C→D), scored against 4 published
+      Fibonacci ratio templates (Gartley/Bat/Butterfly/Crab — NOT tuned
+      against this project's data) via `r_AB=|AB|/|XA|`, `r_BC=|BC|/|AB|`,
+      `r_CD=|CD|/|BC|`, `r_AD=|AD|/|XA|`; `best_fit_score` = best-template
+      match in [0,1]; `direction` = +1 bullish (D is a LOW) / −1 bearish (D is
+      a HIGH) — D's kind alone determines the sign, by construction.
+      Confirmation lag INHERITED unchanged from `src.fibonacci_fractals`: the
+      whole pattern is only confirmed at `D_idx + CONFIRMATION_LAG` (2 bars),
+      since D is itself a fractal. Event filter (pre-registered, no post-hoc
+      tuning): `best_fit_score >= 0.5`. On `results/eurusd_h1.csv`
+      (60,000 H1 bars): **14,144 raw XABCD completions, 4,161 clearing the
+      0.5 filter.**
+- [x] Step 2 — `src/triple_barrier.py` (Lopez de Prado, event-source-agnostic,
+      new but generically reusable): `r_ewma_std` = EWMA std of H1 log
+      returns, span=24; `horizon_vol = r_ewma_std * sqrt(120)` — square-root-
+      of-time scaled to the 120-bar holding horizon. **This replaced an
+      earlier plain-ATR draft per owner review**: ATR measures PER-BAR range,
+      not the dispersion an entry should expect over its full multi-bar
+      holding period, so it is the wrong volatility unit for a fixed-horizon
+      barrier — the sqrt-time-scaled EWMA is the measure genuinely matched to
+      the horizon. `entry` = close at `confirmed_at_idx`; `target = entry *
+      exp(direction * 1.5 * horizon_vol)`; `stop = entry * exp(-direction *
+      1.0 * horizon_vol)`; time barrier = 120 bars, fixed. Same-bar
+      target+stop ambiguity (OHLC cannot resolve true intrabar order) ties
+      toward the STOP — conservative, never overstates the edge. Time-barrier
+      resolution requires the signed move to clear the transaction cost,
+      **explicit pip→price conversion**: `config.json`
+      `paper_trading.spread_pips = 1.5`; EURUSD 1 pip = 0.0001
+      (`src.paper_trading.PIP_SIZE`) → **1.5 × 0.0001 = 0.00015** raw price
+      units — a move smaller than that is not a realizable win, mirroring how
+      `paper_trading.py` already nets cost rather than scoring a bare
+      `sign(>0)`. Events within 120 bars of the end of history are EXCLUDED
+      (never padded): **14 of 4,161** filtered events, leaving a **final
+      4,147-event labeled dataset** (label 1 rate 45.3%).
+- [x] Step 3 — `src/harmonic_event_check.py`, the pipeline + BOTH
+      sub-hypotheses on the identical event subset / chronological 70/15/15
+      split (2,902 train / 622 val / 623 test, test reserved untouched) /
+      identical 8 features (`r_AB, r_BC, r_CD, r_AD, best_fit_score,
+      direction, swing_duration_bars, norm_amplitude` — the last is the
+      XA-leg amplitude normalized by the SAME `horizon_vol` already computed
+      at the event, not a second ad hoc normalizer) / `class_weight=
+      'balanced'` on both models (**rationale**: the closer 1.0x stop is
+      geometrically more likely to be touched before the farther 1.5x target
+      under a pure random walk, independent of any real edge — without
+      balancing either model could trivially collapse to the majority class
+      and become indistinguishable from the baseline it's judged against,
+      silently underpowering the test) / `random_state=42` (project
+      convention).
+
+      **H1.1 (linear baseline) — LogisticRegression**, judged against the
+      train-majority-class baseline.
+      **H1.2 (non-linear) — feed-forward MLP** (NOT an LSTM — these are
+      already-extracted cross-sectional per-event ratios, not a time series):
+      Dense(16,L2=1e-3)→Dropout(0.3)→Dense(8,L2=1e-3)→Dropout(0.3)→
+      Dense(1,sigmoid), Adam lr=0.001, ≤100 epochs, early-stop patience=10 on
+      val loss, batch_size=32 (this project's existing H1-LSTM convention) —
+      architecture FIXED, no tuning after results. H1.2's **PRIMARY** decision
+      test compares against **H1.1's own predictions on the identical
+      validation rows** (not a fresh baseline) — the real "is the extra
+      complexity worth it" question, and ALONE governs H1.2's verdict; MLP-
+      vs-majority-baseline is corroborating context only (anti-cherry-pick
+      rule, same convention as the weekly-COT Spearman-primary /
+      logistic-corroborating test).
+- [x] Step 4 — Paired bootstrap 2000 resamples + exact McNemar, BOTH
+      hypotheses, alpha = 0.05/2 = **0.025** each (CI width itself
+      alpha-scaled — 97.5% — matching the volatility-family / weekly-COT-
+      extremes convention: a stricter alpha only ever raises the bar). Run
+      ONCE, no tuning of the event threshold, EWMA span, sqrt-horizon
+      scaling, barrier multipliers, spread-cost threshold, class weighting,
+      or MLP architecture after seeing results.
+
+      | hypothesis | comparison | val acc (challenger / reference) | Δacc | 97.5% CI | McNemar p | verdict |
+      |---|---|---|---|---|---|---|
+      | H1.1 LogisticRegression | vs train-majority baseline | 0.4936 / 0.5305 | −0.0370 | [−0.1061, +0.0322] | 0.2671 | **DROP** |
+      | H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.5113 / 0.4936 | +0.0177 | [−0.0209, +0.0595] | 0.3712 | **DROP** |
+
+      H1.2's corroborating check (vs majority baseline) was ALSO negative
+      (Δacc −0.0193, McNemar p=0.5374) — no ambiguity to arbitrate; both
+      paths agree. Non-event random-sample baseline (b), descriptive only:
+      label==1 rate 0.4608 (n=4,147) — close to the event dataset's own
+      45.3%, consistent with the target/stop geometric distance asymmetry
+      being the dominant driver of the label distribution, not the harmonic
+      signal itself.
+- [x] Step 5 — Both rows registered in
+      `results/harmonic_pattern_hypothesis_log.csv` (n=1, n=2). No model,
+      serving, or API change regardless of outcome (both DROPped anyway).
+      13 new unit tests: exact-Gartley ratio/direction hand-check, degenerate-
+      swing None-guard, confirmation-lag truncation (event invisible before
+      `D_idx+2`, present exactly at it), no-look-ahead future-truncation
+      equivalence, all 4 triple-barrier outcomes (target-first, stop-first,
+      time-win, time-loss) plus insufficient-history exclusion plus the
+      short-direction mirror, the `sqrt(120)` scaling math (both a direct
+      unit check and an end-to-end barrier-placement check), EWMA causality,
+      the generic paired-bootstrap helper's swap-test (proving H1.2's PRIMARY
+      comparison is a genuine row-for-row comparison against whatever
+      predictions are passed in, never a hidden independent baseline), and
+      the FEATURE_COLUMNS-exclusion guard. Full suite green (102 tests).
+      Power caveat stated plainly: 622 validation events is a small-n family;
+      both DROPs are correspondingly weak (not strong) evidence of absence.
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)

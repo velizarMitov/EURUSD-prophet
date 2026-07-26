@@ -2040,3 +2040,306 @@ def test_volatility_forecast_feature_stays_out_of_direction_return_feature_colum
 
     assert not set(VOLATILITY_FORECAST_FEATURE_COLUMNS) & set(FEATURE_COLUMNS), \
         "predicted_vol_pct must stay out of the model feature set."
+
+
+# ── Harmonic patterns (src.harmonic_patterns) + triple-barrier labeling
+# (src.triple_barrier) + the event-conditional model pipeline
+# (src.harmonic_event_check) -- own hypothesis family, first budget ─────────
+
+def _zigzag(points, seg_len=6):
+    """Strictly-monotonic zigzag path through `points` (each an exact
+    turning-point level): every interior point is a genuine local extremum
+    (no flat plateaus, which would break detect_fractals' STRICT inequality),
+    with `seg_len` bars per leg -- enough for the 5-bar fractal window plus
+    the 2-bar confirmation lag to resolve cleanly."""
+    path = [points[0]]
+    for a, b in zip(points[:-1], points[1:]):
+        path.extend(np.linspace(a, b, seg_len)[1:].tolist())
+    return np.array(path)
+
+
+# Exact Gartley by construction: X=0(L) -> A=100(H) -> B=38.2(L) [r_AB=0.618
+# of XA] -> C=76.39(H) [r_BC=0.618 of AB] -> D=21.4(L) [r_AD=0.786 of XA].
+_GARTLEY_POINTS = [5.0, 0.0, 100.0, 38.2, 76.39, 21.4, 30.0]
+
+
+def test_score_xabcd_exact_gartley_scores_1_and_bullish_direction():
+    """A hand-computed exact-Gartley 5-point swing must score best_fit_score
+    == 1.0 against the 'gartley' template and report the correct ratios and
+    bullish (+1) direction (D is a LOW -> upward reversal)."""
+    from src.harmonic_patterns import score_xabcd
+
+    X = {'idx': 0, 'kind': 'L', 'level': 0.0}
+    A = {'idx': 5, 'kind': 'H', 'level': 100.0}
+    B = {'idx': 10, 'kind': 'L', 'level': 38.2}
+    C = {'idx': 15, 'kind': 'H', 'level': 76.39}
+    D = {'idx': 20, 'kind': 'L', 'level': 21.4}
+    res = score_xabcd(X, A, B, C, D)
+    assert res['pattern'] == 'gartley'
+    assert res['best_fit_score'] == pytest.approx(1.0)
+    assert res['r_AB'] == pytest.approx(0.618)
+    assert res['r_AD'] == pytest.approx(0.786)
+    assert res['direction'] == 1, "D is a LOW -> bullish reversal up"
+
+    # Mirror image (bearish): swap H/L kinds and negate levels -> same ratios,
+    # opposite sign direction.
+    Xb = {'idx': 0, 'kind': 'H', 'level': 0.0}
+    Ab = {'idx': 5, 'kind': 'L', 'level': -100.0}
+    Bb = {'idx': 10, 'kind': 'H', 'level': -38.2}
+    Cb = {'idx': 15, 'kind': 'L', 'level': -76.39}
+    Db = {'idx': 20, 'kind': 'H', 'level': -21.4}
+    res_b = score_xabcd(Xb, Ab, Bb, Cb, Db)
+    assert res_b['best_fit_score'] == pytest.approx(1.0)
+    assert res_b['direction'] == -1, "D is a HIGH -> bearish reversal down"
+
+
+def test_score_xabcd_degenerate_swing_returns_none():
+    """A zero-length leg (XA, AB, or BC) makes every ratio undefined -- must
+    return None rather than divide by zero."""
+    from src.harmonic_patterns import score_xabcd
+
+    X = {'idx': 0, 'kind': 'L', 'level': 50.0}
+    A = {'idx': 5, 'kind': 'H', 'level': 50.0}   # XA == 0
+    B = {'idx': 10, 'kind': 'L', 'level': 40.0}
+    C = {'idx': 15, 'kind': 'H', 'level': 45.0}
+    D = {'idx': 20, 'kind': 'L', 'level': 41.0}
+    assert score_xabcd(X, A, B, C, D) is None
+
+
+def test_detect_harmonic_events_confirmation_lag_and_end_to_end_geometry():
+    """End-to-end: a synthetic exact-Gartley zigzag must be detected with the
+    correct X/A/B/C/D bar indices, scored 1.0, and -- the confirmation-lag
+    guard, mirroring src.fibonacci_fractals' CONFIRMATION_LAG -- INVISIBLE
+    until confirmed_at_idx == D_idx + 2, never one bar earlier."""
+    from src.harmonic_patterns import detect_harmonic_events, CONFIRMATION_LAG
+
+    path = _zigzag(_GARTLEY_POINTS, seg_len=6)
+    df = pd.DataFrame({'high': path, 'low': path, 'close': path})
+    events = detect_harmonic_events(df)
+
+    assert len(events) == 1
+    ev = events.iloc[0]
+    assert (ev['X_idx'], ev['A_idx'], ev['B_idx'], ev['C_idx'], ev['D_idx']) == (5, 10, 15, 20, 25)
+    assert ev['confirmed_at_idx'] == ev['D_idx'] + CONFIRMATION_LAG == 27
+    assert ev['pattern'] == 'gartley'
+    assert ev['best_fit_score'] == pytest.approx(1.0)
+    assert ev['direction'] == 1
+    assert ev['harmonic_pattern_score_signed'] == pytest.approx(1.0)   # direction(+1) * score(1.0)
+
+    # INVISIBLE one bar before confirmation (truncate to D_idx+1 inclusive).
+    trunc_before = detect_harmonic_events(df.iloc[:ev['D_idx'] + 2])   # rows 0..D_idx+1
+    assert len(trunc_before) == 0, "event must not exist before its own confirmed_at_idx"
+
+    # Present exactly AT confirmation (truncate to confirmed_at_idx inclusive).
+    trunc_at = detect_harmonic_events(df.iloc[:ev['confirmed_at_idx'] + 1])
+    assert len(trunc_at) == 1
+    assert trunc_at.iloc[0]['D_idx'] == ev['D_idx']
+
+
+def test_detect_harmonic_events_no_lookahead_via_future_truncation():
+    """Explicit no-look-ahead check: re-running detection on a series
+    truncated well PAST an event's confirmation must reproduce the identical
+    event geometry -- nothing about an already-confirmed event may depend on
+    bars beyond its own confirmed_at_idx. Mirrors
+    test_ti_indicators_no_lookahead_via_future_truncation's truncation-
+    equivalence convention."""
+    from src.harmonic_patterns import detect_harmonic_events
+
+    # Extra trailing bars (a further leg) AFTER the Gartley completes+confirms.
+    path = _zigzag(_GARTLEY_POINTS + [90.0, 15.0], seg_len=6)
+    df = pd.DataFrame({'high': path, 'low': path, 'close': path})
+    full = detect_harmonic_events(df)
+    gartley_row = full[full['pattern'] == 'gartley'].iloc[0]
+
+    cut = int(gartley_row['confirmed_at_idx']) + 1   # just past confirmation, well before the extra legs
+    trunc = detect_harmonic_events(df.iloc[:cut])
+    trunc_gartley = trunc[trunc['pattern'] == 'gartley'].iloc[0]
+    for col in ['X_idx', 'A_idx', 'B_idx', 'C_idx', 'D_idx', 'confirmed_at_idx',
+               'pattern', 'best_fit_score', 'r_AB', 'r_BC', 'r_CD', 'r_AD', 'direction']:
+        assert trunc_gartley[col] == pytest.approx(gartley_row[col]) if isinstance(gartley_row[col], float) \
+            else trunc_gartley[col] == gartley_row[col]
+
+
+# ── triple-barrier labeling correctness ───────────────────────────────────
+
+def _flat_series(entry, n=10):
+    return np.full(n, entry), np.full(n, entry), np.full(n, entry)
+
+
+def test_triple_barrier_target_touched_first():
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv = 100.0, 0.01
+    target = entry * np.exp(1.5 * hv)
+    high, low, close = _flat_series(entry)
+    high[3] = target + 0.001
+    close[3] = target
+    label, outcome = triple_barrier_label(high, low, close, 0, 1, hv, 5, cost_price=0.00015)
+    assert (label, outcome) == (1, 'target')
+
+
+def test_triple_barrier_stop_touched_first():
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv = 100.0, 0.01
+    stop = entry * np.exp(-1.0 * hv)
+    high, low, close = _flat_series(entry)
+    low[2] = stop - 0.001
+    label, outcome = triple_barrier_label(high, low, close, 0, 1, hv, 5, cost_price=0.00015)
+    assert (label, outcome) == (0, 'stop')
+
+
+def test_triple_barrier_time_barrier_above_cost_threshold_wins():
+    """Neither barrier touched within the horizon; the signed move at the
+    time barrier EXCEEDS the transaction-cost threshold -> label 1."""
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv, cost = 100.0, 0.01, 0.00015
+    high, low, close = _flat_series(entry)
+    close[5] = entry + 0.0003   # > cost
+    label, outcome = triple_barrier_label(high, low, close, 0, 1, hv, 5, cost_price=cost)
+    assert (label, outcome) == (1, 'time_win')
+
+
+def test_triple_barrier_time_barrier_below_cost_threshold_loses():
+    """Neither barrier touched; the signed move at the time barrier is
+    POSITIVE but smaller than the transaction-cost threshold -> label 0 (a
+    move smaller than the spread is not a realizable win, mirroring
+    src.paper_trading's cost-netting -- never a bare sign(>0))."""
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv, cost = 100.0, 0.01, 0.00015
+    high, low, close = _flat_series(entry)
+    close[5] = entry + 0.00005   # positive but < cost
+    label, outcome = triple_barrier_label(high, low, close, 0, 1, hv, 5, cost_price=cost)
+    assert (label, outcome) == (0, 'time_loss')
+
+
+def test_triple_barrier_insufficient_history_excluded_not_padded():
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv = 100.0, 0.01
+    high, low, close = _flat_series(entry, n=10)
+    label, outcome = triple_barrier_label(high, low, close, 6, 1, hv, 5, cost_price=0.00015)
+    assert (label, outcome) == (None, 'insufficient_history')
+
+
+def test_triple_barrier_short_direction_mirrors_long():
+    """direction=-1 flips which side is target vs stop: the barrier BELOW
+    entry is now the (aligned) target, the barrier ABOVE is the (opposite)
+    stop."""
+    from src.triple_barrier import triple_barrier_label
+
+    entry, hv = 100.0, 0.01
+    target = entry * np.exp(-1.5 * hv)   # aligned with direction=-1 -> below entry
+    stop = entry * np.exp(1.0 * hv)      # opposite direction=-1 -> above entry
+    high, low, close = _flat_series(entry)
+    low[3] = target - 0.001
+    close[3] = target
+    label, outcome = triple_barrier_label(high, low, close, 0, -1, hv, 5, cost_price=0.00015)
+    assert (label, outcome) == (1, 'target')
+
+    high2, low2, close2 = _flat_series(entry)
+    high2[2] = stop + 0.001
+    label2, outcome2 = triple_barrier_label(high2, low2, close2, 0, -1, hv, 5, cost_price=0.00015)
+    assert (label2, outcome2) == (0, 'stop')
+
+
+# ── horizon-matched volatility: sqrt(120)-scaled EWMA std ─────────────────
+
+def test_horizon_vol_is_ewma_std_times_sqrt_horizon():
+    """Mathematical check: horizon_vol = r_ewma_std * sqrt(horizon_bars),
+    computed BEFORE any exponential price translation -- exactly
+    np.sqrt(120), not some other scaling."""
+    from src.triple_barrier import horizon_vol_from_ewma_std
+
+    r_ewma_std = np.array([0.001, 0.002, np.nan, 0.0005])
+    result = horizon_vol_from_ewma_std(r_ewma_std, 120)
+    expected = r_ewma_std * np.sqrt(120)
+    np.testing.assert_allclose(result, expected, equal_nan=True)
+    # Hand-check one value explicitly (guards against a stray sqrt(horizon-1)
+    # or missing sqrt entirely).
+    assert result[0] == pytest.approx(0.001 * (120 ** 0.5))
+
+
+def test_ewma_log_return_std_is_causal_and_scales_barriers_correctly():
+    """ewma_log_return_std must be a pure trailing/causal function (identical
+    on the surviving rows after truncating the future -- pandas .ewm is
+    inherently causal, but this pins it explicitly), and the resulting
+    horizon_vol must be EXACTLY what triple_barrier_label uses to place its
+    exponential target/stop barriers (end-to-end math check)."""
+    from src.triple_barrier import (
+        ewma_log_return_std, horizon_vol_from_ewma_std, triple_barrier_label,
+    )
+
+    rng = np.random.default_rng(0)
+    close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.001, 40)))
+    full = ewma_log_return_std(close, span=24)
+    cut = 25
+    trunc = ewma_log_return_std(close[:cut], span=24)
+    np.testing.assert_allclose(full[:cut], trunc, equal_nan=True)
+
+    horizon_vol = horizon_vol_from_ewma_std(full, 120)
+    entry_idx = 10
+    hv = horizon_vol[entry_idx]
+    high = close.copy() * 1.0000001
+    low = close.copy() * 0.9999999
+    expected_target = close[entry_idx] * np.exp(1.5 * hv)
+    expected_stop = close[entry_idx] * np.exp(-1.0 * hv)
+    # Force a target touch at the expected (correctly-scaled) level and
+    # confirm the label fires -- if the sqrt(120) scaling were wrong, this
+    # exact price would not trigger it.
+    high[entry_idx + 3] = expected_target + 1e-6
+    label, outcome = triple_barrier_label(high, low, close, entry_idx, 1, hv,
+                                          20, cost_price=0.00015)
+    assert (label, outcome) == (1, 'target')
+    assert expected_stop < close[entry_idx] < expected_target
+
+
+# ── the event pipeline's generic paired-bootstrap comparison ─────────────
+
+def test_bootstrap_delta_and_mcnemar_is_a_direct_paired_comparison():
+    """H1.2's PRIMARY decision path must compare against H1.1's OWN
+    predictions on IDENTICAL validation rows -- not an independently
+    resampled/regenerated baseline. Verify bootstrap_delta_and_mcnemar's
+    McNemar b/c are computed directly from the two prediction arrays passed
+    in (hand-computable), so swapping in H1.1's actual predictions as
+    `pred_reference` is a genuine row-for-row comparison, not a proxy."""
+    from src.harmonic_event_check import bootstrap_delta_and_mcnemar
+
+    y_val = np.array([1, 0, 1, 0, 1, 0, 1, 0])
+    pred_reference = np.array([1, 0, 0, 0, 0, 0, 1, 1])   # (H1.1-style) 6/8 correct
+    pred_challenger = np.array([1, 0, 1, 0, 1, 1, 1, 1])  # (H1.2-style) 6/8 correct, different rows right
+
+    res = bootstrap_delta_and_mcnemar(y_val, pred_reference, pred_challenger,
+                                      alpha=0.025, random_state=42)
+    correct_ref = (pred_reference == y_val)
+    correct_chg = (pred_challenger == y_val)
+    # Hand-computed discordant pairs: reference wrong & challenger right (b),
+    # reference right & challenger wrong (c).
+    expected_b = int(np.sum((~correct_ref) & correct_chg))
+    expected_c = int(np.sum(correct_ref & (~correct_chg)))
+    assert res['mcnemar_b'] == expected_b
+    assert res['mcnemar_c'] == expected_c
+    assert res['acc_reference'] == pytest.approx(correct_ref.mean())
+    assert res['acc_challenger'] == pytest.approx(correct_chg.mean())
+
+    # Calling it again with pred_reference and pred_challenger SWAPPED must
+    # flip which array is "reference" -- proving there is no hidden internal
+    # baseline independent of the two arrays actually supplied.
+    swapped = bootstrap_delta_and_mcnemar(y_val, pred_challenger, pred_reference,
+                                          alpha=0.025, random_state=42)
+    assert swapped['mcnemar_b'] == expected_c
+    assert swapped['mcnemar_c'] == expected_b
+    assert swapped['acc_reference'] == pytest.approx(correct_chg.mean())
+    assert swapped['acc_challenger'] == pytest.approx(correct_ref.mean())
+
+
+def test_harmonic_features_stay_out_of_daily_feature_columns():
+    """Ablation-first discipline, applied even though this is a different
+    event universe/target entirely: nothing from the harmonic-pattern module
+    may leak into the daily direction/return FEATURE_COLUMNS."""
+    from src.harmonic_patterns import HARMONIC_EVENT_COLUMNS
+    from src.harmonic_event_check import MODEL_FEATURE_COLUMNS
+
+    assert not (set(HARMONIC_EVENT_COLUMNS) | set(MODEL_FEATURE_COLUMNS)) & set(FEATURE_COLUMNS)
