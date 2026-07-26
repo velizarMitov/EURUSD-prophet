@@ -27,6 +27,10 @@
         "series": { "us_cpi": "CPIAUCSL", "de_cpi": "CP0000DEM086NEST" },
         "cache_path": "results/inflation_differential.csv",
         "yoy_lookback_days": 420
+      },
+      "vix": {
+        "series": { "vix": "VIXCLS" },
+        "cache_path": "results/vix.csv"
       }
     }
   },

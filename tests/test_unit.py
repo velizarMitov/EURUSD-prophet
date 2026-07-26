@@ -1692,3 +1692,266 @@ def test_paper_trading_baseline_ledger_skips_rows_without_baseline_forecast(tmp_
     macro_23 = macro_ledger[macro_ledger['forecasting_date'] == '2026-06-23'].iloc[0]
     assert macro_23['net_pips'] == pytest.approx(-baseline_ledger.iloc[0]['net_pips'], abs=0.01), \
         "opposite positions on the same move must mirror each other's P&L at zero cost"
+
+
+# ── Fibonacci / Williams-fractal features (hypothesis #7 + built-only #8) ─────
+
+def test_detect_fractals_strict_5bar_extremum():
+    """A Williams high fractal is a STRICT max of the 5-bar window high[i-2:i+3];
+    a low fractal a strict min of low[i-2:i+3]. Flat runs are NOT fractals."""
+    from src.fibonacci_fractals import detect_fractals
+
+    #                0    1    2    3    4    5    6
+    high = np.array([1.0, 2.0, 3.0, 5.0, 3.0, 2.0, 1.0])   # strict peak at 3
+    low = np.array([9.0, 8.0, 7.0, 4.0, 7.0, 8.0, 9.0])    # strict trough at 3
+    hf, lf = detect_fractals(high, low)
+    assert hf.tolist() == [False, False, False, True, False, False, False]
+    assert lf.tolist() == [False, False, False, True, False, False, False]
+
+    # A flat top (tie) is not a strict maximum -> no fractal.
+    flat = np.array([1.0, 2.0, 3.0, 3.0, 3.0, 2.0, 1.0])
+    hf2, _ = detect_fractals(flat, np.zeros(7))
+    assert not hf2.any(), "A tie at the top is not a STRICT max -> not a fractal."
+
+
+def test_fractal_confirmation_lag_no_lookahead():
+    """CONFIRMATION LAG is the whole risk: a fractal forming at bar i is only
+    knowable at bar i+2. It must be INVISIBLE on bars i and i+1 and first appear
+    on bar i+2 -- mirrors the FRED/COT no-look-ahead guards."""
+    from src.fibonacci_fractals import confirmed_high_low_levels
+
+    #                0    1    2    3    4    5    6   -> high fractal forms at i=3
+    high = np.array([1.0, 2.0, 3.0, 5.0, 3.0, 2.0, 1.0])
+    low = np.array([1.0] * 7)
+    conf_high, _conf_low = confirmed_high_low_levels(high, low)
+    assert np.isnan(conf_high[3]), "fractal at bar i is invisible ON bar i (not yet confirmed)"
+    assert np.isnan(conf_high[4]), "still invisible on bar i+1 (needs i+2 to confirm)"
+    assert conf_high[5] == pytest.approx(5.0), "confirmed and first usable exactly on bar i+2"
+    assert conf_high[6] == pytest.approx(5.0), "carries forward as the most recent confirmed high"
+
+
+def test_fractal_breakout_features_semantics_and_no_lookahead():
+    """fractal_breakout_up/down compare close to the most recent CONFIRMED
+    fractal level (revealed at i+2). Before confirmation the breakout cannot
+    fire off a still-forming fractal."""
+    from src.fibonacci_fractals import add_fibonacci_features, FIBONACCI_FEATURE_COLUMNS
+
+    idx = pd.date_range('2020-01-01', periods=7, freq='D')
+    df = pd.DataFrame({
+        'open': [1.0] * 7,
+        'high': [1.0, 2.0, 3.0, 5.0, 3.0, 2.0, 6.0],   # high fractal at i=3 (level 5)
+        'low': [1.0] * 7,
+        'close': [1.0, 1.0, 1.0, 4.9, 1.0, 1.0, 5.5],  # bar 6 closes above the confirmed 5
+    }, index=idx)
+    out = add_fibonacci_features(df)
+    assert set(FIBONACCI_FEATURE_COLUMNS).issubset(out.columns)
+    # Bar 3 (fractal-forming bar) closes 4.9 < 5, and the fractal is not even
+    # confirmed yet -> no breakout regardless.
+    assert out['fractal_breakout_up'].iloc[3] == 0.0
+    # Bar 6 closes 5.5 > the confirmed high-fractal level 5 -> breakout up.
+    assert out['fractal_breakout_up'].iloc[6] == 1.0
+    assert out['fractal_breakout_down'].iloc[6] == 0.0
+
+
+def test_fibonacci_features_are_nan_safe_neutral_zero():
+    """Every hypothesis-#7 column must be fully defined (neutral 0 where no
+    confirmed structure exists yet) -- never NaN -- so the ablation harness's
+    'extra candidate columns must be fully defined' assert always holds."""
+    from src.fibonacci_fractals import add_fibonacci_features, FIBONACCI_FEATURE_COLUMNS
+
+    idx = pd.date_range('2020-01-01', periods=40, freq='D')
+    rng = np.random.default_rng(0)
+    base = np.cumsum(rng.normal(0, 0.5, 40)) + 100
+    df = pd.DataFrame({'open': base, 'high': base + 1, 'low': base - 1, 'close': base}, index=idx)
+    out = add_fibonacci_features(df)
+    assert not out[FIBONACCI_FEATURE_COLUMNS].isna().any().any(), "no NaN allowed in the bundle"
+    # No swing has completed on the first two bars -> retracement distance is the
+    # neutral 0, never back-filled from a later swing.
+    assert out['dist_to_nearest_fib_pct'].iloc[0] == 0.0
+
+
+def test_dist_to_nearest_fib_pct_known_swing():
+    """dist_to_nearest_fib_pct sits at 0 when close lands exactly on a Fibonacci
+    retracement level of the confirmed 2-point swing, and is normalized by the
+    swing range in percent."""
+    from src.fibonacci_fractals import _retracement_dist
+
+    # Uptrend swing L=0 -> H=100. 0.5 retracement level = 50.
+    a = {'idx': 0, 'kind': 'L', 'level': 0.0}
+    b = {'idx': 5, 'kind': 'H', 'level': 100.0}
+    assert _retracement_dist(a, b, 50.0) == pytest.approx(0.0), "close on the 0.5 level -> 0"
+    # close 60 -> nearest level is 0.382 retracement = 100 - 38.2 = 61.8;
+    # distance (60 - 61.8)/100*100 = -1.8.
+    assert _retracement_dist(a, b, 60.0) == pytest.approx(-1.8, abs=1e-6)
+    # Degenerate swing (H == L) -> neutral 0, no division blow-up.
+    flat = {'idx': 5, 'kind': 'H', 'level': 0.0}
+    assert _retracement_dist(a, flat, 10.0) == 0.0
+
+
+def test_fibonacci_extension_3point_chronology_and_confirmation_lag():
+    """Hypothesis #8 (built, not tested this pass): the extension projects off a
+    confirmed 3-point swing A->B->C in CHRONOLOGICAL order, and inherits the same
+    confirmation-lag guard -- it stays neutral 0 until the THIRD alternating
+    fractal is itself confirmed (i+2)."""
+    from src.fibonacci_fractals import (
+        add_fibonacci_extension_features, _extension_dist,
+        FIBONACCI_EXTENSION_FEATURE_COLUMNS,
+    )
+
+    # Direct formula check: A=0 -> B=10 -> C=4, span=B-A=10, ext grid off C.
+    # r=1.13 level = 4 + 11.3 = 15.3; close 15.3 lands on it -> distance 0.
+    A = {'idx': 0, 'kind': 'L', 'level': 0.0}
+    B = {'idx': 5, 'kind': 'H', 'level': 10.0}
+    C = {'idx': 10, 'kind': 'L', 'level': 4.0}
+    assert _extension_dist(A, B, C, 15.3) == pytest.approx(0.0, abs=1e-9)
+    # Reversing the chronology (C,B,A) would project the OTHER direction and give
+    # a different nearest level -> the order genuinely matters.
+    assert _extension_dist(C, B, A, 15.3) != pytest.approx(0.0, abs=1e-6)
+
+    # Confirmation-lag / warm-up: three alternating fractals must all be
+    # confirmed before any extension distance is emitted; early bars are 0.
+    idx = pd.date_range('2020-01-01', periods=25, freq='D')
+    # Craft a low@2, high@7, low@12 fractal sequence via a zigzag price path.
+    h = np.full(25, 1.0)
+    lo = np.full(25, 5.0)
+    lo[2] = 0.0                       # low fractal at i=2
+    h[7] = 10.0                       # high fractal at i=7
+    lo[12] = -1.0                     # low fractal at i=12
+    close = np.linspace(1.0, 3.0, 25)
+    df = pd.DataFrame({'open': close, 'high': np.maximum(h, close + 0.01),
+                       'low': np.minimum(lo, close - 0.01), 'close': close}, index=idx)
+    out = add_fibonacci_extension_features(df)
+    assert set(FIBONACCI_EXTENSION_FEATURE_COLUMNS).issubset(out.columns)
+    assert not out['dist_to_nearest_fib_extension_pct'].isna().any(), "NaN-safe"
+    # The third fractal forms at i=12 and is confirmed at i=14; nothing before it.
+    assert (out['dist_to_nearest_fib_extension_pct'].iloc[:14] == 0.0).all(), \
+        "no 3-point extension before the third alternating fractal is confirmed (i+2)"
+
+
+def test_fibonacci_features_stay_out_of_direction_return_models():
+    """Ablation-first discipline: the Fibonacci/fractal candidates (both the
+    tested #7 bundle and the built-only #8 extension) must NEVER leak into
+    FEATURE_COLUMNS until a hypothesis test clears the family bar -- same guard
+    as the volatility and FOMC candidates."""
+    from src.fibonacci_fractals import (
+        FIBONACCI_FEATURE_COLUMNS, FIBONACCI_EXTENSION_FEATURE_COLUMNS,
+    )
+
+    overlap = set(FIBONACCI_FEATURE_COLUMNS + FIBONACCI_EXTENSION_FEATURE_COLUMNS) & set(FEATURE_COLUMNS)
+    assert not overlap, f"Fibonacci candidates must stay out of the model feature set: {overlap}"
+
+
+# ── VIX (CBOE Volatility Index) regime features (hypothesis #8) ───────────────
+
+def test_vix_availability_is_one_business_day_after_the_print_no_lookahead():
+    """STEP 0 pin: FRED publishes VIXCLS with a business-day lag and the VIX
+    close (~16:15 ET) is only ~45 min before the FX rollover (~17:00 ET), so a
+    print dated D is treated as available on D+1 BUSINESS day (conservative D-1
+    rule). `_compute_vix_frame` must stamp the availability index accordingly."""
+    from src.vix_features import _compute_vix_frame
+
+    level = pd.DataFrame(
+        {'vix': [15.0, 16.0, 17.0]},
+        index=pd.DatetimeIndex(['2020-01-06', '2020-01-07', '2020-01-08'], tz='UTC'),  # Mon,Tue,Wed
+    )
+    frame = _compute_vix_frame(level)
+    # Availability = print date + 1 business day (Mon->Tue, Tue->Wed, Wed->Thu).
+    assert frame.index[0] == pd.Timestamp('2020-01-07', tz='UTC')
+    assert frame.index[1] == pd.Timestamp('2020-01-08', tz='UTC')
+    assert frame.index[2] == pd.Timestamp('2020-01-09', tz='UTC')
+    # The Tuesday print's day-over-day change (16/15-1)*100 is stamped at its
+    # availability date, Wednesday.
+    assert frame.loc[pd.Timestamp('2020-01-08', tz='UTC'), 'vix_change_pct'] == \
+        pytest.approx((16.0 / 15.0 - 1.0) * 100.0)
+
+
+def test_add_vix_features_ffill_by_availability_date_no_lookahead():
+    """add_vix_features joins by AVAILABILITY date with as-of ffill: a daily bar
+    must carry the last VIX reading ALREADY USABLE on that date, and must NOT see
+    a reading whose availability date is still in the future."""
+    from src.vix_features import add_vix_features, VIX_FEATURE_COLUMNS
+
+    # Availability-dated readings (as _compute_vix_frame would stamp them).
+    vix_frame = pd.DataFrame(
+        {'vix_zscore': [1.0, 2.0], 'vix_change_pct': [10.0, 20.0]},
+        index=pd.DatetimeIndex(['2020-01-07', '2020-01-08'], tz='UTC'),
+    )
+    days = pd.DatetimeIndex(['2020-01-06', '2020-01-07', '2020-01-08', '2020-01-09'])
+    df = pd.DataFrame({'close': [1.1] * len(days)}, index=days)
+
+    out = add_vix_features(df, vix_frame=vix_frame)
+    z = out['vix_zscore']
+    assert z.loc[days[0]] == 0.0, "Jan 6: no reading usable yet -> neutral 0, never back-filled."
+    assert z.loc[days[1]] == pytest.approx(1.0), "Jan 7: first reading now usable (its availability date)."
+    assert z.loc[days[2]] == pytest.approx(2.0), "Jan 8: second reading usable."
+    assert z.loc[days[3]] == pytest.approx(2.0), "Jan 9: carries the latest usable reading."
+    assert set(VIX_FEATURE_COLUMNS).issubset(out.columns)
+
+
+def test_vix_value_never_usable_on_the_bar_it_would_leak_into():
+    """End-to-end conservative D-1 guard: build a native business-day VIX series,
+    compute the availability-stamped frame, and join it onto same-dated FX bars.
+    An FX bar on date D must reflect only prints dated <= D-1 (available by D)."""
+    from src.vix_features import _compute_vix_frame, add_vix_features
+
+    nat = pd.bdate_range('2020-01-06', periods=5, tz='UTC')          # Mon..Fri
+    level = pd.DataFrame({'vix': [10.0, 11.0, 12.0, 13.0, 14.0]}, index=nat)
+    frame = _compute_vix_frame(level)
+
+    fx_days = pd.bdate_range('2020-01-06', periods=5)                # same dates, tz-naive FX bars
+    fx = pd.DataFrame({'close': [1.1] * 5}, index=fx_days)
+    out = add_vix_features(fx, vix_frame=frame)
+
+    # Wed 01-08 may use at most Tue 01-07's print, whose change is Mon->Tue =
+    # (11/10-1)*100 = 10.0 -- NOT Wed's own (12/11-1) print, which is not usable
+    # until Thu. This is the whole no-look-ahead point.
+    assert out['vix_change_pct'].loc[pd.Timestamp('2020-01-08')] == pytest.approx(10.0)
+    assert out['vix_change_pct'].loc[pd.Timestamp('2020-01-08')] != \
+        pytest.approx((12.0 / 11.0 - 1.0) * 100.0), "Wed must NOT see Wed's own print."
+    # Tue 01-07: Mon's print (change NaN, first bar) is the only thing dated <= Mon,
+    # so the bar is neutral 0 -- never a future-dated reading.
+    assert out['vix_change_pct'].loc[pd.Timestamp('2020-01-07')] == 0.0
+
+
+def test_vix_zscore_is_trailing_only_and_neutral_until_warmup():
+    """The z-score at day t standardizes against the trailing window ending AT t
+    (only past data), and stays undefined (-> neutral 0 downstream) before the
+    min-periods history exists -- never computed from later days."""
+    from src.vix_features import _compute_vix_frame, VIX_ZSCORE_MIN
+
+    n = VIX_ZSCORE_MIN + 5
+    nat = pd.bdate_range('2015-01-01', periods=n, tz='UTC')
+    level = pd.DataFrame({'vix': np.arange(1.0, n + 1.0)}, index=nat)   # strictly rising
+    frame = _compute_vix_frame(level)
+    z = frame['vix_zscore']
+    # Rising series -> the latest day sits above its trailing mean -> positive z.
+    assert z.iloc[-1] > 0, "A rising series' latest day is above its trailing mean."
+    # No z-score may exist before the trailing window has min_periods of history.
+    assert z.iloc[:VIX_ZSCORE_MIN - 1].isna().all(), \
+        "No z-score before the trailing window has min_periods of history."
+
+
+def test_add_vix_features_neutral_zero_when_feed_unavailable(monkeypatch):
+    """A completely unreachable VIX feed (no API/public/cache) must neutralize
+    every VIX column to 0 so the pipeline degrades, never hard-fails -- the same
+    contract as every other macro/COT feature."""
+    import src.vix_features as vix_features
+
+    monkeypatch.setattr(vix_features, 'fetch_vix_features', lambda *a, **k: (None, 'unavailable'))
+    days = pd.DatetimeIndex(['2020-01-06', '2020-01-07', '2020-01-08'])
+    df = pd.DataFrame({'close': [1.1] * len(days)}, index=days)
+    out = vix_features.add_vix_features(df, vix_frame=None)
+    assert (out['vix_zscore'] == 0.0).all() and (out['vix_change_pct'] == 0.0).all()
+
+
+def test_vix_features_stay_out_of_direction_return_models():
+    """Ablation-first discipline: the VIX candidates must NEVER leak into
+    FEATURE_COLUMNS until a hypothesis test clears the family bar. The raw VIX
+    LEVEL is also deliberately kept out of the always-merged macro columns."""
+    from src.vix_features import VIX_FEATURE_COLUMNS
+    from src.features import MACRO_MERGE_COLUMNS
+
+    assert not set(VIX_FEATURE_COLUMNS) & set(FEATURE_COLUMNS), \
+        "VIX candidate features must stay out of the model feature set."
+    assert 'vix' not in MACRO_MERGE_COLUMNS, \
+        "The raw VIX level must not be merged into the served model frame (ablation-only)."

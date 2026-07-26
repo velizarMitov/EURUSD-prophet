@@ -551,6 +551,102 @@ the same calendar fact — they never eat three Bonferroni slots).
       bars: volatility 0.05/7 ≈ 0.0071, direction/return 0.05/6 ≈ 0.0083.
       Full suite green (60 tests).
 
+## Backlog — Fibonacci retracement + Williams fractal features (added 2026-07-26, hypothesis #7, VERDICT: DROP)
+
+Genuinely new information for the direction/return family: the GEOMETRY of
+recent swing structure (where price sits vs. the last confirmed swing high/low
+and the Fibonacci retracement grid), derived from OHLC alone. New module
+`src/fibonacci_fractals.py`.
+
+- [x] Step 1 — Williams 5-bar fractal detection with the confirmation lag as
+      the explicit design centre: a fractal at bar i is a strict extremum of
+      high/low[i-2:i+3], so it is only KNOWABLE at bar i+2. The reveal walk
+      (`confirmed_high_low_levels`, `_swing_walk`) reveals the fractal at index
+      t-2 exactly at step t, so a fractal forming at i is INVISIBLE on bars i,
+      i+1 and first usable on i+2. A dedicated unit test asserts this directly
+      (`test_fractal_confirmation_lag_no_lookahead`), mirroring the FRED/COT
+      no-look-ahead guards. All features are neutral 0 / NaN-safe until a
+      confirmed structure exists, so the modeled row set is unchanged.
+- [x] Step 2 — HYPOTHESIS #7: `fractal_breakout_up` / `fractal_breakout_down`
+      (close vs. most recent confirmed high/low fractal) + `dist_to_nearest_fib_pct`
+      (signed, swing-range-normalized distance to the nearest retracement level
+      of the most recent confirmed 2-point swing), bundled as ONE hypothesis
+      (three views of one swing-geometry fact → one Bonferroni slot). ADD-test
+      via `src/ablation.py::run_addition_test` (paired bootstrap 2000 resamples
+      + exact McNemar), validation slice [70:80] only, test block reserved —
+      exactly the macro/COT/FOMC convention. Bar tightened to **0.05/7 ≈ 0.0071**.
+
+      | family | hypothesis # | bar | result | evidence |
+      |---|---|---|---|---|
+      | direction/return | #7 | 0.05/7 = 0.0071 | **DROP** | Δacc = +0.0035, 95% CI [−0.0187, +0.0257] (includes 0); McNemar b=49/c=46, p=0.8376 ≫ bar; ΔAUC +0.0047 CI [−0.0136, +0.0228] |
+
+      Run ONCE, no threshold/window tuning after seeing the result. Registered
+      as `feature_hypothesis_log.csv` #7. NOT added to FEATURE_COLUMNS, NOT
+      served, NOT in any variant — a null recorded, not a failure hidden.
+- [x] Step 3 — HYPOTHESIS #8 (Fibonacci extension/projection from a confirmed
+      3-point swing A→B→C, `dist_to_nearest_fib_extension_pct`) was BUILT and
+      unit-tested this pass (`add_fibonacci_extension_features`, same
+      confirmation-lag guard now on 3 swing points, with a chronology-order
+      assertion) but, per the **pre-registered contingency**, is **NOT tested**:
+      it runs only if #7 clears its bar, and #7 is DROP. A more discretionary
+      3-point feature is not worth a hypothesis slot when the simpler 2-point
+      version already failed. Contingency recorded in the module docstring, in
+      `feature_hypothesis_log.csv`'s notes for #7, and here. Next
+      direction/return bar if #8 is ever spent: 0.05/8 = 0.00625. Full suite
+      green (80 tests).
+
+## Backlog — VIX (CBOE Volatility Index) regime features (added 2026-07-26, hypothesis #8, VERDICT: DROP)
+
+Genuinely new information for the direction/return family: broad EQUITY risk
+sentiment (the "fear gauge"), unlike price, rates, positioning, or swing
+geometry. Ingested through the SHARED FRED framework (no parallel fetch):
+`config.json macro.features.vix` → `src/macro_data.py::_combine_vix` (raw level,
+cache `results/vix.csv`), with the two stationary transforms living downstream in
+new module `src/vix_features.py`.
+
+- [x] STEP 0 — VERIFY BEFORE BUILDING (the COT/FOMC "probe, don't assume"
+      precedent). EURUSD D1 (src/live_data.py: MT5 TIMEFRAME_D1 / yfinance daily,
+      tz-naive) closes at the retail-FX rollover **~17:00 ET**; VIXCLS is the CBOE
+      close **~16:15 ET** — a ~45-min, DST-fragile margin. A **live FRED probe on
+      2026-07-26 (Sun)** returned the most recent VIXCLS print as **2026-07-23
+      (Thu)** — Friday 07-24's print was still absent two days later, confirming
+      FRED's **business-day publish lag**. **DECISION (conservative, err later):**
+      a print dated D is available only on **D + 1 business day** → day D's bar
+      uses **day D-1's VIX**. Pinned by
+      `test_vix_availability_is_one_business_day_after_the_print_no_lookahead` and
+      `test_vix_value_never_usable_on_the_bar_it_would_leak_into`.
+- [x] Step 1 — Two candidate features, bundled as ONE hypothesis (one Bonferroni
+      slot): `vix_zscore` (trailing rolling z-score, window **756 / min 252**
+      trading days — VIX has genuine multi-year regime drift, so a raw level is
+      non-stationary, the COT z-score treatment not the stationary-differential
+      pass-through) and `vix_change_pct` (day-over-day % change, the shock
+      component). Both computed on the **native business-day cadence** (never the
+      ffilled FX-daily series, whose weekend/holiday duplicate bars — the history
+      carries Sunday bars — would corrupt the 756-day window), then stamped at the
+      availability date and as-of ffilled onto daily bars. Missing feed →
+      neutral 0 (graceful degradation), guarded by
+      `test_add_vix_features_neutral_zero_when_feed_unavailable`.
+- [x] Step 2 — ADD-test via `src/ablation.py::run_addition_test` (paired bootstrap
+      2000 resamples + exact McNemar), validation slice [70:80] only, test block
+      reserved. Bar tightened to **0.05/8 = 0.00625**.
+
+      | family | hypothesis # | bar | result | evidence |
+      |---|---|---|---|---|
+      | direction/return | #8 | 0.05/8 = 0.00625 | **DROP** | Δacc = −0.0117, 95% CI [−0.0327, +0.0105] (includes 0); McNemar b=43/c=53, p=0.3584 ≫ bar; ΔAUC +0.0040 CI [−0.0134, +0.0226] |
+
+      Run ONCE, no window/transform tuning after seeing the result. Registered as
+      `feature_hypothesis_log.csv` #8. The point estimate is actively negative —
+      consistent with equity fear being a *volatility* event, not a next-day
+      *directional* EUR/USD signal, and with the efficient-market result of §4.2.
+- [x] Step 3 — NOT added to `FEATURE_COLUMNS`, NOT served, NOT in any variant, no
+      retrain. The raw VIX level is deliberately kept OUT of
+      `features.MACRO_MERGE_COLUMNS` (guarded by
+      `test_vix_features_stay_out_of_direction_return_models`): the shared macro
+      fetch maintains `results/vix.csv`, but nothing merges the level into the
+      model frame, so predictions are byte-identical. A null recorded, not a
+      failure hidden. Next direction/return bar: 0.05/9 ≈ 0.00556. Full suite
+      green (86 tests).
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)

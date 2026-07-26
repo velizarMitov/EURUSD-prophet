@@ -157,12 +157,24 @@ def build_matrix(config: dict, base_dir: str = "", extra_feature_columns=None):
     if extra:
         from src.fomc_calendar import add_fomc_features, FOMC_FEATURE_COLUMNS
         from src.cot_data import add_cot_features, COT_FEATURE_COLUMNS
+        from src.fibonacci_fractals import add_fibonacci_features, FIBONACCI_FEATURE_COLUMNS
+        from src.vix_features import add_vix_features, VIX_FEATURE_COLUMNS
         if any(c in FOMC_FEATURE_COLUMNS for c in extra):
             feat = add_fomc_features(feat, base_dir=base_dir)
         if any(c in COT_FEATURE_COLUMNS for c in extra):
             # Availability-date as-of ffill onto the modeled rows, neutral 0
             # before COT exists / z-score warm-up (see src/cot_data.py).
             feat = add_cot_features(feat, base_dir=base_dir, config=config)
+        if any(c in FIBONACCI_FEATURE_COLUMNS for c in extra):
+            # Confirmed-fractal swing geometry from OHLC alone (no feed). Every
+            # column is neutral 0 until a confirmed structure exists, so the
+            # row set is identical with or without them (see src/fibonacci_fractals.py).
+            feat = add_fibonacci_features(feat)
+        if any(c in VIX_FEATURE_COLUMNS for c in extra):
+            # VIX regime z-score + shock, computed on native cadence and joined
+            # by availability date (print + 1 business day, STEP 0), neutral 0
+            # before warm-up / when unreachable (see src/vix_features.py).
+            feat = add_vix_features(feat, base_dir=base_dir, config=config)
         assert not feat[extra].isna().any().any(), \
             "extra candidate columns must be fully defined on the modeled rows"
 
@@ -338,7 +350,7 @@ def run(features=None, config_path='config.json', base_dir='', out_csv=VALIDATIO
 
 
 def run_addition_test(name, columns, config_path='config.json', base_dir='',
-                      register=True, random_state=None,
+                      register=True, random_state=None, note_suffix='',
                       out_csv='results/feature_addition_validation.csv'):
     """Test ADDING a bundled column block to the current full feature set as
     ONE hypothesis (one Bonferroni slot for the whole bundle — its columns are
@@ -389,9 +401,11 @@ def run_addition_test(name, columns, config_path='config.json', base_dir='',
     print(f"  VERDICT: {res['verdict']}")
 
     if register:
-        register_hypothesis(res, base_dir=base_dir,
-                            notes=f'ADD-test of bundled block {",".join(columns)} '
-                                  f'(one hypothesis for the whole bundle)')
+        notes = (f'ADD-test of bundled block {",".join(columns)} '
+                 f'(one hypothesis for the whole bundle)')
+        if note_suffix:
+            notes = f'{notes} | {note_suffix}'
+        register_hypothesis(res, base_dir=base_dir, notes=notes)
     out_path = os.path.join(base_dir, out_csv) if base_dir else out_csv
     pd.DataFrame([res]).to_csv(out_path, index=False)
     print(f"\nSaved: {out_path}")
@@ -409,5 +423,26 @@ if __name__ == "__main__":
         # the FOMC calendar trio and the policy-rate block.
         from src.cot_data import COT_FEATURE_COLUMNS
         run_addition_test('cot_positioning_block', COT_FEATURE_COLUMNS)
+    elif sys.argv[1:2] == ['fib']:
+        # Hypothesis #7: fractal breakout + Fibonacci retracement geometry as
+        # ONE bundled hypothesis (three views of one swing-structure fact), same
+        # convention as the FOMC calendar trio and the COT positioning pair.
+        from src.fibonacci_fractals import FIBONACCI_FEATURE_COLUMNS
+        run_addition_test(
+            'fibonacci_retracement_block', FIBONACCI_FEATURE_COLUMNS,
+            note_suffix=('CONTINGENCY: hypothesis #8 (dist_to_nearest_fib_extension_pct, '
+                         '3-point extension/projection) is BUILT but runs ONLY if this '
+                         '#7 bundle clears its bar; if #7 is DROP, #8 is not tested at all.'))
+    elif sys.argv[1:2] == ['vix']:
+        # Hypothesis #8: VIX regime z-score + day-over-day shock as ONE bundled
+        # hypothesis (two views of one equity-risk-sentiment fact), same
+        # convention as the fibonacci / COT / FOMC blocks.
+        from src.vix_features import VIX_FEATURE_COLUMNS
+        run_addition_test(
+            'vix_regime_block', VIX_FEATURE_COLUMNS,
+            note_suffix=('VIX (VIXCLS) via shared FRED framework; conservative D-1 '
+                         'availability (print + 1 business day, verified in STEP 0: '
+                         'FRED publishes VIXCLS with a business-day lag). z-score on '
+                         'native business-day cadence, window 756 / min 252.'))
     else:
         run(features=sys.argv[1:] or None)

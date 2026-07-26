@@ -161,6 +161,19 @@ def _combine_policy(raw):
     return out[['fed', 'ecb', 'policy_rate_differential']].dropna()
 
 
+def _combine_vix(raw):
+    """CBOE Volatility Index close LEVEL (VIXCLS). Only the raw level is kept
+    here -- exactly like _combine_usd_index -- because the model-facing stationary
+    transforms (a trailing rolling z-score to remove VIX's multi-year regime
+    drift, plus a day-over-day % change) are derived DOWNSTREAM in
+    src/vix_features.py on the native business-day cadence. Deriving them there,
+    not here, keeps the z-score window from being corrupted by the ffilled
+    weekend/holiday duplicate bars in the FX daily history, and keeps the change
+    correct across cache-fetch boundaries. VIXCLS begins 1990, so it covers the
+    whole euro era with no leading-NaN truncation."""
+    return raw[['vix']].dropna()
+
+
 def _combine_inflation(raw):
     """US CPI YoY% (CPIAUCSL) - Germany HICP YoY% (CP0000DEM086NEST). Each CPI
     is a monthly index; YoY = (level_t / level_{t-12} - 1) * 100. Series are
@@ -199,6 +212,14 @@ _FEATURE_COMBINERS = {
     "usd_index":   (_combine_usd_index, "usd_index", 0),
     "policy_rate": (_combine_policy, "policy_rate_differential", 0),
     "inflation":   (_combine_inflation, "inflation_differential", 420),
+    # VIX is fetched through this shared framework so results/vix.csv stays fresh
+    # via the same merge-not-overwrite cache discipline, but its merge column is
+    # DELIBERATELY absent from features.MACRO_MERGE_COLUMNS: the candidate VIX
+    # features are ablation-only (src/vix_features.py, computed on native
+    # cadence) and must not enter the served model frame until they clear the
+    # Bonferroni bar. So fetch_macro_features maintains the cache; nothing merges
+    # the level into the model input.
+    "vix":         (_combine_vix, "vix", 0),
 }
 
 

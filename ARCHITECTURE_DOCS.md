@@ -56,13 +56,23 @@ the test-block "positive point estimates" do not survive the move.
 **(b) Every KEEP must clear a Bonferroni-corrected bar, not a flat 0.05.**
 `results/feature_hypothesis_log.csv` is the running family count of every feature
 hypothesis ever spent (seeded retroactively with the 4 already tried). The bar in
-force is `alpha = 0.05 / family_size` (currently **0.05 / 5 = 0.01** — the 4
-original macro features plus the 2026-07-17 `fomc_calendar_block` ADD-test,
-which was rejected: Δacc 95% CI [−0.0549, −0.0035], McNemar p=0.0261), printed
-in the header of every `src/ablation.py` report so it can never be silently
-forgotten. A genuinely new feature grows the family and tightens the bar for all.
-At the current bar all four features stay **KEEP-provisional** (smallest McNemar
-p = 0.56, ~45× the bar).
+force is `alpha = 0.05 / family_size` (currently **0.05 / 8 = 0.00625** — the 4
+original macro features, the 2026-07-17 `fomc_calendar_block` ADD-test (rejected:
+Δacc 95% CI [−0.0549, −0.0035], McNemar p=0.0261), the 2026-07-20
+`cot_positioning_block` ADD-test (rejected: Δacc CI [−0.0234, +0.0175],
+p=0.8264), the 2026-07-26 `fibonacci_retracement_block` ADD-test (rejected:
+Δacc CI [−0.0187, +0.0257], p=0.8376), and the 2026-07-26 `vix_regime_block`
+ADD-test (rejected: Δacc CI [−0.0327, +0.0105], p=0.3584)), printed in the header
+of every `src/ablation.py` report so it can never be silently forgotten. A
+genuinely new feature grows the family and tightens the bar for all. At the
+current bar all four macro features stay **KEEP-provisional** (smallest McNemar
+p = 0.56, ~90× the bar); the four ADD-test bundles are outright DROPs.
+
+The Fibonacci/fractal work also **built but did not spend** a hypothesis #8
+(`dist_to_nearest_fib_extension_pct`, a 3-point extension/projection in
+`src/fibonacci_fractals.py`): its pre-registered contingency runs #8 only if #7
+clears its bar, and #7 is DROP, so #8 stays a dormant, unit-tested module with no
+Bonferroni slot spent.
 
 **(c) The forward paper-trading ledger is the primary production-worthiness
 signal — not historical ablation.** `src/paper_trading.py` accumulates a
@@ -958,6 +968,62 @@ one-sided positioning (`cot_eur_zscore` crowded-long 30 weeks / crowded-short 0;
 ≥5 two-sided extreme weeks for a stable CI. Per the pre-registration the cutoff
 was **not** loosened to manufacture rows; the thin tails were reported plainly
 (`cot_weekly_hypothesis_log.csv` row #2, `cleared_bar=False`). Still research-only.
+
+**Fibonacci retracement + Williams fractals (direction/return hypothesis #7, DROP).**
+`src/fibonacci_fractals.py` adds swing-structure *geometry* from OHLC alone — a
+different kind of information from momentum or the macro feeds. A Williams 5-bar
+fractal (a strict extremum of high/low`[i-2:i+3]`) is the primitive, and the
+**confirmation lag is the load-bearing look-ahead surface**: a fractal at bar i
+reaches two bars into the future, so it is only knowable at bar i+2. The reveal
+walk exposes the fractal at index t−2 exactly at step t, so a fractal forming at
+i is invisible on bars i, i+1 and first usable on i+2 — asserted directly by
+`test_fractal_confirmation_lag_no_lookahead` (mirroring the FRED/COT guards).
+Every feature is neutral 0 / NaN-safe until a confirmed structure exists, so the
+modeled row set is unchanged. The bundle (`fractal_breakout_up`,
+`fractal_breakout_down`, `dist_to_nearest_fib_pct` — three views of one swing
+fact, one Bonferroni slot) was ADD-tested exactly like the macro/COT/FOMC blocks:
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py fib`) | Δacc **+0.0035**, Δauc +0.0047 | Δacc [−0.0187, +0.0257] | McNemar **p=0.84** | 0.05/7 = 0.0071 | **DROP** (`feature_hypothesis_log.csv` n=7) |
+
+A **hypothesis #8** (`dist_to_nearest_fib_extension_pct` — a 3-point
+extension/projection off a confirmed A→B→C swing, chronology-guarded) was **built
+and unit-tested but deliberately not spent**: a pre-registered contingency (in the
+module docstring, `feature_hypothesis_log.csv` #7 notes, and IMPROVEMENT_LOG.md)
+runs #8 only if #7 clears its bar. #7 is DROP, so #8 stays dormant — a more
+discretionary feature is not worth a slot when the simpler 2-point version already
+failed. Nothing is in `FEATURE_COLUMNS`, served, or retrained; the finding is
+reproducible via `python -m src.ablation fib`.
+
+**VIX regime features (direction/return hypothesis #8, DROP).**
+`src/vix_features.py` adds broad equity risk sentiment (the "fear gauge") — a
+different *kind* of information again. The raw VIXCLS **level** rides the shared
+FRED framework (`config.json macro.features.vix` → `macro_data._combine_vix`,
+cache `results/vix.csv`); the two stationary transforms live downstream, mirroring
+how `usd_index_return` is derived from the merged `usd_index` level:
+`vix_zscore` (trailing 756/252-day rolling z-score — VIX has real multi-year
+regime drift, so a level is non-stationary, the COT z-score treatment) and
+`vix_change_pct` (day-over-day shock). **STEP 0 verified, not assumed:** the FX D1
+bar closes ~17:00 ET, VIXCLS is the ~16:15 ET CBOE close, and a live FRED probe
+(2026-07-26) showed VIXCLS publishes with a business-day lag (Friday's print
+absent two days later) — so a print dated D is treated as usable only on **D+1
+business day** (conservative D-1 rule), and the z-score is computed on the
+**native business-day cadence** (not the ffill-duplicated FX-daily series, whose
+Sunday bars would corrupt the window), then as-of ffilled. Guarded by
+`test_vix_availability_is_one_business_day_after_the_print_no_lookahead`,
+`test_vix_value_never_usable_on_the_bar_it_would_leak_into`, and the graceful-
+degradation / feature-exclusion tests.
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py vix`) | Δacc **−0.0117**, Δauc +0.0040 | Δacc [−0.0327, +0.0105] | McNemar **p=0.36** | 0.05/8 = 0.00625 | **DROP** (`feature_hypothesis_log.csv` n=8) |
+
+The point estimate is actively negative — consistent with equity fear being a
+*volatility* event, not a next-day *directional* EUR/USD signal. The raw VIX level
+is deliberately kept OUT of `MACRO_MERGE_COLUMNS`, so nothing enters the served
+model frame and predictions are byte-identical; reproducible via
+`python -m src.ablation vix`.
 
 ### 4.4 Known defects — fixed in this branch
 

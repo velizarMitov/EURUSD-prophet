@@ -1,2 +1,2 @@
 feature,arbiter,n_val,point_delta_acc,ci95_dacc_low,ci95_dacc_high,frac_dacc_positive,point_delta_auc,ci95_dauc_low,ci95_dauc_high,mcnemar_b_0to1,mcnemar_c_1to0,mcnemar_p,alpha_bar,verdict
-cot_positioning_block,validation[70:80],856,-0.0035,-0.0234,0.0175,0.359,-0.0099,-0.0283,0.0097,40,43,0.8264,0.008333333333333333,DROP — addition indistinguishable from noise at the corrected bar (do not add)
+vix_regime_block,validation[70:80],856,-0.0117,-0.0327,0.0105,0.138,0.004,-0.0134,0.0226,43,53,0.3584,0.00625,DROP — addition indistinguishable from noise at the corrected bar (do not add)
