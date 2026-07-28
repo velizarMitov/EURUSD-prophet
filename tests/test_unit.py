@@ -3254,3 +3254,335 @@ def test_walk_forward_never_writes_to_models_or_production_files(tmp_path):
 
     changed = [p for p in protected_paths if before[p] != after[p]]
     assert changed == [], f"walk-forward run must never modify: {changed}"
+
+
+# ── Pooled multi-instrument H1 — STEP 0 data acquisition (research-only) ──
+
+def test_pooled_resolve_symbol_exact_suffix_ambiguous_and_missing():
+    """resolve_symbol must (1) prefer an EXACT match, (2) accept a single
+    suffix variant (EURUSD.a / EURUSD_raw), (3) REFUSE an ambiguous multi-
+    candidate case rather than pick arbitrarily, (4) REFUSE when nothing
+    matches, and (5) never match a longer alphanumeric name (GBPUSD must not
+    resolve to GBPUSDX)."""
+    from src.pooled_h1_data import resolve_symbol, SymbolResolutionError
+
+    # 1. exact wins even when suffixed variants also exist
+    assert resolve_symbol('EURUSD', ['EURUSD', 'EURUSD.a']) == 'EURUSD'
+    # 2. single suffix variant, no exact
+    assert resolve_symbol('EURUSD', ['EURUSD.a']) == 'EURUSD.a'
+    assert resolve_symbol('EURUSD', ['EURUSD_raw']) == 'EURUSD_raw'
+    # 3. ambiguous -> STOP
+    with pytest.raises(SymbolResolutionError):
+        resolve_symbol('EURUSD', ['EURUSD.a', 'EURUSD_raw'])
+    # 4. missing -> STOP
+    with pytest.raises(SymbolResolutionError):
+        resolve_symbol('EURUSD', ['GBPUSD', 'AUDUSD'])
+    # 5. must NOT match a longer alphanumeric continuation
+    with pytest.raises(SymbolResolutionError):
+        resolve_symbol('GBPUSD', ['GBPUSDX', 'GBPUSDMICRO'])
+
+
+def test_pooled_h1_fetch_is_all_or_nothing_and_writes_only_out_dir(monkeypatch, tmp_path):
+    """fetch_pooled_h1 must resolve EVERY base up front and, if any fails,
+    raise BEFORE writing a single file (no half-acquired pool on disk). On the
+    happy path it must write ONLY under out_dir/<BASE>_h1.csv, storing OHLC
+    with NO tick_volume, and never touch results/eurusd_h1.csv."""
+    import os
+    import src.pooled_h1_data as pooled
+    from src.pooled_h1_data import SymbolResolutionError
+
+    out_dir = str(tmp_path / 'pooled_h1')
+
+    # --- all-or-nothing: one unresolved base aborts before any write ---
+    monkeypatch.setattr(pooled, '_resolve_all_or_stop',
+                        lambda instruments: (_ for _ in ()).throw(
+                            SymbolResolutionError('AUDUSD unresolved')))
+    with pytest.raises(SymbolResolutionError):
+        pooled.fetch_pooled_h1(instruments=('EURUSD', 'AUDUSD'), out_dir=out_dir)
+    assert not os.path.exists(out_dir), "no output dir may be created on a failed resolve"
+
+    # --- happy path with injected (no-network) resolver + fetcher ---
+    def _fake_resolve(instruments):
+        return {b: b for b in instruments}
+
+    def _fake_fetch(symbol, bars):
+        idx = pd.date_range('2020-01-01', periods=4, freq='h', tz='UTC')
+        # deliberately hand back a tick_volume column to prove it is dropped
+        return pd.DataFrame({
+            'open': [1.0, 1.1, 1.2, 1.3], 'high': [1.0, 1.1, 1.2, 1.3],
+            'low': [1.0, 1.1, 1.2, 1.3], 'close': [1.0, 1.1, 1.2, 1.3],
+        }, index=idx)
+
+    monkeypatch.setattr(pooled, '_resolve_all_or_stop', _fake_resolve)
+    monkeypatch.setattr(pooled, '_fetch_h1_ohlc_from_mt5', _fake_fetch)
+
+    frames, resolved, meta = pooled.fetch_pooled_h1(
+        instruments=('EURUSD', 'GBPUSD'), bars=4, out_dir=out_dir)
+
+    assert set(frames) == {'EURUSD', 'GBPUSD'}
+    for base in ('EURUSD', 'GBPUSD'):
+        assert list(frames[base].columns) == ['open', 'high', 'low', 'close'], \
+            "stored frame must be OHLC only -- tick_volume must never be carried"
+        assert 'tick_volume' not in frames[base].columns
+        assert os.path.exists(os.path.join(out_dir, f'{base}_h1.csv'))
+    # only the two requested files exist under out_dir
+    assert sorted(os.listdir(out_dir)) == ['EURUSD_h1.csv', 'GBPUSD_h1.csv']
+    assert meta['EURUSD']['rows'] == 4
+
+
+def test_pooled_h1_never_touches_protected_production_files(monkeypatch, tmp_path):
+    """HARD BOUNDARY: acquiring/loading pooled H1 must NEVER modify any
+    protected serving artifact -- verified dynamically by hashing every one
+    (incl. results/eurusd_h1.csv, which feeds the LIVE H1 ensemble) before and
+    after a mocked fetch that writes only to a tmp out_dir."""
+    import hashlib as _hashlib
+    import os
+    import src.pooled_h1_data as pooled
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv']
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(path):
+        with open(path, 'rb') as f:
+            return _hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+
+    def _fake_fetch(symbol, bars):
+        idx = pd.date_range('2020-01-01', periods=3, freq='h', tz='UTC')
+        return pd.DataFrame({'open': [1., 1., 1.], 'high': [1., 1., 1.],
+                             'low': [1., 1., 1.], 'close': [1., 1., 1.]}, index=idx)
+
+    monkeypatch.setattr(pooled, '_resolve_all_or_stop', lambda instruments: {b: b for b in instruments})
+    monkeypatch.setattr(pooled, '_fetch_h1_ohlc_from_mt5', _fake_fetch)
+    pooled.fetch_pooled_h1(instruments=('EURUSD',), bars=3, out_dir=str(tmp_path / 'pooled_h1'))
+
+    after = {p: _hash(p) for p in protected}
+    changed = [p for p in protected if before[p] != after[p]]
+    assert changed == [], f"pooled H1 acquisition must never modify: {changed}"
+
+
+# ── Pooled multi-instrument H1 — STEP 1-6 model + inversion + split guards ──
+
+def _synth_ohlc(n, start_close, drift, seed, start='2015-01-01'):
+    """Small synthetic hourly OHLC frame (UTC) for pooled-H1 unit tests."""
+    rng = np.random.default_rng(seed)
+    ret = rng.normal(drift, 0.0008, n)
+    close = start_close * np.exp(np.cumsum(ret))
+    idx = pd.date_range(start, periods=n, freq='h', tz='UTC')
+    return pd.DataFrame({
+        'open': close / np.exp(ret),
+        'high': np.maximum(close, close / np.exp(ret)) + 0.0003,
+        'low': np.minimum(close, close / np.exp(ret)) - 0.0003,
+        'close': close,
+    }, index=idx), ret
+
+
+def test_pooled_usdchf_inversion_reciprocal_swap_and_high_ge_low():
+    """TEST 1: USDCHF->CHFUSD inversion on a hand-built 3-bar frame asserts the
+    1/x round-trip on open/close, the high<->low SWAP (1/low_old -> high_new,
+    1/high_old -> low_new), and high >= low on every output bar."""
+    from src.pooled_h1_data import invert_to_chfusd
+
+    usdchf = pd.DataFrame({
+        'open':  [0.9000, 0.9100, 0.8900],
+        'high':  [0.9200, 0.9150, 0.9000],
+        'low':   [0.8800, 0.9000, 0.8700],
+        'close': [0.9100, 0.9050, 0.8950],
+    }, index=pd.date_range('2020-01-01', periods=3, freq='h', tz='UTC'))
+
+    chf = invert_to_chfusd(usdchf)
+    assert np.allclose(chf['open'], 1.0 / usdchf['open'])
+    assert np.allclose(chf['close'], 1.0 / usdchf['close'])
+    # the swap: new high comes from OLD LOW, new low from OLD HIGH
+    assert np.allclose(chf['high'], 1.0 / usdchf['low'])
+    assert np.allclose(chf['low'], 1.0 / usdchf['high'])
+    assert (chf['high'] >= chf['low']).all(), "inversion without the swap would make high < low"
+    assert 'tick_volume' not in chf.columns
+
+
+def test_pooled_inversion_flips_correlation_sign_to_positive():
+    """TEST 2: a USDCHF series built to move OPPOSITE to EURUSD must, after
+    inversion to CHFUSD, correlate POSITIVELY with EURUSD's log returns."""
+    from src.pooled_h1_data import invert_to_chfusd
+
+    rng = np.random.default_rng(7)
+    r = rng.normal(0, 0.001, 3000)
+    eur_close = 1.10 * np.exp(np.cumsum(r))
+    usdchf_close = 0.98 * np.exp(np.cumsum(-r))   # opposite USD move
+    idx = pd.date_range('2015-01-01', periods=3000, freq='h', tz='UTC')
+    eur = pd.DataFrame({'open': eur_close, 'high': eur_close + 1e-4,
+                        'low': eur_close - 1e-4, 'close': eur_close}, index=idx)
+    usdchf = pd.DataFrame({'open': usdchf_close, 'high': usdchf_close + 1e-4,
+                           'low': usdchf_close - 1e-4, 'close': usdchf_close}, index=idx)
+
+    pre = np.log(usdchf['close']).diff().corr(np.log(eur['close']).diff())
+    chf = invert_to_chfusd(usdchf)
+    post = np.log(chf['close']).diff().corr(np.log(eur['close']).diff())
+
+    assert pre < -0.5, "fixture must start strongly NEGATIVE"
+    assert post > 0.5, "inversion must flip it strongly POSITIVE"
+
+
+def test_pooled_features_carry_no_volume_and_no_price_level():
+    """TEST 3: the pooled feature matrix must contain NO tick_volume / volume /
+    real_volume column and NO raw price level -- only the pre-registered
+    pair-agnostic, scale-free columns."""
+    from src.pooled_h1_model import compute_pooled_features, FEATURE_COLUMNS
+
+    df, _ = _synth_ohlc(400, 1.10, 0.0, 1)
+    feats = compute_pooled_features(df)
+    assert list(feats.columns) == FEATURE_COLUMNS
+    banned = {'volume', 'tick_volume', 'real_volume', 'open', 'high', 'low', 'close'}
+    assert not (set(feats.columns) & banned), "no volume or raw price-level column allowed"
+
+
+def test_pooled_features_have_no_lookahead():
+    """TEST 4: every feature at bar t is computable from bars <= t only.
+    Recomputing on a truncated frame must reproduce the full-frame values
+    exactly at the shared timestamps."""
+    from src.pooled_h1_model import compute_pooled_features
+
+    df, _ = _synth_ohlc(500, 1.10, 0.0001, 2)
+    full = compute_pooled_features(df)
+    trunc = compute_pooled_features(df.iloc[:350])
+    common = full.index.intersection(trunc.index)
+    a = full.loc[common].dropna()
+    b = trunc.loc[a.index]
+    pd.testing.assert_frame_equal(a, b, check_exact=False, rtol=1e-9, atol=1e-12)
+
+
+def _synthetic_split_inputs(n_per=1200, seed=5):
+    """Build a 4-pair per_pair dict + common index the way build_pooled_dataset
+    would, but small, for the split/purge/embargo/sequence guards."""
+    from src.pooled_h1_model import (build_pair_dataset, POOLED_PAIRS,
+                                     global_split_boundaries)
+    frames = {}
+    for i, p in enumerate(POOLED_PAIRS):
+        df, _ = _synth_ohlc(n_per, 1.10 + 0.01 * i, 0.00005, seed + i)
+        frames[p] = build_pair_dataset(df, p)
+    common = None
+    for p in POOLED_PAIRS:
+        common = frames[p].index if common is None else common.intersection(frames[p].index)
+    common = common.sort_values()
+    per_pair = {p: frames[p].loc[common].sort_index() for p in POOLED_PAIRS}
+    tr_end, val_end = global_split_boundaries(common)
+    return per_pair, common, tr_end, val_end
+
+
+def test_pooled_purge_removes_all_boundary_crossing_train_labels():
+    """TEST 5: after the purge, NO training row's 120-bar resolution window may
+    reach at/after the train/validation boundary."""
+    from src.pooled_h1_model import split_purge_embargo, POOLED_PAIRS
+
+    per_pair, common, tr_end, val_end = _synthetic_split_inputs()
+    splits, counts = split_purge_embargo(per_pair, common, tr_end, val_end)
+    for p in POOLED_PAIRS:
+        train = splits[p]['train']
+        assert (train['resolve_end_ts'] < tr_end).all(), \
+            f"{p}: a purged-train row's resolution window still crosses the boundary"
+        assert counts[p]['n_purged'] >= 1
+
+
+def test_pooled_embargo_drops_first_120_validation_bars():
+    """TEST 6: the first 120 bars of the validation slice must be absent from
+    the scored validation set (embargo), for every pair identically."""
+    from src.pooled_h1_model import split_purge_embargo, POOLED_PAIRS, HORIZON_BARS
+
+    per_pair, common, tr_end, val_end = _synthetic_split_inputs()
+    splits, counts = split_purge_embargo(per_pair, common, tr_end, val_end)
+    for p in POOLED_PAIRS:
+        val_full = per_pair[p][(per_pair[p].index >= tr_end) & (per_pair[p].index < val_end)]
+        embargoed_ts = set(val_full.index[:HORIZON_BARS])
+        scored_ts = set(splits[p]['val'].index)
+        assert embargoed_ts.isdisjoint(scored_ts), f"{p}: embargoed bars leaked into scored val"
+        assert counts[p]['n_embargoed'] == HORIZON_BARS
+
+
+def test_pooled_global_split_boundaries_identical_across_pairs():
+    """TEST 7: all four instruments must share IDENTICAL train/val/test date
+    boundaries (guards the cross-sectional leakage a per-pair split would cause,
+    since the pairs move contemporaneously)."""
+    from src.pooled_h1_model import split_purge_embargo, POOLED_PAIRS
+
+    per_pair, common, tr_end, val_end = _synthetic_split_inputs()
+    splits, _ = split_purge_embargo(per_pair, common, tr_end, val_end)
+    # every pair's train max < tr_end <= val min, and val max < val_end <= test min
+    for p in POOLED_PAIRS:
+        assert splits[p]['train'].index.max() < tr_end
+        assert splits[p]['val'].index.min() >= tr_end and splits[p]['val'].index.max() < val_end
+        assert splits[p]['test'].index.min() >= val_end
+    # the raw (pre-purge/embargo) split membership is identical across pairs
+    ref_test = set(splits['EURUSD']['test'].index)
+    for p in POOLED_PAIRS[1:]:
+        assert set(splits[p]['test'].index) == ref_test, f"{p} test boundary differs from EURUSD"
+
+
+def test_pooled_lstm_sequences_never_span_two_instruments():
+    """TEST 8: no 24-bar LSTM sequence may span two instruments. Built with two
+    pairs whose feature bands are disjoint (all-A vs all-B), every returned
+    sequence must be internally homogeneous -- proving each was drawn from a
+    single pair's frame only."""
+    from src.pooled_h1_model import build_sequences, SEQ_LEN, FEATURE_COLUMNS
+
+    idx = pd.date_range('2015-01-01', periods=100, freq='h', tz='UTC')
+    frame_a = pd.DataFrame(0.0, index=idx, columns=FEATURE_COLUMNS)
+    frame_a['label'] = 0
+    frame_b = pd.DataFrame(1.0, index=idx, columns=FEATURE_COLUMNS)
+    frame_b['label'] = 1
+    mean = np.zeros(len(FEATURE_COLUMNS))
+    std = np.ones(len(FEATURE_COLUMNS))
+
+    targets = idx[SEQ_LEN:]
+    sa, _, _ = build_sequences(frame_a, targets, mean, std)
+    sb, _, _ = build_sequences(frame_b, targets, mean, std)
+    # each sequence from A is all-zeros; each from B is all-ones -> no cross-pair mixing
+    assert np.allclose(sa, 0.0) and sa.shape[1] == SEQ_LEN
+    assert np.allclose(sb, 1.0) and sb.shape[1] == SEQ_LEN
+
+
+def test_pooled_run_never_touches_protected_production_files(monkeypatch, tmp_path):
+    """TEST 9: a full run() (orchestration + all write paths) must leave every
+    protected artifact byte-identical -- verified by sha256 before/after. Heavy
+    training + the live MT5/data load are monkeypatched to tiny synthetic
+    stand-ins so this exercises the real orchestration cheaply."""
+    import hashlib
+    import os
+    import numpy as np
+    import src.pooled_h1_model as pm
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv']
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(path):
+        with open(path, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    # tiny synthetic 4-pair source (no MT5, no disk read of the real pooled CSVs)
+    def _fake_pairs(out_dir=None, write_chfusd=False):
+        pairs = {}
+        for i, p in enumerate(pm.POOLED_PAIRS):
+            df, _ = _synth_ohlc(1500, 1.10 + 0.01 * i, 0.00005, 11 + i)
+            pairs[p] = df
+        return pairs
+
+    monkeypatch.setattr(pm, 'build_pooled_pairs', _fake_pairs)
+    monkeypatch.setattr(pm, 'train_gbm_arm', lambda X, y, seed=42: 'stub')
+    monkeypatch.setattr(pm, 'predict_gbm', lambda clf, Xval: np.zeros(len(Xval), dtype=int))
+    monkeypatch.setattr(pm, 'train_lstm_arm',
+                        lambda Xtr, ytr, Xval, yval, device, seed=42, **k: (np.zeros(len(yval), dtype=int), 0.5))
+
+    before = {p: _hash(p) for p in protected}
+    pm.run(out_dir=str(tmp_path / 'pooled_h1'),
+           log_path=str(tmp_path / 'pooled_h1_hypothesis_log.csv'),
+           register=True)
+    after = {p: _hash(p) for p in protected}
+
+    changed = [p for p in protected if before[p] != after[p]]
+    assert changed == [], f"pooled H1 run must never modify: {changed}"

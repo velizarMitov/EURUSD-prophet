@@ -1,0 +1,5 @@
+pair,n_purged,n_embargoed,n_train,n_val,n_test_reserved
+EURUSD,120,120,706,57,178
+GBPUSD,120,120,706,57,178
+AUDUSD,120,120,706,57,178
+CHFUSD,120,120,706,57,178

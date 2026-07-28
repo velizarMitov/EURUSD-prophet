@@ -1140,6 +1140,66 @@ cross-window no-later-leakage scoping, dynamic file-hash integrity check
 across `models/`+`_train_pipeline.py`+`src/inference.py`+`config.json`).
 Full suite green (134 tests). No model, feature, or serving change.
 
+### 3.11 Pooled multi-instrument H1 (research-only hypothesis family, VERDICT: BOTH DROP)
+
+**Research-only, production untouched.** `src/pooled_h1_data.py` +
+`src/pooled_h1_model.py`, writing only to `results/pooled_h1/` and
+`results/pooled_h1_hypothesis_log.csv`. A NEW hypothesis family (family size 2,
+Bonferroni **alpha = 0.05/2 = 0.025**), independent of every other family. The
+protected set (`models/`, `_train_pipeline.py`, `src/inference.py`,
+`src/features.py`, `src/paper_trading.py`, `config.json`,
+`results/eurusd_h1.csv`) is byte-identical before/after a run (sha256 test).
+
+**Tests, strictly comparatively:** does one architecture trained on 4 pooled
+correlated majors beat the IDENTICAL architecture on EURUSD alone, BOTH scored
+on the SAME EURUSD validation rows? This is the literature's stated remedy for
+a fixed-history single instrument (raise the effective sample by pooling).
+
+**Quote-convention alignment (pre-registered):** USDCHF (USD/XXX) is inverted
+to CHFUSD (`close=1/close`, `high=1/low`, `low=1/high` — the high/low SWAP is
+mandatory, its omission is the classic silent high<low bug) so all four pairs
+share the "USD in the denominator" convention. Confirmed sign flip
+`corr(CHFUSD,EURUSD)` −0.739 → +0.739. Raw USDCHF and inverted CHFUSD both kept
+on disk.
+
+**Design:** fresh pair-agnostic, scale-free features (log-return lags
+{1,2,3,6,12,24}, ATR/close, RSI, (close−SMA50)/ATR, (close−SMA200)/ATR,
+EWMA(24) return std, hour & day-of-week sin/cos — NO price level, NO tick
+volume, NO symbol id; built fresh, NOT via `src/features.py`). Target reuses
+`src/triple_barrier.py` unchanged (horizon_vol=EWMA_std(24)·√120, ×1.5/×1.0
+barriers, cost-aware at 1.5 pips, long every bar). GLOBAL chronological split
+(identical dates all four pairs) train[0:70]/val[70:85]/test[85:100]; test
+RESERVED. Mandatory PURGE (train labels crossing the boundary) + EMBARGO (first
+120 val bars) — new to the project because here every bar is a sample with a
+120-bar forward label. Shared window 2015-05-08 → 2026-06-08 (68,943 bars).
+
+**Honest effective-sample accounting (led with, before any accuracy):** raw
+pooled 192,560 rows vs EURUSD 48,140 (4×), but average pairwise return
+correlation **rho_bar=0.537 → k_eff=1.53** (≈53% more effective sample, not
+300%) and **mean label uniqueness 0.0083** (≈1/120; overlapping labels make raw
+counts hugely overstate information).
+
+**Device:** CUDA available and used (RTX 4070 Laptop; XGBoost `device='cuda'`,
+PyTorch `device=cuda`), printed loudly at run start; seed 42, GPU bitwise
+determinism not guaranteed (accepted).
+
+**Arbiter (moving-block circular bootstrap over time, block=120; paired Δacc CI
+at α=0.025; exact McNemar; KEEP iff CI>0 AND p<0.025):**
+
+| Hypothesis | acc pooled | acc EURUSD | Δacc | Δacc CI | McNemar p | Verdict |
+|---|---|---|---|---|---|---|
+| H_pool.1 GBM | 0.4775 | 0.4767 | +0.0009 | [−0.029, +0.033] | 0.872 | **DROP** |
+| H_pool.2 LSTM | 0.4759 | 0.4809 | −0.0050 | [−0.021, +0.009] | 0.100 | **DROP** |
+
+**Both DROP.** Pooling did not beat single-instrument EURUSD; the LSTM pooled
+arm was marginally worse. Consistent with the accounting: k_eff≈1.5 and label
+uniqueness≈0.008 already implied "4× rows" is mostly illusory here (one shared
+USD factor), so there was little new signal for pooling to add. NOT a universal
+claim about pooling — a null on THIS 4-major set, horizon, and label design, on
+the EURUSD validation slice. Any future pursuit is a forward-testing
+conversation, not a production change. 12 new unit tests (see IMPROVEMENT_LOG
+"Pooled multi-instrument H1"); full suite green (154 tests).
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

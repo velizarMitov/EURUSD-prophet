@@ -1392,6 +1392,102 @@ period — chronological causality holds at EVERY window, no exceptions
       `_train_pipeline.py`/`src/inference.py`/`config.json`. Full suite
       green (134 tests). No model, feature, or serving change.
 
+## Backlog — Pooled multi-instrument H1 (added 2026-07-28, NEW OWN family, VERDICT: BOTH DROP)
+
+**RESEARCH-ONLY, production untouched.** New hypothesis family in a NEW log
+(`results/pooled_h1_hypothesis_log.csv`), independent of every existing family
+(`feature_hypothesis_log`, `volatility_*`, `harmonic_pattern_*`, `cot_*`,
+`fractal_*` — none touched or re-tightened). Family size 2, Bonferroni bar
+**alpha = 0.05/2 = 0.025**. New files only: `src/pooled_h1_data.py`,
+`src/pooled_h1_model.py`, `results/pooled_h1/`, the log, and tests. Protected
+set (`models/`, `_train_pipeline.py`, `src/inference.py`, `src/features.py`,
+`src/paper_trading.py`, `config.json`, `results/eurusd_h1.csv` — the last feeds
+the LIVE H1 ensemble) asserted byte-identical before/after a full run by a
+sha256 unit test.
+
+**Question (strictly comparative, NOT "does it predict well"):** the single
+EURUSD H1 sample (~60k bars) sits below where sequential DL is shown to work on
+intraday data; the literature's remedy is to POOL correlated instruments to
+raise the effective sample. Does training one architecture on 4 pooled majors
+beat the IDENTICAL architecture on EURUSD alone, BOTH scored on the SAME EURUSD
+validation rows?
+
+**Device:** CUDA WAS available and used — `torch.cuda.is_available()=True`,
+`NVIDIA GeForce RTX 4070 Laptop GPU`, resolved `device=cuda`, XGBoost
+`device='cuda'`. Seed 42 (python/numpy/torch); bitwise GPU determinism not
+guaranteed, accepted and stated. (This CUDA requirement had been silently
+ignored twice before in this project — treated as a first-class deliverable
+here, printed loudly at the top of the run.)
+
+**STEP 0 — quote-convention alignment (pre-registered, was the classic silent
+bug risk).** EURUSD/GBPUSD/AUDUSD are XXX/USD; USDCHF is USD/XXX. Pooled as-is,
+"USD strengthens" would be a down-move in three series and an up-move in the
+fourth — contradictory labels for one phenomenon. USDCHF inverted to CHFUSD
+(`close=1/close`, `open=1/open`, **`high=1/low`, `low=1/high`** — the high/low
+SWAP is mandatory, forgetting it silently makes high<low). Raw USDCHF kept;
+inverted series written to `results/pooled_h1/CHFUSD_h1.csv`. Post-inversion
+`corr(CHFUSD ret, EURUSD ret)` flipped **−0.739 → +0.739** (confirmed sign
+flip); high≥low holds on all 70,000 inverted bars.
+
+**STEP 1 — dataset.** Fresh pair-agnostic, scale-free feature set built in
+`pooled_h1_model.py` (NOT `src/features.py`): log returns at lags
+{1,2,3,6,12,24}; ATR(14)/close; RSI(14); (close−SMA50)/ATR14;
+(close−SMA200)/ATR14; EWMA(24) std of log returns; hour and day-of-week
+sin/cos. No raw price level, no tick volume (dropped at acquisition), no symbol
+id. Target: `src/triple_barrier.py` UNCHANGED — per-pair
+`horizon_vol = EWMA_std(24)·sqrt(120)`, target ×1.5 / stop ×1.0, cost-aware
+time barrier at 1.5 pips (0.00015), long (+1) every bar; 1 = target-first.
+Shared window intersected to **2015-05-08 → 2026-06-08, 68,943 bars.** GLOBAL
+chronological split (identical date boundaries all four pairs): train
+[0:70%]=48,140, val [70:85%]=10,221 (arbiter), test [85:100%]=10,342
+(RESERVED, untouched). PURGE (train rows whose 120-bar window crosses the
+train/val boundary) and EMBARGO (first 120 val bars) removed exactly **120 rows
+each, per pair** — as expected for a 120-bar horizon.
+
+**STEP 2 — honest effective-sample accounting (the denominator, reported
+BEFORE any accuracy):**
+- Raw pooled train rows **192,560** vs EURUSD-only **48,140** (exactly 4×).
+- Contemporaneous H1 log-return correlation (train slice): EURUSD–CHFUSD 0.743,
+  EURUSD–GBPUSD 0.578, EURUSD–AUDUSD 0.519, others 0.41–0.53.
+- **rho_bar = 0.537**, so **k_eff = 4/(1+3·0.537) = 1.53.** Pooling 4 pairs
+  bought roughly **53% more effective sample, NOT 300%.**
+- **Mean label uniqueness = 0.0083** (Lopez de Prado, train slice) ≈ 1/120 —
+  the overlapping 120-bar labels mean raw row counts massively overstate
+  information. This is the honest context for every number below.
+
+**STEP 3–4 — models + arbiter (moving-block circular bootstrap over time,
+block=120 bars; paired delta-acc CI at alpha=0.025; exact McNemar). Decision
+rule: KEEP iff delta-acc CI entirely > 0 AND McNemar p < 0.025.**
+
+| Hypothesis | acc pooled | acc EURUSD | Δacc | Δacc CI (α=0.025) | McNemar b/c, p | Verdict |
+|---|---|---|---|---|---|---|
+| H_pool.1 GBM (XGBoost/cuda) | 0.4775 | 0.4767 | +0.0009 | [−0.0292, +0.0331] | 1246/1237, p=0.872 | **DROP** |
+| H_pool.2 LSTM (PyTorch/cuda) | 0.4759 | 0.4809 | −0.0050 | [−0.0206, +0.0094] | 437/488, p=0.100 | **DROP** |
+
+**BOTH DROP.** Pooling did not beat single-instrument EURUSD on either model.
+The GBM delta is essentially zero (p=0.87); the LSTM pooled arm was if anything
+slightly WORSE (−0.005, p=0.10) — neither CI clears zero. Both accuracies sit
+below 0.50 because the asymmetric 1.5×/1.0× barriers make label 0 the majority;
+this is near-chance as expected for daily/intraday FX, and the point of the
+program was never absolute accuracy but the comparison, which is a clean null.
+Honest reading: k_eff≈1.53 and label uniqueness≈0.008 already predicted that
+"4× rows" is mostly an illusion of information here — the pooled effective
+sample is only ~1.5× EURUSD's, sharing one USD factor, so there was little new
+signal for pooling to add, and the data agrees. This is NOT a claim that
+pooling can never help; it is that on THIS 4-major USD-factor set, at this
+horizon/label design, it bought nothing measurable on the EURUSD validation
+slice.
+
+**STEP 6 — 9 unit tests** (`tests/test_unit.py`): inversion 1/x + high/low swap
++ high≥low; correlation sign-flip to positive; no volume/price-level column in
+the feature matrix; no-look-ahead (truncated-frame recompute equality); purge
+correctness (no train label window crosses the boundary); embargo correctness
+(first 120 val bars absent); global-split alignment (all four pairs share
+identical boundaries — the cross-sectional-leakage guard); LSTM sequence
+integrity (no sequence spans two instruments); and the sha256 protected-file
+boundary check across a full monkeypatched `run()`. Plus the 3 STEP-0
+acquisition tests. Full suite green.
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)
