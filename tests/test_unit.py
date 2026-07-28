@@ -2951,3 +2951,100 @@ def test_cost_drag_diagnostic_computes_atr_pip_ratio(tmp_path, monkeypatch):
     assert res['mean_atr14_h1_pips'] == pytest.approx(0.0020 / PIP_SIZE, rel=0.05)
     assert res['cost_frac_of_atr_m15'] > res['cost_frac_of_atr_h1'], \
         "the same fixed pip cost must be a LARGER fraction of the smaller M15 typical range"
+
+
+# ── walk-forward validation (research-only robustness report) ──────────────
+
+def test_compute_windows_rolling_schedule_matches_spec():
+    """3yr trailing train / 1yr step+test, sliding forward across the FULL
+    available history -- pure calendar arithmetic, no row-count dependence."""
+    from src.walk_forward_validation import compute_windows
+
+    idx = pd.date_range('1999-01-04', '2026-06-17', freq='D')
+    windows = compute_windows(idx, train_years=3, test_years=1)
+    assert len(windows) == 24, "must match the real euro-era span's actual window count"
+    assert windows[0]['train_start'] == pd.Timestamp('1999-01-04')
+    assert windows[0]['train_end'] == pd.Timestamp('2002-01-04')
+    assert windows[0]['test_end'] == pd.Timestamp('2003-01-04')
+    # Each subsequent window steps forward by exactly test_years (1 year).
+    assert windows[1]['train_start'] == windows[0]['train_start'] + pd.DateOffset(years=1)
+    # No window's test_end may exceed the available history.
+    assert all(w['test_end'] <= idx.max() for w in windows)
+
+
+def test_slice_window_strict_causality():
+    """A window's training rows must NEVER include any date at or after that
+    SAME window's own test period start -- strict chronological causality at
+    every single window, no exceptions."""
+    from src.walk_forward_validation import compute_windows, _slice_window
+
+    idx = pd.date_range('1999-01-04', '2010-01-04', freq='D')
+    feat = pd.DataFrame({'close': np.arange(len(idx), dtype=float)}, index=idx)
+    windows = compute_windows(idx, train_years=3, test_years=1)
+
+    for window in windows:
+        window_df, train_end_local = _slice_window(feat, window)
+        train_rows = window_df.iloc[:train_end_local]
+        test_rows = window_df.iloc[train_end_local:]
+        assert (train_rows.index < window['train_end']).all(), \
+            "training rows must never reach the test period's own start date"
+        assert (test_rows.index >= window['train_end']).all()
+        assert (test_rows.index < window['test_end']).all()
+
+
+def test_windows_train_never_crosses_into_a_later_window_test_period():
+    """Scoped-reuse check: walking across the full history (including years
+    that are a LATER window's own test period) must never let an EARLIER
+    window's training data reach into that later test period -- still no
+    future leakage anywhere, just a different overall sweep. Concretely: for
+    every pair of windows, if window A's train block overlaps calendar time
+    with window B's test block, that overlap must never include window B's
+    test dates themselves being used as window A's training input for a
+    row dated at/after A's OWN test start (i.e. each window is causal in
+    isolation, which composes safely across the whole walk)."""
+    from src.walk_forward_validation import compute_windows, _slice_window
+
+    idx = pd.date_range('1999-01-04', '2026-06-17', freq='D')
+    feat = pd.DataFrame({'close': np.arange(len(idx), dtype=float)}, index=idx)
+    windows = compute_windows(idx, train_years=3, test_years=1)
+
+    for k, window in enumerate(windows):
+        window_df, train_end_local = _slice_window(feat, window)
+        train_rows = window_df.iloc[:train_end_local]
+        # This window's own training data must never include ANY date from
+        # its own (or by construction, any later window's) test period.
+        assert (train_rows.index < window['train_end']).all()
+        # And a LATER window's test period starts even further in the future,
+        # so this window's train data (bounded above by its OWN train_end)
+        # can never reach into it either.
+        if k + 1 < len(windows):
+            later = windows[k + 1]
+            assert window['train_end'] <= later['train_end']
+            assert (train_rows.index < later['train_end']).all()
+
+
+def test_walk_forward_never_writes_to_models_or_production_files(tmp_path):
+    """HARD BOUNDARY check: running the walk-forward report must NEVER modify
+    any file under models/, nor _train_pipeline.py, src/inference.py, or
+    config.json -- verified dynamically by hashing every such file before and
+    after a real (small) run, rather than relying on git history (which may
+    already carry unrelated pre-existing local modifications)."""
+    import hashlib
+    import os
+    from src.walk_forward_validation import run
+
+    protected_paths = ['_train_pipeline.py', 'src/inference.py', 'config.json']
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected_paths.append(os.path.join(root, fname))
+
+    def _hash(path):
+        with open(path, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected_paths}
+    run(register=False, max_windows=1)
+    after = {p: _hash(p) for p in protected_paths}
+
+    changed = [p for p in protected_paths if before[p] != after[p]]
+    assert changed == [], f"walk-forward run must never modify: {changed}"

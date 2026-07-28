@@ -1248,6 +1248,150 @@ approval, exactly as `src/paper_trading.py`'s own docstring already states.
       Full suite green (121 tests). No model, feature, serving, or execution
       change.
 
+## Backlog — Walk-forward validation report (added 2026-07-26, RESEARCH-ONLY, no production change)
+
+============================== HARD BOUNDARY ==============================
+This is entirely SEPARATE from production. `src/walk_forward_validation.py`
+does NOT modify `_train_pipeline.py`, `src/inference.py`, `config.json`, or
+any file under `models/` — verified by a dedicated unit test that hashes
+every such file before/after a real run. Logged to its own NEW
+`results/walk_forward_validation.csv` (per-window detail) +
+`results/walk_forward_validation_summary.csv` (cross-window aggregate) —
+`feature_hypothesis_log.csv`, `volatility_hypothesis_log.csv`, and every
+harmonic-pattern log are untouched (out of scope: nothing is being added or
+re-tuned here). This report answers "would our EXISTING, already-fixed
+configuration have worked robustly over time" — NOT "should we change
+anything." Any decision to build scheduled production retraining is a
+SEPARATE, subsequent, explicitly-approved conversation; this pass builds
+only the validation report.
+==============================================================================
+
+VALIDATION, explicitly NOT OPTIMIZATION: no hyperparameter is searched,
+widened, or narrowed per window, and no feature is added or removed — the
+GBM `param_grid`, the LSTM architecture, and every `config.json` value are
+read AS-IS on every window. A walk-forward exercise that re-selected
+hyperparameters per window would be OPTIMIZATION and would reintroduce
+exactly the data-snooping risk the Production Methodology exists to prevent
+— this deliberately is not that.
+
+Why reusing the historically-reserved test-block date range is sound HERE
+(and nowhere else): (a) no NEW keep/drop decision about any feature is made
+from this exercise — the configuration is already fixed before this report
+even runs, so there is nothing left to snoop into a decision; (b) each
+window's model trains ONLY on data strictly BEFORE that window's own test
+period — chronological causality holds at EVERY window, no exceptions
+(`tests/test_unit.py::test_slice_window_strict_causality`,
+`test_windows_train_never_crosses_into_a_later_window_test_period`).
+
+- [x] Step 0 (compute cost, verified BEFORE committing to the design) —
+      **STEP 0 finding worth stating plainly: the naive assumption that GPU
+      is always faster was WRONG for this workload.** `_train_pipeline.py`
+      enables CUDA XGBoost because it pays off on the full ~6,850-row
+      production training block; measured DIRECTLY on this module's much
+      smaller per-window training slices (~935 rows for a 3-year window),
+      CPU GridSearchCV finished in **~10s** vs **~326s on CUDA for the
+      IDENTICAL window** — over 30x slower on GPU, from fixed per-call CUDA
+      overhead dominating at this row count. `XGB_DEVICE='cpu'` is therefore
+      forced in this module — a compute-BACKEND choice, not a change to the
+      pre-registered `param_grid` (byte-identical search space either way).
+      With that fix: window 1 measured **44.0s** real (both variants'
+      GBM+LSTM + the 5-seed volatility ensemble + GARCH), extrapolated to
+      **17.6 minutes for all 24 windows** — comfortably practical, so the
+      full sweep was run for real rather than stopped/coarsened. Euro-era
+      engineered history: 8,560 rows, 1999-01-04 → 2026-06-17; 3yr
+      train/1yr step -> **24 windows** (real count, not estimated).
+- [x] Step 1/2 — Rolling scheme (`compute_windows`), reusing the EXISTING
+      recipes UNCHANGED: direction/return duplicates
+      `_train_pipeline.py::train_variant()`'s exact GBM param_grid+
+      GridSearchCV/TimeSeriesSplit + LSTM architecture (importing
+      `_train_pipeline.py` itself is impossible here — it is a top-level
+      SCRIPT that trains and persists real production artifacts as a
+      MODULE-LEVEL side effect of merely being imported, which would violate
+      the hard boundary outright); volatility duplicates the exact 5-seed
+      (42-46) 3-head ensemble + train-only-fit GARCH(1,1)
+      (`src.volatility.train_production_volatility_model` similarly
+      hardcodes writing to `models/volatility/`, so its truly side-effect-
+      free building blocks — `make_sequences`, `garch_forecasts`,
+      `persistence_forecasts`, `fit_lag_pca`, `apply_lag_pca` — are reused
+      directly and only the 5-seed loop itself is reimplemented in-memory).
+      The window's own 3-year train block plays production's `[0:80%]` fit
+      role in full; the LSTM's early-stopping tail is carved from the SAME
+      12.5% proportion (`val_fraction/train_fraction`) production uses,
+      applied to the window instead of the whole 27-year series (see the
+      module docstring's explicit mapping).
+- [x] Step 3/4 — Per-window direction accuracy/ROC-AUC (GBM AND LSTM,
+      matching `train_variant()`'s own two evaluated models) vs. that
+      window's own train-majority baseline, return MAE, and volatility
+      MAE/R² vs. that window's own fresh GARCH(1,1) — reconstructed
+      per-window `train_start`/`train_end`/`test_end`/row counts in
+      `results/walk_forward_validation.csv`. Aggregated: per-metric
+      mean/median/min/max/std, a Spearman time-trend (window-end-date vs.
+      metric), and a pooled-OOS moving-block (circular) bootstrap (block
+      length = one window's own test-row count) + exact McNemar, in
+      `results/walk_forward_validation_summary.csv`.
+
+**REAL results (2026-07-26, all 24 windows, register=True)**:
+
+  Direction accuracy hovers at chance for every model/variant — consistent
+  with this project's core efficient-market finding, now confirmed to HOLD
+  UP across 24 independent historical re-training cycles, not just the one
+  static split:
+
+  | pooled comparison | n_pooled | acc | vs majority | Δacc | block-bootstrap CI | McNemar p | verdict |
+  |---|---|---|---|---|---|---|---|
+  | baseline GBM | 7,483 | 0.5001 | 0.4887 | +0.0114 | [-0.0013, +0.0239] | 0.097 | not cleared |
+  | baseline LSTM | 7,003 | 0.4945 | 0.4899 | +0.0046 | [-0.0123, +0.0201] | 0.588 | not cleared |
+  | with_macro GBM | 7,483 | 0.5055 | 0.4887 | +0.0168 | [+0.0016, +0.0331] | 0.016 | **CLEARED** |
+  | with_macro LSTM | 7,003 | 0.4979 | 0.4899 | +0.0080 | [-0.0116, +0.0258] | 0.345 | not cleared |
+
+  The with_macro GBM's pooled CI clears at a flat 5% bar — but this is 1 of
+  4 comparisons at an UNCORRECTED alpha (this report intentionally has no
+  Bonferroni family — it is not a KEEP/DROP hypothesis test), so 1-in-4
+  clearing a flat 0.05 bar is within what chance alone would produce; it is
+  reported honestly as descriptive context, NOT as new evidence that
+  macro features work (that remains a separate, already-decided,
+  KEEP-provisional status in `feature_hypothesis_log.csv`, arbitrated by the
+  forward paper-trading ledgers, not by this exercise).
+
+  **Time-trend**: direction accuracy/AUC show NO significant drift (all
+  |rho| < 0.3, p > 0.15) — no evidence the current annual-cadence approach
+  is falling behind regime change on the direction/return side. Return MAE
+  and ALL THREE volatility MAEs show a significant NEGATIVE trend (rho
+  approx -0.48 to -0.58, p < 0.02) — i.e. MAE has been shrinking in more
+  recent windows. Read honestly, NOT as "the model is improving": this most
+  plausibly reflects secular DECLINING EURUSD REALIZED VOLATILITY over the
+  sample (the 2008/2011/2015 crisis-era years were simply choppier than
+  recent quiet years), which mechanically shrinks MAE for any
+  small-magnitude-predicting regressor regardless of relative skill — flagged
+  here rather than silently read as model improvement.
+
+  **Volatility ensemble vs GARCH — the most important honest finding**:
+  pooled across all 24 windows, the 5-seed ensemble did **NOT** beat
+  train-only-fit GARCH(1,1) (dMAE CI [-0.048, -0.020], i.e. GARCH's MAE was
+  LOWER; dR2 CI [-0.275, -0.092], GARCH's R² was HIGHER: mean R² -0.04 for
+  GARCH vs -0.28 for the ensemble) — the OPPOSITE of the production ship
+  gate's one-shot result (where the ensemble beat GARCH on the single static
+  validation split, which is why it shipped). The leading, honest
+  explanation, stated plainly rather than treated as a contradiction: a
+  rolling **3-year** training window is a MUCH THINNER training set than
+  production's actual training volume (production fits on `[0:80%]` of the
+  full ~21-27 year history EVERY time it (re)trains — it does not do 3-year
+  rolling retraining). An LSTM ensemble is more data-hungry than a 2-parameter
+  GARCH(1,1); this result plausibly reflects "not enough training data at
+  this window length for the neural approach to show its edge," not that the
+  ensemble fails to generalize forward in time. This is exactly the kind of
+  finding this report exists to surface — worth a note for any FUTURE
+  scheduled-retraining conversation (a real periodic retrain would likely
+  want a longer-than-3-year training window for the volatility family
+  specifically), but this pass does not act on it — no production change.
+- [x] Step 5 — 4 new unit tests: the rolling schedule matches the
+      pre-registered 3yr/1yr spec exactly (24 real windows); strict
+      per-window causality (`_slice_window`); the cross-window
+      no-later-window-leakage scoping check; and the dynamic
+      hash-before/after check across every file under `models/` plus
+      `_train_pipeline.py`/`src/inference.py`/`config.json`. Full suite
+      green (134 tests). No model, feature, or serving change.
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)

@@ -1031,6 +1031,105 @@ is untouched). No model, feature, serving, or execution change.
 
 ---
 
+### 3.10 Walk-forward validation report (research-only robustness check, no production change)
+
+**HARD BOUNDARY**: `src/walk_forward_validation.py` is entirely SEPARATE
+from production — it does NOT modify `_train_pipeline.py`, `src/inference.py`,
+`config.json`, or any file under `models/` (a dedicated unit test hashes every
+such file before/after a real run). Logged to its own new
+`results/walk_forward_validation.csv` (per-window detail) +
+`results/walk_forward_validation_summary.csv` (cross-window aggregate) —
+every hypothesis-log family is untouched, since nothing is being added or
+re-tuned. This answers "would our EXISTING, already-fixed configuration have
+worked robustly over time," never "should we change anything" — scheduled
+production retraining, if ever built, is a separate, subsequent,
+explicitly-approved conversation.
+
+**VALIDATION, not OPTIMIZATION**: no hyperparameter is searched, widened, or
+narrowed per window and no feature is added/removed — the GBM `param_grid`,
+LSTM architecture, and every `config.json` value are read AS-IS on every
+window. Re-selecting hyperparameters per window would be walk-forward
+OPTIMIZATION and would reintroduce the exact data-snooping risk the
+Production Methodology exists to prevent.
+
+**Why reusing the historically-reserved test-block date range is sound
+here** (and nowhere else in this project): no NEW keep/drop decision is made
+from this exercise (the configuration is already fixed before this report
+runs), and each window's model trains ONLY on data strictly before that
+window's own test period — causality holds at every window, no exceptions.
+
+**Scheme**: 3-year trailing train / 1-year step+test, sliding across the
+FULL euro-era history (1999-01-04 → 2026-06-17, 8,560 rows) → **24 windows**
+(a real, computed count). Direction/return duplicates
+`_train_pipeline.py::train_variant()`'s exact GBM param_grid+GridSearchCV/
+TimeSeriesSplit + LSTM architecture (that file cannot be imported here — it
+trains and persists real production artifacts as a MODULE-LEVEL side effect
+of import); volatility duplicates the exact 5-seed (42-46) 3-head ensemble +
+train-only-fit GARCH(1,1) (`train_production_volatility_model` similarly
+hardcodes writing to `models/volatility/`, so only its side-effect-free
+building blocks are reused, and the 5-seed loop is reimplemented in-memory).
+The window's 3-year train block plays production's `[0:80%]` fit role in
+full; the LSTM's early-stopping tail is the SAME 12.5% proportion
+(`val_fraction/train_fraction`) production carves from its own fit block,
+applied here to the window instead of the whole 27-year series.
+
+**A real engineering finding, stated plainly**: the assumption that GPU is
+always faster was WRONG for this workload. `_train_pipeline.py` enables CUDA
+XGBoost because it pays off on the ~6,850-row production block; measured
+directly on this module's ~935-row per-window training slices, CPU
+GridSearchCV finished in ~10s vs ~326s on CUDA for the SAME window (>30x
+slower on GPU — fixed per-call CUDA overhead dominates at this row count).
+`XGB_DEVICE='cpu'` is forced here — a compute-backend choice, not a change
+to the pre-registered search space. Window 1 measured **44.0s** real,
+extrapolating to **17.6 minutes for all 24 windows** — comfortably
+practical, so the full sweep ran for real rather than being stopped or
+silently coarsened.
+
+**Real results (2026-07-26, all 24 windows)**:
+
+| pooled comparison | n_pooled | acc | vs majority | Δacc | block-bootstrap CI | McNemar p | verdict |
+|---|---|---|---|---|---|---|---|
+| baseline GBM | 7,483 | 0.5001 | 0.4887 | +0.0114 | [-0.0013, +0.0239] | 0.097 | not cleared |
+| baseline LSTM | 7,003 | 0.4945 | 0.4899 | +0.0046 | [-0.0123, +0.0201] | 0.588 | not cleared |
+| with_macro GBM | 7,483 | 0.5055 | 0.4887 | +0.0168 | [+0.0016, +0.0331] | 0.016 | **CLEARED** |
+| with_macro LSTM | 7,003 | 0.4979 | 0.4899 | +0.0080 | [-0.0116, +0.0258] | 0.345 | not cleared |
+
+Direction accuracy sits at chance for every model/variant, confirming this
+project's core efficient-market finding HOLDS UP across 24 independent
+re-training cycles, not just the one static split. The with_macro GBM's
+pooled CI clears a flat 5% bar, but that is 1-of-4 uncorrected comparisons
+(this report has no Bonferroni family — it is not a KEEP/DROP test), well
+within chance alone; reported as descriptive context, NOT new evidence for
+the macro features (their status remains KEEP-provisional, arbitrated by the
+forward paper-trading ledgers).
+
+**Time-trend**: direction accuracy/AUC show no significant drift (|rho| <
+0.3, p > 0.15). Return MAE and all three volatility MAEs show a significant
+NEGATIVE trend (rho ≈ -0.48 to -0.58, p < 0.02) — read honestly as likely
+reflecting secular DECLINING EURUSD realized volatility over the sample
+(2008/2011/2015 were choppier than recent years), not model improvement.
+
+**Volatility ensemble vs GARCH — the most important honest finding**:
+pooled across all 24 windows, the 5-seed ensemble did **NOT** beat
+train-only-fit GARCH(1,1) (mean R² -0.04 GARCH vs -0.28 ensemble; dMAE CI
+[-0.048, -0.020] favoring GARCH) — the OPPOSITE of the production ship
+gate's one-shot result. Leading honest explanation: a 3-year rolling window
+is far thinner than production's actual training volume (`[0:80%]` of the
+full ~21-27 year history every time it retrains, never a 3-year rolling
+slice) — an LSTM ensemble is more data-hungry than a 2-parameter GARCH(1,1),
+so this plausibly reflects insufficient training data at this window length
+for the neural approach, not a forward-generalization failure. Exactly the
+kind of finding this report exists to surface; worth a note for any FUTURE
+scheduled-retraining conversation (likely wanting a longer training window
+for the volatility family specifically) — this pass does not act on it.
+
+4 new unit tests (rolling-schedule spec match, per-window causality,
+cross-window no-later-leakage scoping, dynamic file-hash integrity check
+across `models/`+`_train_pipeline.py`+`src/inference.py`+`config.json`).
+Full suite green (134 tests). No model, feature, or serving change.
+
+---
+
 ## 4. Testing, Validation & Error Diagnostics
 
 ### 4.1 Cross-validation strategy
