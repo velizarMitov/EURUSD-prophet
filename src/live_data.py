@@ -21,15 +21,36 @@ def drop_incomplete_bars(ohlcv_df, now=None):
         contained, so it is out-of-distribution.
 
     `now` is injectable for tests; it defaults to the local wall clock.
-    Comparison is on the calendar date (the broker bar timestamps and the
-    local clock are both treated as tz-naive, which is correct for a
-    single-machine Windows/MT5 deployment).
+    Comparison is on the calendar date. D1 bars (`_fetch_from_mt5`),
+    `history_df` and the yfinance fallback are all tz-naive by convention,
+    and MT5's raw epoch field itself already bakes in the broker SERVER's
+    own wall-clock date (verified live against a real ActivTrades session
+    and across four years of EU DST transitions -- the epoch never carries a
+    genuine UTC correction, so parsing it with or without `utc=True`
+    produces byte-identical wall-clock/weekday fields). That makes tz-naive
+    the correct, already-verified-safe convention here -- it is NOT the same
+    thing as "local machine time", it is "server-labelled calendar date"
+    read literally off the broker feed.
+
+    H1/M15 (`_fetch_h1_from_mt5`/`_fetch_m15_from_mt5`) tag the identical raw
+    values as UTC for their own intraday-grouping needs, but that tag is a
+    label over the same server wall-clock numbers, not a real conversion. If
+    a tz-aware index or `now` ever reaches this function (e.g. a future
+    caller reusing an H1 frame, or a test constructing one), the tz tag is
+    stripped -- not converted -- before comparing, so the wall-clock date
+    used for the weekday/forming-bar checks stays identical to the tz-naive
+    convention above instead of silently raising a naive-vs-aware
+    TypeError or, worse, shifting the calendar date under a real conversion.
     """
     if ohlcv_df is None or len(ohlcv_df) == 0:
         return ohlcv_df
     now = pd.Timestamp.now() if now is None else pd.Timestamp(now)
+    if now.tzinfo is not None:
+        now = now.tz_localize(None)
     today = now.normalize()
     idx = ohlcv_df.index
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
     keep = (idx.normalize() < today) & (idx.weekday < 5)
     return ohlcv_df[keep]
 

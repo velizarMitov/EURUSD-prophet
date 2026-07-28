@@ -218,6 +218,18 @@ Tier 3 is applied **by the caller** in `src/inference.py:88-90` when no live
 source returns ≥ `200 + time_steps` bars (the SMA_200 + LSTM-window warm-up
 floor). `bars_needed = max(live_fetch_bars=250, 200 + time_steps)`.
 
+> **tz convention (D1 is deliberately tz-naive, not accidentally):** D1
+> (`_fetch_from_mt5`), `history_df`, and the yfinance D1 fallback are all
+> tz-naive by design — MT5's raw epoch already bakes the broker server's own
+> wall-clock date directly into the value (verified live + across four years
+> of DST transitions, see §4.4 item 3), so tz-naive parsing reproduces the
+> correct server calendar date exactly. H1/M15 tag the same raw values as UTC
+> for their own intraday-grouping needs — a label, not a genuine conversion.
+> `drop_incomplete_bars` (the one choke point both `_resolve_latest_window`
+> and `tracking._actual_closes` call through) strips any tz tag off both its
+> index and `now` before comparing, so a tz-aware caller can never crash or
+> silently shift the resolved calendar date.
+
 > **Note on `tick_volume`:** loaded and surfaced to the UI for display, but
 > **deliberately excluded from `FEATURE_COLUMNS`** (`src/features.py:14-19`).
 > MT5 tick-volume is a broker tick count, not traded volume, and decades of
@@ -1583,6 +1595,44 @@ DROPped.
    collected 0 tests (exit 5) / hit a usage error (exit 4) and raised a
    misleading "tests failed". **Fixed** by passing `cwd=os.path.abspath('..')`.
    The suite itself is green (**19 passed**).
+3. **D1 tz naive/aware inconsistency (investigated, no leak found; latent risk
+   closed).** `_fetch_from_mt5` (D1, tz-naive, no `utc=True`) and
+   `_fetch_h1_from_mt5`/`_fetch_m15_from_mt5` (tz-aware UTC) parse the identical
+   MT5 wall-clock epoch encoding under two different tz conventions. Owner
+   report: a genuine Sunday D1 bar visible on the live MT5 chart raised the
+   question of whether it could leak past `drop_incomplete_bars`'
+   `idx.weekday<5` filter. Live investigation against a real ActivTradesEU-Server
+   session reproduced the exact bar and confirmed the mechanism is **ruled
+   out**: MT5's raw epoch bakes the broker server's own displayed wall-clock
+   date directly into the value (no genuine UTC correction), so parsing it
+   with or without `utc=True` yields byte-identical wall-clock/weekday fields
+   — verified across all four EU DST transition boundaries 2023–2026 with zero
+   hour-component drift. Both real consumption paths
+   (`PredictionService._resolve_latest_window`, `tracking._actual_closes`)
+   were exercised live and correctly dropped the bar; `results/prediction_log.csv`
+   audited for any weekend `as_of_date`/`forecasting_date` — none found.
+   **Fixed anyway** (the naive/aware split remains a latent `TypeError` risk if a
+   tz-aware index/`now` ever reaches the shared filter): `drop_incomplete_bars`
+   (`src/live_data.py`) now strips — never converts — any tz tag off both
+   `idx` and `now` before comparing, so it can never raise and always resolves
+   to the same calendar date regardless of which convention a caller uses.
+   Deliberately did **not** add `utc=True` to `_fetch_from_mt5` itself: that
+   frame is also diffed directly against the tz-naive `self.history_df`
+   bundled-CSV back-fill in `_resolve_latest_window` (§4.5.1's back-fill path)
+   and against the tz-stripped yfinance D1 fallback, so widening the tz change
+   upstream would have propagated the same mismatch into live serving code
+   that currently has none. 5 new regression tests: the filter itself
+   (parametrized over the owner's exact bar under several tz labels), the
+   naive/aware crash case, `_actual_closes`, and two levels of
+   `_resolve_latest_window` coverage — `as_of_date` never lands on a weekend,
+   and (sharper) `as_of_close`/`feature_window` anchor on the last genuine
+   Friday close rather than the phantom Sunday bar's, added specifically
+   because `forecasting_date`'s own `{Fri:3, Sat:2}.get(weekday, 1)` label
+   math falls through to the same generic `+1 day` default for Sunday(6) and
+   produces an identical-looking Monday date whether or not as_of_date was
+   corrupted — a forecasting_date-only test would not have caught this class
+   of bug. 142 tests pass. See `IMPROVEMENT_LOG.md` → *Bug fixes* for the
+   full investigation trail.
 
 ### 4.5 Live-edge / architecture risks (open, by design)
 

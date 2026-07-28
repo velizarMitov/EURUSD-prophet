@@ -616,6 +616,212 @@ def test_drop_incomplete_bars_strips_only_current_intraday_session():
         "The forming current-day (23.04) bar must be excluded; 22.04 is the last completed bar."
 
 
+@pytest.mark.parametrize("tz_label", [None, 'UTC', 'Etc/GMT-2', 'Etc/GMT-3'])
+def test_drop_incomplete_bars_strips_real_sunday_bar_any_server_offset(tz_label):
+    """REGRESSION (data-integrity bug): pins the EXACT genuine Sunday D1 bar
+    the owner saw live on their MT5 chart (2026-07-26 00:00 server time,
+    O=1.13895 H=1.13954 L=1.13848 C=1.13880, MT5's characteristic thin
+    partial-session tick_volume). Investigation (IMPROVEMENT_LOG.md) found
+    MT5's raw epoch already bakes in the broker SERVER's own wall-clock date
+    -- verified live against a real ActivTrades session and across four years
+    of EU DST transitions with zero deviation -- so drop_incomplete_bars must
+    strip this bar regardless of what tz label (if any) a caller's index
+    happens to carry. Parametrized over a couple of plausible server-offset
+    labels to prove that label is never load-bearing."""
+    from src.live_data import drop_incomplete_bars
+
+    idx = pd.to_datetime(['2026-07-23', '2026-07-24', '2026-07-26', '2026-07-27'])
+    if tz_label is not None:
+        idx = idx.tz_localize(tz_label)
+    df = pd.DataFrame({
+        'open':  [1.14083, 1.13774, 1.13895, 1.13809],
+        'high':  [1.14354, 1.14004, 1.13954, 1.14177],
+        'low':   [1.13633, 1.13641, 1.13848, 1.13616],
+        'close': [1.13723, 1.13696, 1.13880, 1.13679],
+        'tick_volume': [159409, 145453, 586, 138244],
+    }, index=idx)
+
+    trimmed = drop_incomplete_bars(df, now=pd.Timestamp('2026-07-28 09:00'))
+
+    assert len(trimmed) == 3, "The Sunday bar must be dropped; Thu/Fri/Mon must survive."
+    assert (trimmed.index.weekday < 5).all()
+    assert 1.13880 not in trimmed['close'].values, \
+        "The owner's exact Sunday close must never appear in a live-feed frame handed to the model."
+
+
+def test_drop_incomplete_bars_never_raises_on_naive_aware_mismatch():
+    """REGRESSION: D1 (`_fetch_from_mt5`, tz-naive) and H1/M15
+    (`_fetch_h1_from_mt5`/`_fetch_m15_from_mt5`, tz-aware UTC) tag the
+    identical MT5 wall-clock encoding differently. drop_incomplete_bars is
+    the one shared choke point both PredictionService._resolve_latest_window
+    and tracking._actual_closes call through, so it must never raise a
+    naive-vs-aware TypeError -- and must still correctly drop the weekend bar
+    -- regardless of which convention a caller's index/now happens to use."""
+    from src.live_data import drop_incomplete_bars
+
+    naive_idx = pd.to_datetime(['2026-07-23', '2026-07-24', '2026-07-26', '2026-07-27'])
+    df_naive = pd.DataFrame({
+        'open': [1.1] * 4, 'high': [1.1] * 4, 'low': [1.1] * 4, 'close': [1.1] * 4,
+        'tick_volume': [1] * 4,
+    }, index=naive_idx)
+
+    # tz-aware `now` against a tz-naive index must not raise.
+    out1 = drop_incomplete_bars(df_naive, now=pd.Timestamp('2026-07-28 09:00', tz='UTC'))
+    assert len(out1) == 3
+    assert '2026-07-26' not in [str(d.date()) for d in out1.index]
+
+    # tz-aware index against a tz-naive `now` must not raise.
+    df_aware = df_naive.copy()
+    df_aware.index = naive_idx.tz_localize('UTC')
+    out2 = drop_incomplete_bars(df_aware, now=pd.Timestamp('2026-07-28 09:00'))
+    assert len(out2) == 3
+    assert '2026-07-26' not in [str(d.date()) for d in out2.index]
+
+
+def test_resolve_latest_window_as_of_date_never_lands_on_weekend(monkeypatch):
+    """REGRESSION: PredictionService._resolve_latest_window must never set
+    as_of_date to a Saturday/Sunday, even when the live feed's raw tail
+    (as MT5 genuinely does) includes a trailing weekend bar. Builds a full
+    weekday+weekend daily history (so SMA_200/lag warm-up is satisfied) that
+    ends on a Sunday, mimicking the owner's live feed shape, and drives the
+    exact production code path (fetch -> drop_incomplete_bars -> compute_features)
+    with no network/model dependency."""
+    import src.inference as inference
+    from src.inference import PredictionService
+
+    dates = pd.date_range('2024-01-01', periods=400, freq='D')
+    last_sunday = dates[dates.weekday == 6][-1]
+    dates = dates[dates <= last_sunday]
+    assert dates[-1].weekday() == 6 and dates[-2].weekday() == 5, "fixture must end Sat/Sun like a real MT5 tail"
+
+    rng = np.random.default_rng(7)
+    close = pd.Series(1.10 + np.cumsum(rng.normal(0, 0.003, len(dates))), index=dates)
+    df = pd.DataFrame({
+        'open': close.values, 'high': close.values + 0.002,
+        'low': close.values - 0.002, 'close': close.values,
+        'tick_volume': np.where(dates.weekday < 5, 100000, 500),
+    }, index=dates)
+
+    monkeypatch.setattr(inference, 'fetch_live_market_data', lambda *a, **k: (df, 'MT5'))
+    monkeypatch.setattr(inference, 'fetch_macro_features', lambda *a, **k: (None, {}))
+
+    svc = PredictionService.__new__(PredictionService)
+    svc.config = {'data': {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X', 'live_fetch_bars': 250}, 'macro': {}}
+    svc.base_dir = '.'
+    svc.history_df = None
+
+    _, data_source, bar_used, as_of_date, forecasting_date = svc._resolve_latest_window(20)
+
+    expected_as_of = dates[dates.weekday < 5][-1]
+    assert data_source == 'MT5'
+    assert pd.Timestamp(as_of_date).weekday() < 5, "as_of_date must never fall on a Saturday/Sunday."
+    assert as_of_date == expected_as_of.date().isoformat(), \
+        "Must resolve to the last completed WEEKDAY session, not the trailing weekend bar."
+    assert bar_used['date'] == expected_as_of.date().isoformat()
+
+
+def test_resolve_latest_window_as_of_close_anchors_on_last_weekday_not_phantom_weekend_bar(monkeypatch):
+    """SHARPER REGRESSION for the Sunday-bar bug, at its actual point of
+    corruption. forecasting_date's own label math is NOT a reliable witness
+    here: Sunday's weekday (6) is not in the `{Fri:3, Sat:2}` lookup so it
+    falls through to the generic `+1 day` default and lands on Monday
+    2026-07-27 -- the EXACT SAME date the correct Friday(+3 days) path also
+    produces. A test that only checks forecasting_date would pass whether or
+    not as_of_date/as_of_close were silently corrupted to the phantom bar.
+    The real risk is as_of_close (`bar_used['close']`, the reference price
+    both the live prediction AND the later scored "actual return %" are
+    anchored to) and every feature computed relative to "the latest bar"
+    (lag returns, ATR, SMAs, ...) silently switching to the weekend bar's
+    numbers. Mocks a live feed shaped exactly like MT5's real output (no
+    Saturday row at all -- MT5 skips straight from Friday to a single
+    partial Sunday bar, confirmed live against ActivTrades this session)
+    with the owner's exact reported Sunday OHLC (O=1.13895 H=1.13954
+    L=1.13848 C=1.13880) as the MOST RECENT raw bar, and pins as_of_date,
+    bar_used['close'], AND the feature_window's own last 'close' value to
+    Friday's real close -- not Sunday's."""
+    import src.inference as inference
+    from src.inference import PredictionService
+
+    FRIDAY_CLOSE = 1.13696    # real 2026-07-24 close (live-reproduced this session)
+    SUNDAY_CLOSE = 1.13880    # owner's exact reported phantom-bar close
+
+    weekdays = pd.bdate_range(end='2026-07-24', periods=260)
+    rng = np.random.default_rng(3)
+    close = 1.10 + np.cumsum(rng.normal(0, 0.003, len(weekdays)))
+    close[-1] = FRIDAY_CLOSE
+    df = pd.DataFrame({
+        'open': close, 'high': close + 0.002, 'low': close - 0.002, 'close': close,
+        'tick_volume': np.full(len(weekdays), 100000),
+    }, index=weekdays)
+
+    sunday = pd.Timestamp('2026-07-26')
+    df.loc[sunday] = {
+        'open': 1.13895, 'high': 1.13954, 'low': 1.13848, 'close': SUNDAY_CLOSE,
+        'tick_volume': 586,
+    }
+    df = df.sort_index()
+    assert df.index[-1] == sunday and df.index[-1].weekday() == 6
+    assert df.index[-2] == pd.Timestamp('2026-07-24') and df.index[-2].weekday() == 4, \
+        "fixture must skip Saturday entirely, exactly like the real MT5 feed"
+
+    monkeypatch.setattr(inference, 'fetch_live_market_data', lambda *a, **k: (df, 'MT5'))
+    monkeypatch.setattr(inference, 'fetch_macro_features', lambda *a, **k: (None, {}))
+
+    svc = PredictionService.__new__(PredictionService)
+    svc.config = {'data': {'symbol': 'EURUSD', 'live_symbol': 'EURUSD=X', 'live_fetch_bars': 250}, 'macro': {}}
+    svc.base_dir = '.'
+    svc.history_df = None
+
+    feature_window, data_source, bar_used, as_of_date, forecasting_date = svc._resolve_latest_window(20)
+
+    # The actual point of corruption: as_of_date/as_of_close must anchor on
+    # Friday, never on the phantom Sunday bar.
+    assert as_of_date == '2026-07-24'
+    assert bar_used['close'] == pytest.approx(FRIDAY_CLOSE)
+    assert bar_used['close'] != pytest.approx(SUNDAY_CLOSE)
+
+    # The model's actual INPUT (not just response metadata) must be built off
+    # Friday's row -- every lag/SMA/ATR feature is computed relative to this.
+    assert feature_window['close'].iloc[-1] == pytest.approx(FRIDAY_CLOSE)
+
+    # The label-only symptom this bug would NOT have shown: Sunday(weekday=6)
+    # isn't in the Fri/Sat lookup, so it falls through to the generic +1-day
+    # default and lands on the SAME Monday the correct Friday(+3) path
+    # produces -- forecasting_date alone cannot distinguish a correct run
+    # from one silently anchored on the phantom bar.
+    assert forecasting_date == '2026-07-27'
+    would_be_corrupted_forecasting_date = (sunday + pd.Timedelta(days=1)).date().isoformat()
+    assert forecasting_date == would_be_corrupted_forecasting_date, \
+        "proves forecasting_date's label math looks plausible either way -- " \
+        "only as_of_close/feature_window pin the actual corruption point"
+
+
+def test_actual_closes_never_returns_a_weekend_date_key(monkeypatch):
+    """REGRESSION: the realised-close lookup used to score a logged forecast
+    (tracking._actual_closes) must never key an entry off the owner's real
+    Sunday bar (2026-07-26, O=1.13895 H=1.13954 L=1.13848 C=1.13880) -- that
+    bar must be dropped by drop_incomplete_bars before the date->close dict
+    is built, exactly like the live prediction path."""
+    from src import tracking
+
+    idx = pd.to_datetime(['2026-07-23', '2026-07-24', '2026-07-26', '2026-07-27', '2026-07-28'])
+    df = pd.DataFrame({
+        'open':  [1.14083, 1.13774, 1.13895, 1.13809, 1.13687],
+        'high':  [1.14354, 1.14004, 1.13954, 1.14177, 1.13798],
+        'low':   [1.13633, 1.13641, 1.13848, 1.13616, 1.13610],
+        'close': [1.13723, 1.13696, 1.13880, 1.13679, 1.13619],
+        'tick_volume': [159409, 145453, 586, 138244, 27491],
+    }, index=idx)
+    monkeypatch.setattr(tracking, 'fetch_live_market_data', lambda *a, **k: (df, 'stub'))
+
+    closes = tracking._actual_closes({'symbol': 'EURUSD'}, now=pd.Timestamp('2026-07-28 09:00'))
+
+    assert all(pd.Timestamp(d).weekday() < 5 for d in closes), \
+        "No Saturday/Sunday key may ever appear in the realised-close lookup."
+    assert '2026-07-26' not in closes
+    assert closes == {'2026-07-23': 1.13723, '2026-07-24': 1.13696, '2026-07-27': 1.13679}
+
+
 def test_fetch_live_market_data_prefers_mt5(monkeypatch):
     """When a live MT5 terminal session is reachable, it must be used in
     preference to Yahoo Finance, per the requested MT5 -> yfinance fallback order."""

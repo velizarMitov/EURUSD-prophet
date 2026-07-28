@@ -1628,6 +1628,93 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       live `/api/predict` end-to-end confirmed the served H1 day advanced
       2026-07-07 → 2026-07-09 (the correct latest complete session).
 
+- [x] **D1 tz naive/aware inconsistency investigated (owner live-chart report,
+      2026-07-28) — no leak found, latent crash risk closed anyway.** The
+      owner's MT5 chart showed a genuine Sunday D1 bar (2026-07-26 00:00
+      server time, O=1.13895 H=1.13954 L=1.13848 C=1.13880) and asked whether
+      it could leak past `drop_incomplete_bars`' `weekday<5` filter into a
+      live prediction (`PredictionService._resolve_latest_window`) or into
+      the "actual market" close used to score a forecast
+      (`tracking._actual_closes`), given `_fetch_from_mt5` (D1) parses MT5's
+      raw epoch WITHOUT `utc=True` while `_fetch_h1_from_mt5`/
+      `_fetch_m15_from_mt5` explicitly add it.
+      **Root-cause investigation (live, against a real ActivTradesEU-Server
+      session, not guessed):** reproduced the owner's exact bar via
+      `mt5.copy_rates_from_pos` (epoch `1785024000`, OHLC matched exactly) and
+      confirmed the broker server is UTC+2 while the deployment machine is
+      UTC+3 (EEST) — a real, live 1-hour clock skew. But MetaQuotes' raw `time`
+      field does not carry a genuine UTC correction: it bakes the broker
+      SERVER's own displayed wall-clock date directly into the epoch value, so
+      `pd.to_datetime(x, unit='s')` and `pd.to_datetime(x, unit='s', utc=True)`
+      produce byte-identical wall-clock/weekday fields for the same raw `x` —
+      the missing `utc=True` on D1 changes only whether a tz tag is attached,
+      never the calendar date used by `idx.weekday<5`. Verified this holds
+      across all four EU DST transition boundaries from 2023–2026 (every D1
+      bar in each window still parses to an exact `00:00:00` with the correct
+      weekday, zero hour-component drift). Live end-to-end run of both real
+      consumption paths confirmed the 2026-07-26 bar is correctly dropped:
+      `_resolve_latest_window` resolved `as_of_date` to 2026-07-27 (Monday);
+      `_actual_closes` returned a dict with no 2026-07-26 key. **The
+      hypothesized mechanism is ruled out — it is not, and structurally
+      cannot be, the cause of a weekday misclassification for this broker.**
+      **Step 2 audit:** `results/prediction_log.csv` (26 rows) scanned for any
+      `as_of_date`/`forecasting_date` on a Saturday/Sunday — zero found. No
+      historical prediction or scored "actual" close was ever built from a
+      weekend bar.
+      **Fix applied anyway:** even with no demonstrated leak, the tz-naive
+      (D1)/tz-aware (H1/M15) split is a real latent risk — a tz-aware `now`
+      or a tz-aware index ever reaching `drop_incomplete_bars` (a future
+      caller reusing an H1 frame, a different broker whose epoch *is* a
+      genuine UTC conversion, a test) would raise a naive-vs-aware
+      `TypeError`, or under a real conversion silently shift the calendar
+      date. Deliberately did NOT add `utc=True` to `_fetch_from_mt5` — tracing
+      the call graph showed `PredictionService._resolve_latest_window` also
+      compares the D1 frame directly against `self.history_df` (bundled CSV,
+      always tz-naive) for its warm-up back-fill (`inference.py` ~line 310);
+      making D1 tz-aware would have propagated the same TypeError there and
+      into the yfinance D1 fallback (`_fetch_from_yfinance`, which explicitly
+      strips tz), a much wider blast radius on live serving code for zero
+      actual bug fixed. Instead hardened `drop_incomplete_bars` itself (the
+      one shared choke point both consumption paths call through,
+      `src/live_data.py`): it now strips (never converts) any tz tag off
+      both `idx` and `now` before comparing, so the function can never raise
+      and always resolves to the same wall-clock calendar date regardless of
+      which convention a caller happens to use — closing the mismatch without
+      touching `_fetch_from_mt5`, `self.history_df`, or any other live
+      serving path.
+      Regression tests (`tests/test_unit.py`):
+      `test_drop_incomplete_bars_strips_real_sunday_bar_any_server_offset`
+      (parametrized over `None`/`UTC`/`Etc/GMT-2`/`Etc/GMT-3` index tz labels,
+      pins the owner's exact OHLC), `test_drop_incomplete_bars_never_raises_on_naive_aware_mismatch`,
+      `test_resolve_latest_window_as_of_date_never_lands_on_weekend` (full
+      `_resolve_latest_window` path, weekday+weekend synthetic history ending
+      on a Sunday, no network/model dependency), `test_actual_closes_never_returns_a_weekend_date_key`.
+      142 tests pass. `models/`, `_train_pipeline.py`, `src/inference.py`,
+      `config.json` all confirmed untouched (`git status --porcelain` empty)
+      — only `src/live_data.py` and `tests/test_unit.py` changed.
+      **Follow-up sharper regression (same investigation, added same day):**
+      the tests above pin `as_of_date`/`bar_used['date']`/dict keys, but not
+      the actual point of corruption a bypassed filter would hit: `as_of_close`
+      (`bar_used['close']`, `tracking.py`'s `as_of_close` column) is the
+      reference price BOTH the live prediction's feature window AND the later
+      scored "actual return %" anchor to. Worse, `forecasting_date`'s own
+      `{Fri:3, Sat:2}.get(weekday, 1)` label math does not reliably witness
+      this: Sunday's weekday (6) falls through to the generic `+1 day`
+      default and lands on the SAME Monday the correct Friday(+3) path also
+      produces, so a forecasting_date-only check would pass whether or not
+      as_of_date/as_of_close were silently corrupted to the phantom bar. Added
+      `test_resolve_latest_window_as_of_close_anchors_on_last_weekday_not_phantom_weekend_bar`:
+      mocks a live feed shaped exactly like MT5's real output (no Saturday
+      row at all — Friday straight to a single partial Sunday bar, confirmed
+      live against ActivTrades) with the owner's exact Sunday OHLC as the
+      MOST RECENT raw bar, and pins `as_of_date`, `bar_used['close']`, and
+      `feature_window['close'].iloc[-1]` (the actual model input, not just
+      response metadata) to the real Friday close, explicitly asserting they
+      are NOT the Sunday close — while also asserting `forecasting_date`
+      would have looked identical either way, to document why this specific
+      bug needed an as_of_close-level test rather than a label-level one.
+      142 tests pass.
+
 ## Working rules
 
 - Before each item: re-read the matching skill (`ml-practical-methodology` or
