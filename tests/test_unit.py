@@ -4171,3 +4171,227 @@ def test_h1_direction_untriggered_replication_is_registered_unspent(monkeypatch,
     # the two SPENT hypotheses still sit at the family-of-2 bar
     spent = log[log['verdict'].isin(['KEEP', 'DROP'])]
     assert (spent['alpha'] == 0.025).all()
+
+# ─────────────────── H_dir.1 POST-HOC DIAGNOSTICS (descriptive) ───────────────
+# Six tests guarding the decomposition module. It consumes NO alpha and produces
+# NO verdict, so the tests are about CONTAINMENT (nothing written, nothing refit
+# differently, the reserved test block never read) rather than about any
+# statistical claim.
+
+def _diag_stub_rebuild(monkeypatch, seed=101, n=1400):
+    """Wire the diagnostics module onto a cheap synthetic frame with a stubbed
+    booster, so orchestration is exercised without GPU training."""
+    import src.h1_direction_model as h1d
+
+    synth, _ = _synth_ohlc(n, 1.10, 0.0, seed)
+
+    class _StubBooster:
+        def get_score(self, importance_type='gain'):
+            return {f'f{j}': float(j + 1) for j in range(15)}
+
+    class _StubGBM:
+        def get_booster(self):
+            return _StubBooster()
+
+    monkeypatch.setattr(h1d, 'load_eurusd_h1', lambda out_dir=None: synth)
+    monkeypatch.setattr(h1d, 'train_gbm', lambda X, y, seed=42: _StubGBM())
+    # Deterministic in the matrix, so permuting a column really changes a score.
+    monkeypatch.setattr(h1d, 'predict_gbm_proba',
+                        lambda clf, X: 1.0 / (1.0 + np.exp(-np.asarray(X)[:, 0])))
+
+
+def test_h1_diag_reproduction_gate_fires_outside_tolerance(monkeypatch):
+    """DIAG TEST 1: the STEP 0 gate must RAISE when the refit accuracy drifts
+    beyond +/- 0.003 of the logged H_dir.1 value -- otherwise the diagnostics
+    would silently describe a different model than the one that cleared the
+    bar. Exercised both as a pure function and through rebuild_h_dir_1()."""
+    import pytest
+    import src.h1_direction_diagnostics as diag
+
+    # inside tolerance -> returns the drift, does not raise
+    assert diag.assert_reproduction(diag.REPRODUCTION_TARGET_ACC) == 0.0
+    assert diag.assert_reproduction(diag.REPRODUCTION_TARGET_ACC + 0.0029) > 0
+    # outside tolerance -> raises, in BOTH directions
+    for bad in (diag.REPRODUCTION_TARGET_ACC + 0.0031,
+                diag.REPRODUCTION_TARGET_ACC - 0.0031):
+        with pytest.raises(diag.ReproductionGateError):
+            diag.assert_reproduction(bad)
+
+    # ...and rebuild_h_dir_1 is actually wired to it
+    _diag_stub_rebuild(monkeypatch)
+    monkeypatch.setattr(diag, 'REPRODUCTION_TOL', 0.0)
+    monkeypatch.setattr(diag, 'REPRODUCTION_TARGET_ACC', 0.99)
+    with pytest.raises(diag.ReproductionGateError):
+        diag.rebuild_h_dir_1(verbose=False)
+
+
+def test_h1_diag_test_block_never_indexed(monkeypatch):
+    """DIAG TEST 2: the reserved test block [85:100%] must never be read. The
+    guard raises on any timestamp past the validation bound, and a full rebuild
+    touches nothing beyond it -- while a genuine test block DOES exist, so the
+    assertion is not vacuously true."""
+    import pytest
+    import src.h1_direction_diagnostics as diag
+    import src.h1_direction_model as h1d
+
+    _diag_stub_rebuild(monkeypatch)
+    monkeypatch.setattr(diag, 'REPRODUCTION_TOL', 1.0)      # gate not under test
+    reb = diag.rebuild_h_dir_1(verbose=False)
+
+    val_end = reb['val_end_ts']
+    # every row set the module reads stops at or before the validation bound
+    assert pd.DatetimeIndex(reb['train_idx']).max() <= val_end
+    assert pd.DatetimeIndex(reb['val_idx']).max() <= val_end
+    # the maximum POSITION touched is inside the validation slice
+    assert reb['max_position_touched'] <= reb['split_counts']['val_end_position']
+
+    # not vacuous: a reserved test block genuinely exists beyond that bound
+    assert reb['split_counts']['n_test_reserved'] > 0
+    _ctx, tgt, _c = h1d.build_direction_dataset(h1d.load_eurusd_h1())
+    assert pd.DatetimeIndex(tgt).max() > val_end
+
+    # and the guard itself fires on a post-boundary timestamp
+    with pytest.raises(diag.TestBlockTouchedError):
+        diag.assert_no_test_block([val_end + pd.Timedelta(hours=1)], val_end)
+
+
+def test_h1_diag_permutation_shuffles_one_column_and_restores_it(monkeypatch):
+    """DIAG TEST 3: permutation importance must shuffle exactly ONE column at a
+    time and leave the caller's feature matrix byte-identical afterwards. A
+    routine that corrupted X would silently poison every later diagnostic."""
+    import src.h1_direction_diagnostics as diag
+    import src.h1_direction_model as h1d
+
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(200, 15))
+    y = (rng.uniform(size=200) > 0.5).astype(int)
+    X_before = X.copy()
+
+    seen = []
+
+    def _spy(clf, M):
+        seen.append(np.asarray(M).copy())
+        return 1.0 / (1.0 + np.exp(-np.asarray(M)[:, 0]))
+
+    monkeypatch.setattr(h1d, 'predict_gbm_proba', _spy)
+    baseline, table = diag.permutation_importance(object(), X, y, n_repeats=3)
+
+    # the caller's matrix is untouched, bit for bit
+    assert np.array_equal(X, X_before)
+    assert len(table) == 15 and table['perm_n_repeats'].eq(3).all()
+
+    # every scored matrix differs from the original in AT MOST one column
+    for M in seen:
+        differing = [j for j in range(X.shape[1])
+                     if not np.array_equal(M[:, j], X_before[:, j])]
+        assert len(differing) <= 1, f"permuted {len(differing)} columns at once"
+    # ...and at least one repeat really did permute something (not a no-op test)
+    assert any(not np.array_equal(M, X_before) for M in seen)
+    assert 0.0 <= baseline <= 1.0
+
+
+def test_h1_diag_quarter_partition_is_exhaustive_and_non_overlapping():
+    """DIAG TEST 4: the 4 chronological quarters must partition the validation
+    slice exactly -- every row counted once, none twice, none dropped. KILL
+    PATTERN A's 'share of the total edge' is only well defined if the shares
+    sum to 1, which requires exactly this."""
+    import src.h1_direction_diagnostics as diag
+
+    for n in (10378, 100, 7, 4):
+        masks = diag.quarter_masks(n, 4)
+        assert len(masks) == 4
+        stacked = np.vstack(masks)
+        # exhaustive: every row in exactly one block
+        assert (stacked.sum(axis=0) == 1).all()
+        assert sum(int(m.sum()) for m in masks) == n
+        # contiguous and chronological: block starts increase
+        starts = [int(np.flatnonzero(m)[0]) for m in masks if m.any()]
+        assert starts == sorted(starts)
+        for m in masks:
+            if m.any():
+                pos = np.flatnonzero(m)
+                assert (np.diff(pos) == 1).all()
+
+    # the real slice splits into the pre-registered ~2,595-row quarters
+    real = [int(m.sum()) for m in diag.quarter_masks(10378, 4)]
+    assert real == [2595, 2595, 2594, 2594]
+    assert abs(diag.accuracy_se(2595) - 0.00982) < 1e-4      # the ~0.98pp floor
+
+
+def test_h1_diag_run_writes_no_hypothesis_log(monkeypatch, tmp_path):
+    """DIAG TEST 5: these are DESCRIPTIVE decompositions -- they consume no
+    alpha. A full run() must therefore leave every results/*hypothesis_log.csv
+    byte-identical (sha256 before vs after) and must not create a new one."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_direction_diagnostics as diag
+
+    logs = glob.glob('results/*hypothesis_log.csv')
+    assert logs, "expected existing hypothesis logs to guard"
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    _diag_stub_rebuild(monkeypatch)
+    monkeypatch.setattr(diag, 'REPRODUCTION_TOL', 1.0)
+
+    before = {p: _hash(p) for p in logs}
+    diag.run(verbose=False, n_repeats=2,
+             features_path=str(tmp_path / 'f.csv'),
+             temporal_path=str(tmp_path / 't.csv'),
+             hourly_path=str(tmp_path / 'h.csv'))
+    after_paths = glob.glob('results/*hypothesis_log.csv')
+
+    assert sorted(after_paths) == sorted(logs), "no hypothesis log may be created"
+    changed = [p for p in logs if before[p] != _hash(p)]
+    assert changed == [], f"diagnostics must not modify any hypothesis log: {changed}"
+    # the three diagnostic CSVs ARE written
+    for name in ('f.csv', 't.csv', 'h.csv'):
+        assert os.path.exists(str(tmp_path / name))
+
+
+def test_h1_diag_run_never_touches_protected_files(monkeypatch, tmp_path):
+    """DIAG TEST 6: a full run() must leave the ENTIRE protected set
+    byte-identical -- now including src/h1_direction_model.py and
+    results/h1_direction_hypothesis_log.csv, the artifacts of the very program
+    being diagnosed."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_direction_diagnostics as diag
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'src/triple_barrier.py', 'src/pooled_h1_data.py',
+                 'src/pooled_h1_model.py', 'src/h1_horizon_feasibility.py',
+                 'src/h1_direction_model.py',
+                 'results/pooled_h1/EURUSD_h1.csv']
+    protected += glob.glob('results/*hypothesis_log.csv')
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+    # glob yields OS-native separators on Windows -- normalise before checking
+    assert 'results/h1_direction_hypothesis_log.csv' in [
+        p.replace(os.sep, '/') for p in protected]
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    _diag_stub_rebuild(monkeypatch)
+    monkeypatch.setattr(diag, 'REPRODUCTION_TOL', 1.0)
+
+    before = {p: _hash(p) for p in protected}
+    result = diag.run(verbose=False, n_repeats=2,
+                      features_path=str(tmp_path / 'f.csv'),
+                      temporal_path=str(tmp_path / 't.csv'),
+                      hourly_path=str(tmp_path / 'h.csv'))
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"diagnostics must never modify: {changed}"
+
+    # and the run produced the three decompositions, with no verdict field
+    assert set(result) == {'rebuilt', 'temporal', 'hourly', 'features',
+                           'survival_pattern', 'n_val'}
+    assert 'verdict' not in result['temporal'] and 'verdict' not in result['hourly']
