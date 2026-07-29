@@ -1488,6 +1488,60 @@ integrity (no sequence spans two instruments); and the sha256 protected-file
 boundary check across a full monkeypatched `run()`. Plus the 3 STEP-0
 acquisition tests. Full suite green.
 
+## Diagnostics — H1 label-geometry feasibility scan (2026-07-28, design calc, NOT a hypothesis test)
+
+**Not a hypothesis test; no predictive metric, no hypothesis log, no Bonferroni
+alpha consumed.** `src/h1_horizon_feasibility.py` +
+`results/h1_horizon_feasibility.csv` (new files only). Pure LABEL GEOMETRY over
+a (horizon H × target-multiplier m) grid, train slice only, reusing
+`src/triple_barrier.py` and the cached `results/pooled_h1/*.csv` unchanged.
+Question: does any (H, m) cell give BOTH enough independent labels to train on
+AND a target barrier wide enough that a 1.5-pip cost doesn't eat it?
+
+**Anchor (STEP 4 hard gate) PASSED.** At (H=120, m=1.5) the scan's NOMINAL-horizon
+uniqueness = **0.008285** reproduces the pooled program's logged **0.008275**
+(|diff| 0.00001 ≪ 0.0005 tol), and the vectorised first-crossing agrees with
+`triple_barrier_label` on a sample. Key distinction the scan exists to make: the
+pooled program's logged uniqueness used each label's NOMINAL max horizon
+(entry+H); this scan uses ACTUAL resolution times t1. At (120,1.5) the actual-t1
+uniqueness is **0.0113** (higher than 0.0083) because ~52% of labels resolve
+before the time barrier — so the pooled program's n_independent≈1,600 was a
+slight UNDER-count (actual ≈2,164), though same order of magnitude.
+
+**Pooled grid — n_independent / median cost-ratio% / viability** (VIABLE =
+n_independent ≥ 5,000 AND median cost ≤ 25%, pre-registered):
+
+| H \\ m | 0.5 | 1.0 | 1.5 | 2.0 |
+|---|---|---|---|---|
+| **6** | 46,161 / 12.6% / VIABLE | 36,013 / 6.3% / VIABLE | 33,185 / 4.2% / VIABLE | 32,173 / 3.1% / VIABLE |
+| **12** | 28,730 / 8.9% / VIABLE | 20,755 / 4.4% / VIABLE | 18,735 / 3.0% / VIABLE | 18,023 / 2.2% / VIABLE |
+| **24** | 16,501 / 6.3% / VIABLE | 11,265 / 3.1% / VIABLE | 10,020 / 2.1% / VIABLE | 9,598 / 1.6% / VIABLE |
+| **48** | 9,126 / 4.4% / VIABLE | 5,969 / 2.2% / VIABLE | 5,221 / 1.5% / VIABLE | 4,981 / 1.1% / MARGINAL |
+| **120** | 3,913 / 2.8% / MARGINAL | 2,496 / 1.4% / MARGINAL | 2,164 / 0.9% / MARGINAL | 2,058 / 0.7% / MARGINAL |
+| **240** | 2,012 / 2.0% / MARGINAL | 1,270 / 1.0% / MARGINAL | 1,097 / 0.7% / MARGINAL | 1,041 / 0.5% / MARGINAL |
+
+**Conclusion — the approach is NOT closed on arithmetic; the original barriers
+were simply too wide (a fixable design error).** 15 pooled cells are VIABLE,
+all at short horizons (H ≤ 48). The binding constraint is HORIZON, not cost:
+median resolution ≈ H at every cell (118 bars at H=120) and ~48–58% of labels
+run to the time barrier, so the original 120-bar design spent most labels never
+touching a barrier — crushing independence to 2,164. Shortening H to 6–24 raises
+pooled independence to 10k–46k while cost stays comfortable (max median cost in
+the whole grid is 12.6%, never fatal). Class balance stays 43.6–63.6% (m=0.5
+correctly flagged: target tighter than stop → label-1 rises to ~59–63%).
+
+**Two honest caveats, stated plainly:** (1) the pre-registered `n_independent`
+is TEMPORAL-only (within-instrument label overlap). Pooled independence still
+ignores the cross-sectional correlation (rho_bar≈0.54, k_eff≈1.53 from the
+pooled program) — per-instrument independence at (H=24, m=1.0) is only ~2,800
+(MARGINAL); folding in k_eff pushes mid-horizon cells back below the GBM tier,
+so only the SHORTEST horizons (H=6–12) survive that discount robustly. (2) This
+is a geometry/feasibility result — it says a short-horizon design is *trainable*
+in principle, NOT that a model will find an edge there (that would be a new
+pre-registered hypothesis with its own arbiter). 7 unit tests (hand-computed
+uniqueness, sqrt-time scaling, pip conversion, early-resolution-raises-uniqueness,
+train-slice-only entry bound, no-hypothesis-log-written, protected-files-untouched).
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)

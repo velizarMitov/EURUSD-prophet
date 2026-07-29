@@ -1200,6 +1200,27 @@ the EURUSD validation slice. Any future pursuit is a forward-testing
 conversation, not a production change. 12 new unit tests (see IMPROVEMENT_LOG
 "Pooled multi-instrument H1"); full suite green (154 tests).
 
+### 3.11.1 H1 label-geometry feasibility scan (design calc, not a hypothesis test)
+
+Follow-up to §3.11. `src/h1_horizon_feasibility.py` +
+`results/h1_horizon_feasibility.csv`. Pure LABEL GEOMETRY over a (horizon ×
+target-multiplier) grid on the train slice only — NO model, NO predictive
+metric, NO hypothesis log, NO alpha consumed; reuses `src/triple_barrier.py` and
+the cached pooled CSVs unchanged. Asks whether any (H, m) cell gives both enough
+independent labels AND a target barrier wide enough to survive a 1.5-pip cost.
+Anchor gate PASSED: nominal-horizon uniqueness 0.008285 reproduces the pooled
+program's logged 0.008275 (the scan otherwise uses ACTUAL resolution times t1,
+which give 0.0113 at (120,1.5) since ~52% of labels resolve early). **Finding:
+the H1 triple-barrier approach is NOT closed on arithmetic — the original H=120
+barriers were simply too wide** (median resolution ≈ H, ~half of labels run to
+the time barrier, independence crushed to 2,164). 15 pooled cells are VIABLE at
+short horizons (H ≤ 48; pooled n_independent 5k–46k, cost never > 12.6%).
+Caveats: `n_independent` is temporal-only — cross-sectional correlation
+(rho_bar≈0.54) discounts pooled independence so only H=6–12 survive robustly;
+and feasibility ≠ a demonstrated edge (that needs a new pre-registered
+hypothesis). 7 unit tests; full suite green (161 tests). See IMPROVEMENT_LOG
+"H1 label-geometry feasibility scan".
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

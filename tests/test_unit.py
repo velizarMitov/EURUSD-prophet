@@ -3586,3 +3586,176 @@ def test_pooled_run_never_touches_protected_production_files(monkeypatch, tmp_pa
 
     changed = [p for p in protected if before[p] != after[p]]
     assert changed == [], f"pooled H1 run must never modify: {changed}"
+
+
+# ── H1 label-geometry feasibility scan (design calc, NOT a hypothesis test) ──
+
+def test_feasibility_uniqueness_hand_computed_known_answer():
+    """TEST 1: uniqueness on a hand-built 5-label case with a KNOWN answer,
+    computed by hand here (NOT against the implementation itself).
+
+    Grid length 6 (bars 0..5). Five labels with these [start, end] spans:
+      L0 [0,2]  L1 [0,2]  L2 [1,3]  L3 [3,5]  L4 [4,5]
+    Concurrency per bar:
+      bar0: L0,L1                       -> 2
+      bar1: L0,L1,L2                    -> 3
+      bar2: L0,L1,L2                    -> 3
+      bar3: L2,L3                       -> 2
+      bar4: L3,L4                       -> 2
+      bar5: L3,L4                       -> 2
+    Per-label uniqueness = mean of 1/c over its own span:
+      L0 [0,2]: (1/2+1/3+1/3)/3 = (0.5+0.333..+0.333..)/3 = 1.16667/3 = 0.388889
+      L1 [0,2]: same                                                   = 0.388889
+      L2 [1,3]: (1/3+1/3+1/2)/3 = 1.16667/3                            = 0.388889
+      L3 [3,5]: (1/2+1/2+1/2)/3 = 1.5/3                                = 0.500000
+      L4 [4,5]: (1/2+1/2)/2 = 1.0/2                                    = 0.500000
+    mean = (0.388889*3 + 0.5*2)/5 = (1.166667 + 1.0)/5 = 0.433333
+    """
+    from src.h1_horizon_feasibility import uniqueness_from_spans
+
+    starts = [0, 0, 1, 3, 4]
+    ends = [2, 2, 3, 5, 5]
+    u = uniqueness_from_spans(starts, ends, grid_len=6)
+    assert u == pytest.approx(0.433333, abs=1e-6)
+
+
+def test_feasibility_sqrt_time_scaling_of_horizon_vol():
+    """TEST 2: sqrt-time scaling. On a constant per-bar vol series, horizon_vol
+    at H=120 must equal horizon_vol at H=30 times exactly sqrt(120/30)=2.0."""
+    from src.triple_barrier import ewma_log_return_std, horizon_vol_from_ewma_std
+
+    rng = np.random.default_rng(0)
+    close = 1.10 * np.exp(np.cumsum(rng.normal(0, 0.001, 4000)))
+    per_bar = ewma_log_return_std(close, 24)
+    hv30 = horizon_vol_from_ewma_std(per_bar, 30)
+    hv120 = horizon_vol_from_ewma_std(per_bar, 120)
+    ratio = hv120[100:] / hv30[100:]
+    assert np.allclose(ratio, 2.0, atol=1e-9), "sqrt(120/30) must be exactly 2.0"
+
+
+def test_feasibility_pip_conversion_guards_fx_unit_error():
+    """TEST 3: pip conversion. 0.00015 price -> 1.5 pips; 0.00300 -> 30.0 pips."""
+    from src.h1_horizon_feasibility import price_to_pips, PIP_SIZE, COST_PRICE
+
+    assert PIP_SIZE == 0.0001
+    assert COST_PRICE == pytest.approx(0.00015)
+    assert price_to_pips(0.00015) == pytest.approx(1.5)
+    assert price_to_pips(0.00300) == pytest.approx(30.0)
+
+
+def test_feasibility_early_resolution_raises_uniqueness_above_nominal():
+    """TEST 4: early resolution must raise uniqueness. On a series where every
+    label hits its TARGET within ~a few bars, actual-t1 uniqueness at H=120 must
+    be FAR above the nominal 1/120 -- proving label_cell/uniqueness use the
+    ACTUAL t1, not the nominal max horizon."""
+    from src.h1_horizon_feasibility import label_cell, uniqueness_from_spans
+
+    n = 600
+    idx = pd.date_range('2015-01-01', periods=n, freq='h', tz='UTC')
+    # steadily rising close so a +vol target is always hit within a couple bars
+    close = 1.10 * np.exp(np.cumsum(np.full(n, 0.003)))
+    full = pd.DataFrame({'open': close, 'high': close * 1.01,
+                         'low': close * 0.999, 'close': close}, index=idx)
+    entry_pos = np.arange(0, 400)
+    horizon_vol = np.full(n, 0.002)     # small barrier -> hit almost immediately
+    res = label_cell(full, entry_pos, horizon_vol, H=120, m=1.5)
+
+    assert res['t1'].max() <= 10, "targets must resolve early in this fixture"
+    u_actual = uniqueness_from_spans(entry_pos, entry_pos + res['t1'], grid_len=n)
+    assert u_actual > 5 * (1.0 / 120), "actual-t1 uniqueness must far exceed nominal 1/120"
+
+
+def test_feasibility_never_indexes_validation_or_test_slice():
+    """TEST 5: the scan's labelled entries + their full horizon must stay
+    strictly inside the train slice -- entry_pos + H < train/val boundary
+    position for every eligible entry, at the widest horizon in the grid."""
+    from src.h1_horizon_feasibility import _eligible_entries, HORIZONS
+
+    # synthetic single-instrument input dict mirroring _prepare_inputs' shape
+    n = 2000
+    idx = pd.date_range('2015-01-01', periods=n, freq='h', tz='UTC')
+    train_end_pos = 1400
+    base_eligible = np.zeros(n, dtype=bool)
+    base_eligible[10:train_end_pos] = True      # train region, past warm-up
+    inp = {'idx': idx, 'train_end_pos': train_end_pos, 'base_eligible': base_eligible}
+
+    for H in HORIZONS:
+        ep = _eligible_entries(inp, H)
+        assert (ep + H < train_end_pos).all(), \
+            f"H={H}: an entry's horizon reaches into the validation slice"
+        assert (ep < train_end_pos).all()
+
+
+def _tiny_feasibility_inputs():
+    """Small synthetic 4-instrument inputs + common index for a fast run() that
+    still exercises every real write path."""
+    from src.h1_horizon_feasibility import EWMA_SPAN
+    from src.triple_barrier import ewma_log_return_std
+    from src.pooled_h1_data import POOLED_PAIRS
+
+    n = 900
+    idx = pd.date_range('2015-01-01', periods=n, freq='h', tz='UTC')
+    common = idx[:800]
+    train_end_ts = idx[560]
+    inputs = {}
+    for i, inst in enumerate(POOLED_PAIRS):
+        rng = np.random.default_rng(100 + i)
+        close = (1.10 + 0.01 * i) * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
+        full = pd.DataFrame({'open': close, 'high': close * 1.002,
+                             'low': close * 0.998, 'close': close}, index=idx)
+        per_bar_std = ewma_log_return_std(close, EWMA_SPAN)
+        train_end_pos = 560
+        base_eligible = np.zeros(n, dtype=bool)
+        base_eligible[210:560] = True
+        inputs[inst] = {'full': full, 'idx': idx, 'per_bar_std': per_bar_std,
+                        'train_end_pos': train_end_pos, 'base_eligible': base_eligible,
+                        'grid_len': n}
+    return inputs, common, train_end_ts
+
+
+def test_feasibility_run_writes_no_hypothesis_log(monkeypatch, tmp_path):
+    """TEST 6: a full run() must not create or modify ANY results/*hypothesis_log.csv
+    -- this scan is explicitly NOT a hypothesis test."""
+    import glob
+    import hashlib
+    import src.h1_horizon_feasibility as feas
+
+    logs = glob.glob('results/*hypothesis_log.csv')
+    assert logs, "expected existing hypothesis logs to guard"
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    monkeypatch.setattr(feas, '_prepare_inputs', lambda out_dir='x': _tiny_feasibility_inputs())
+    before = {p: _hash(p) for p in logs}
+    feas.run(out_csv=str(tmp_path / 'feas.csv'), verbose=False, enforce_anchor=False)
+    after = {p: _hash(p) for p in logs}
+    assert before == after, "no hypothesis log may be written or modified by the feasibility scan"
+
+
+def test_feasibility_run_never_touches_protected_files(monkeypatch, tmp_path):
+    """TEST 7: a full run() must leave every protected artifact byte-identical
+    (incl. src/triple_barrier.py, src/pooled_h1_model.py's inputs, and
+    results/eurusd_h1.csv)."""
+    import hashlib
+    import os
+    import src.h1_horizon_feasibility as feas
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'src/triple_barrier.py']
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    monkeypatch.setattr(feas, '_prepare_inputs', lambda out_dir='x': _tiny_feasibility_inputs())
+    before = {p: _hash(p) for p in protected}
+    feas.run(out_csv=str(tmp_path / 'feas.csv'), verbose=False, enforce_anchor=False)
+    after = {p: _hash(p) for p in protected}
+    changed = [p for p in protected if before[p] != after[p]]
+    assert changed == [], f"feasibility run must never modify: {changed}"
