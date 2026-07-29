@@ -4395,3 +4395,1308 @@ def test_h1_diag_run_never_touches_protected_files(monkeypatch, tmp_path):
     assert set(result) == {'rebuilt', 'temporal', 'hourly', 'features',
                            'survival_pattern', 'n_val'}
     assert 'verdict' not in result['temporal'] and 'verdict' not in result['hourly']
+
+
+# ──────────────── BROKER TIME -> NEW YORK TIME CONVERSION ─────────────────────
+# The six STEP 2 conversion gates, plus the two containment sha256 tests. Each
+# gate test asserts BOTH that it passes on the real conversion AND that it
+# actually fires on a deliberately corrupted frame -- a gate that cannot fail is
+# not a gate.
+
+_NY_CACHE = {}
+
+
+def _ny_frames():
+    """Build the real conversion once and reuse it across the gate tests."""
+    if 'v' not in _NY_CACHE:
+        import src.h1_newyork_time as nyt
+        server = nyt.load_server_frame()
+        rule = nyt.determine_dst_rule(server, verbose=False)
+        ny = nyt.to_new_york(server, era_start=rule['eu_rule_era_start'])
+        report = nyt.verify_conversion(server, ny, verbose=False)
+        _NY_CACHE['v'] = (server, ny, rule, report)
+    return _NY_CACHE['v']
+
+
+def test_ny_gate1_prices_and_row_count_identical():
+    """STEP 2 GATE 1: the conversion relabels TIME only -- row count and every
+    OHLC value must survive byte-identical and in the original order."""
+    import pytest
+    import src.h1_newyork_time as nyt
+    server, ny, _rule, report = _ny_frames()
+
+    assert report['gate_1_prices_identical'] is True
+    assert len(ny) == len(server) == 70000
+    for col in ('open', 'high', 'low', 'close'):
+        assert np.array_equal(server[col].to_numpy(), ny[col].to_numpy())
+
+    # a single altered price must be caught
+    tampered = ny.copy()
+    tampered.iloc[5, tampered.columns.get_loc('close')] += 0.0001
+    with pytest.raises(nyt.ConversionVerificationError):
+        nyt.verify_conversion(server, tampered, verbose=False)
+    # ...as must a dropped row
+    with pytest.raises(nyt.ConversionVerificationError):
+        nyt.verify_conversion(server, ny.iloc[:-1], verbose=False)
+
+
+def test_ny_gate2_monotonic_unique_even_across_the_dst_fold():
+    """STEP 2 GATE 2: ny_timestamp must stay strictly ordered and unique. Under
+    a real tz conversion the autumn fold can repeat a LOCAL clock value; the
+    tz-aware timestamps must still be unique and ordered."""
+    import pytest
+    import src.h1_newyork_time as nyt
+    server, ny, _rule, report = _ny_frames()
+
+    idx = pd.DatetimeIndex(ny.index)
+    assert report['gate_2_monotonic_unique'] is True
+    assert idx.is_monotonic_increasing and not idx.has_duplicates
+    assert idx.tz is not None
+    # the fold is reported, never silently collapsed
+    assert report['repeated_local_wall_clock_values'] >= 0
+
+    shuffled = ny.iloc[np.r_[1, 0, np.arange(2, len(ny))]]
+    with pytest.raises(nyt.ConversionVerificationError):
+        nyt.verify_conversion(server, shuffled, verbose=False)
+
+
+def test_ny_gate3_roundtrip_reproduces_server_timestamp_exactly():
+    """STEP 2 GATE 3: NY -> real UTC -> broker clock must reproduce every
+    server_timestamp exactly, and the implied broker offset must be CET/CEST
+    (+1/+2) -- the conversion is not free to invent a zone."""
+    import pytest
+    import src.h1_newyork_time as nyt
+    server, ny, _rule, report = _ny_frames()
+
+    assert report['gate_3_roundtrip_exact'] is True
+    assert set(report['broker_utc_offset_counts']) == {1, 2}
+
+    utc = pd.DatetimeIndex(ny.index).tz_convert('UTC').tz_localize(None)
+    back = utc + pd.to_timedelta(ny['broker_utc_offset_h'].to_numpy(), unit='h')
+    assert np.array_equal(pd.DatetimeIndex(back).to_numpy(),
+                          pd.DatetimeIndex(pd.to_datetime(ny['server_timestamp'])).to_numpy())
+
+    tampered = ny.copy()
+    tampered.iloc[100, tampered.columns.get_loc('broker_utc_offset_h')] = 3
+    with pytest.raises(nyt.ConversionVerificationError):
+        nyt.verify_conversion(server, tampered, verbose=False)
+
+
+def test_ny_gate4_fx_day_hour_zero_is_exactly_ny_hour_17():
+    """STEP 2 GATE 4: the FX day opens at 17:00 New York, so fx_day_hour == 0
+    and ny_hour == 17 must be the same set of bars, in both directions."""
+    import pytest
+    import src.h1_newyork_time as nyt
+    server, ny, _rule, report = _ny_frames()
+
+    assert report['gate_4_roll_anchor'] is True
+    assert (ny.loc[ny['fx_day_hour'] == 0, 'ny_hour'] == 17).all()
+    assert (ny.loc[ny['ny_hour'] == 17, 'fx_day_hour'] == 0).all()
+    # and the whole clock is a clean rotation of the NY hour
+    assert ((ny['ny_hour'] - 17) % 24 == ny['fx_day_hour']).all()
+    # 23 = the last hour before the roll, i.e. 16:00 NY
+    assert (ny.loc[ny['fx_day_hour'] == 23, 'ny_hour'] == 16).all()
+
+    tampered = ny.copy()
+    tampered.iloc[0, tampered.columns.get_loc('fx_day_hour')] = 0
+    tampered.iloc[0, tampered.columns.get_loc('ny_hour')] = 4
+    with pytest.raises(nyt.ConversionVerificationError):
+        nyt.verify_conversion(server, tampered, verbose=False)
+
+
+def test_ny_gate5_week_opens_at_1700_ny_and_closes_at_1600():
+    """STEP 2 GATE 5: the FX week opens Sunday 17:00 NY and closes Friday 17:00
+    NY (so its last bar is the 16:00-17:00 one). Weeks that open later are
+    holiday-shortened and must be ENUMERATED, never silently absorbed."""
+    import src.h1_newyork_time as nyt
+    _server, _ny, _rule, report = _ny_frames()
+
+    assert report['gate_5_week_anchor'] is True
+    n_weeks = report['n_weeks']
+    assert report['n_weeks_opening_at_1700_ny'] >= 0.95 * n_weeks
+    assert report['n_weeks_closing_at_1600_ny'] >= 0.95 * n_weeks
+    # every deviation is listed individually, with its actual NY hour
+    late = report['late_week_openings']
+    assert len(late) == n_weeks - report['n_weeks_opening_at_1700_ny']
+    assert all('ny_hour' in l and l['ny_hour'] != 17 for l in late)
+
+
+def test_ny_gate6_spot_checks_have_hand_computed_offsets():
+    """STEP 2 GATE 6: three hand-checkable bars. Both zones on standard time and
+    both on DST give the +6 server-to-NY offset; a bar inside a March US/EU
+    mismatch window gives +5, because the US has sprung forward and the EU has
+    not."""
+    import src.h1_newyork_time as nyt
+    _server, ny, _rule, report = _ny_frames()
+
+    spots = {s['label']: s for s in report['spot_checks']}
+    assert len(spots) == 3
+
+    jan = spots['mid-January (std/std)']
+    assert jan['offset_h'] == 6 and jan['is_dst_mismatch'] is False
+    jul = spots['mid-July (DST/DST)']
+    assert jul['offset_h'] == 6 and jul['is_dst_mismatch'] is False
+    mar = spots['March mismatch window']
+    assert mar['offset_h'] == 5 and mar['is_dst_mismatch'] is True
+
+    # each spot's NY wall clock really is its server clock minus the offset
+    for s in spots.values():
+        server_ts = pd.Timestamp(s['server'])
+        ny_ts = pd.Timestamp(s['ny']).tz_localize(None)
+        assert (server_ts - ny_ts) == pd.Timedelta(hours=s['offset_h'])
+        assert int(ny_ts.hour) == s['ny_hour']
+        assert (s['ny_hour'] - 17) % 24 == s['fx_day_hour']
+
+
+def _stub_ny_run(monkeypatch, tmp_path):
+    """Run the whole NY program with the GBM fit stubbed out (real data, real
+    conversion, no GPU training)."""
+    import src.h1_direction_model as h1d
+    import src.h1_direction_diagnostics as diag
+    import src.h1_newyork_time as nyt
+
+    rng = np.random.default_rng(7)
+
+    class _StubBooster:
+        def get_score(self, importance_type='gain'):
+            return {f'f{j}': float(j + 1) for j in range(15)}
+
+    class _StubGBM:
+        def get_booster(self):
+            return _StubBooster()
+
+    monkeypatch.setattr(h1d, 'train_gbm', lambda X, y, seed=42: _StubGBM())
+    monkeypatch.setattr(h1d, 'predict_gbm_proba',
+                        lambda clf, X: rng.uniform(0, 1, len(X)))
+    monkeypatch.setattr(diag, 'REPRODUCTION_TOL', 1.0)
+    return nyt.run(write=True, verbose=False,
+                   history_path=str(tmp_path / 'ny_history.csv'),
+                   diagnostics_path=str(tmp_path / 'ny_diag.csv'))
+
+
+def test_ny_run_writes_no_hypothesis_log(monkeypatch, tmp_path):
+    """This program is DESCRIPTIVE -- no alpha, no verdict. A full run must
+    leave every results/*hypothesis_log.csv byte-identical and create none."""
+    import glob
+    import hashlib
+    import os
+
+    logs = glob.glob('results/*hypothesis_log.csv')
+    assert logs
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in logs}
+    _stub_ny_run(monkeypatch, tmp_path)
+
+    assert sorted(glob.glob('results/*hypothesis_log.csv')) == sorted(logs)
+    changed = [p for p in logs if before[p] != _hash(p)]
+    assert changed == [], f"NY conversion must not touch any hypothesis log: {changed}"
+    assert os.path.exists(str(tmp_path / 'ny_history.csv'))
+    assert os.path.exists(str(tmp_path / 'ny_diag.csv'))
+
+
+def test_ny_run_never_touches_protected_files(monkeypatch, tmp_path):
+    """The protected set -- including the pre-existing results/pooled_h1/*.csv
+    that this program reads, src/h1_direction_model.py and every hypothesis log
+    -- must be byte-identical after a full run. The reserved test block
+    [85:100%] must also never be indexed."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_direction_diagnostics as diag
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'src/triple_barrier.py', 'src/pooled_h1_data.py',
+                 'src/pooled_h1_model.py', 'src/h1_direction_model.py',
+                 'src/h1_horizon_feasibility.py']
+    # the PRE-EXISTING pooled CSVs only -- never the new _newyork file
+    protected += [p for p in glob.glob('results/pooled_h1/*.csv')
+                  if 'newyork' not in p]
+    protected += glob.glob('results/*hypothesis_log.csv')
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+    assert any(p.replace(os.sep, '/').endswith('pooled_h1/EURUSD_h1.csv')
+               for p in protected)
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    result = _stub_ny_run(monkeypatch, tmp_path)
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"NY conversion must never modify: {changed}"
+
+    # the reserved test block was never indexed
+    reb = result['diagnostics']['rebuilt']
+    val_end = reb['val_end_ts']
+    assert pd.DatetimeIndex(reb['val_idx']).max() <= val_end
+    assert pd.DatetimeIndex(reb['train_idx']).max() <= val_end
+    assert reb['split_counts']['n_test_reserved'] > 0
+    diag.assert_no_test_block(reb['val_idx'], val_end)
+
+    # and it produced descriptive tables only -- no verdict anywhere
+    table = result['diagnostics']['table']
+    assert 'verdict' not in table.columns
+    assert set(table['scope']) == {'ny_hour', 'fx_day_hour', 'fx_week_day',
+                                   'ny_session', 'sunday_evening_hours_only',
+                                   'trivial_predictor', 'slice_total'}
+
+
+# ───────────── EURUSD H1 MOVEMENT BY NEW YORK HOUR (descriptive) ──────────────
+# Six tests. The module computes statistics, so the tests guard the two things
+# that could quietly make those statistics wrong or improper: the SCOPE split
+# (magnitude may read everything, direction may not) and the pip arithmetic.
+
+_MV_CACHE = {}
+
+
+def _mv_run():
+    """Run the descriptive pass once (no writes) and reuse it."""
+    if 'r' not in _MV_CACHE:
+        import src.h1_movement_profile as mv
+        _MV_CACHE['r'] = mv.run(write=False)
+    return _MV_CACHE['r']
+
+
+def test_movement_scope_a_consumes_every_bar():
+    """TEST 1: scope A (magnitude) is deliberately the FULL sample -- intraday
+    volatility seasonality is structural, not a searchable signal. Assert it
+    really consumed all 70,000 bars and that the per-hour counts add up."""
+    import src.h1_movement_profile as mv
+    r = _mv_run()
+
+    assert r['n_bars_scope_a'] == 70000
+    assert len(r['full']) == 70000
+
+    n_col = f'n_bars{mv.MAGNITUDE_SUFFIX}'
+    assert int(r['hours'][n_col].sum()) == 70000
+    assert int(r['sessions'][n_col].sum()) == 70000
+
+    # close-to-close drops exactly the gap bars (+ the final bar, which has no
+    # successor); intrabar range keeps every bar.
+    cc_col = f'n_close_to_close{mv.MAGNITUDE_SUFFIX}'
+    assert int(r['hours'][cc_col].sum()) == 70000 - r['n_gap_excluded']
+    assert r['full']['bar_range_pips'].notna().all()
+
+
+def test_movement_scope_b_never_indexes_past_the_85pct_bound():
+    """TEST 2: every SIGNED statistic is restricted to the first 85%. A signed
+    per-hour drift is a tradeable signal, so reading the reserved block would
+    spend the last clean slice this project has for hour-of-day questions."""
+    import pytest
+    import src.h1_movement_profile as mv
+    r = _mv_run()
+
+    bound = r['scope_b_bound_ts']
+    assert r['n_bars_scope_b'] == int(70000 * 0.85) == 59500
+    assert pd.DatetimeIndex(r['scope_b'].index).max() <= bound
+
+    # not vacuous: a reserved block genuinely exists beyond the bound
+    assert pd.DatetimeIndex(r['full'].index).max() > bound
+    assert len(r['full']) - r['n_bars_scope_b'] == 10500
+
+    # the signed per-hour counts sum to the scope-B row count, never the full one
+    n_col = f'n_bars{mv.DIRECTION_SUFFIX}'
+    assert int(r['hours'][n_col].sum()) == 59500
+    assert int(r['sessions'][n_col].sum()) == 59500
+
+    # and the guard fires on a post-bound timestamp
+    with pytest.raises(mv.TestBlockTouchedError):
+        mv.assert_direction_scope([bound + pd.Timedelta(hours=1)], bound)
+
+
+def test_movement_pip_conversion_is_exact():
+    """TEST 3: 1 pip = 0.0001. A 0.00015 close-to-close move must report as 1.5
+    pips, and a bar whose high-low is 0.00300 must report a 30.0 pip range."""
+    import src.h1_movement_profile as mv
+
+    idx = pd.date_range('2024-01-15 09:00', periods=3, freq='h',
+                        tz='America/New_York')
+    frame = pd.DataFrame({
+        'open': [1.10000, 1.10015, 1.10015],
+        'high': [1.10100, 1.10165, 1.10100],
+        'low':  [1.10000, 1.09865, 1.10000],
+        'close': [1.10000, 1.10015, 1.10015],
+        'ny_hour': [9, 10, 11],
+    }, index=idx)
+
+    out = mv.derive_movement_columns(frame)
+    assert abs(out['signed_pips'].iloc[0] - 1.5) < 1e-9      # +0.00015 -> +1.5
+    assert abs(out['abs_pips'].iloc[0] - 1.5) < 1e-9
+    assert abs(out['bar_range_pips'].iloc[1] - 30.0) < 1e-9  # 0.00300 -> 30.0
+
+    # a negative move keeps its sign and its magnitude
+    frame2 = frame.copy()
+    frame2.loc[frame2.index[1], 'close'] = 1.09985
+    out2 = mv.derive_movement_columns(frame2)
+    assert abs(out2['signed_pips'].iloc[0] + 1.5) < 1e-9
+    assert abs(out2['abs_pips'].iloc[0] - 1.5) < 1e-9
+
+    # the last bar has no successor -> no close-to-close value, but a range
+    assert np.isnan(out['signed_pips'].iloc[-1])
+    assert not np.isnan(out['bar_range_pips'].iloc[-1])
+
+
+def test_movement_session_buckets_are_exhaustive_and_disjoint():
+    """TEST 4: the five NY sessions must cover all 24 hours exactly once, and
+    their row counts must sum to the total -- otherwise the session ranking
+    would be computed over a partition that drops or double-counts bars."""
+    import src.h1_movement_profile as mv
+    from src.h1_newyork_time import SESSION_ORDER, ny_session
+    r = _mv_run()
+
+    assigned = [ny_session(h) for h in range(24)]
+    assert len(assigned) == 24
+    assert set(assigned) == set(SESSION_ORDER)
+    # each hour lands in exactly one bucket
+    per_bucket = {s: [h for h in range(24) if ny_session(h) == s] for s in SESSION_ORDER}
+    flat = sorted(h for hrs in per_bucket.values() for h in hrs)
+    assert flat == list(range(24))
+    assert sum(len(v) for v in per_bucket.values()) == 24
+
+    n_col = f'n_bars{mv.MAGNITUDE_SUFFIX}'
+    assert int(r['sessions'][n_col].sum()) == len(r['full']) == 70000
+    # the session totals equal the sum of their member hours
+    hours = r['hours'].set_index('ny_hour')
+    for sess, hrs in per_bucket.items():
+        want = int(hours.loc[hrs, n_col].sum())
+        got = int(r['sessions'].set_index('session').loc[sess, n_col])
+        assert got == want, f"{sess}: {got} != {want}"
+
+
+def test_movement_run_writes_no_hypothesis_log(tmp_path):
+    """TEST 5: descriptive statistics consume no alpha. A full run must leave
+    every results/*hypothesis_log.csv byte-identical and create none."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_movement_profile as mv
+
+    logs = glob.glob('results/*hypothesis_log.csv')
+    assert logs
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in logs}
+    mv.run(write=True, hour_path=str(tmp_path / 'hour.csv'),
+           session_path=str(tmp_path / 'session.csv'))
+
+    assert sorted(glob.glob('results/*hypothesis_log.csv')) == sorted(logs)
+    changed = [p for p in logs if before[p] != _hash(p)]
+    assert changed == [], f"movement profile must not touch any hypothesis log: {changed}"
+    assert os.path.exists(str(tmp_path / 'hour.csv'))
+    assert os.path.exists(str(tmp_path / 'session.csv'))
+
+
+def test_movement_run_never_touches_protected_files(tmp_path):
+    """TEST 6: the protected set -- including the whole of results/pooled_h1/
+    (this module's read-only input) and the three H1 source modules -- must be
+    byte-identical after a full run."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_movement_profile as mv
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'src/h1_newyork_time.py', 'src/h1_direction_model.py',
+                 'src/h1_direction_diagnostics.py']
+    protected += glob.glob('results/pooled_h1/*')       # the ENTIRE input dir
+    protected += glob.glob('results/*hypothesis_log.csv')
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+    assert any(p.replace(os.sep, '/').endswith('EURUSD_h1_newyork.csv')
+               for p in protected)
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    result = mv.run(write=True, hour_path=str(tmp_path / 'hour.csv'),
+                    session_path=str(tmp_path / 'session.csv'))
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"movement profile must never modify: {changed}"
+
+    # every output column carries its scope; the two are never merged unlabelled
+    stat_cols = [c for c in result['hours'].columns
+                 if c not in ('ny_hour', 'session', 'rank_by_mean_abs_pips')]
+    assert stat_cols and all(c.endswith(mv.MAGNITUDE_SUFFIX)
+                             or c.endswith(mv.DIRECTION_SUFFIX) for c in stat_cols)
+
+
+# ─────────────── OSCILLATOR DIVERGENCE ON M15 (new hypothesis family) ─────────
+# Eight tests. The first guards the single error that makes divergence backtest
+# well and trade badly: measuring the forward move from the swing instead of
+# from the bar on which the swing was actually confirmed.
+
+def _div_frame(n=60, start='2024-01-15 04:00', tz='America/New_York', seed=11):
+    """Small continuous M15 frame on the New York clock."""
+    rng = np.random.default_rng(seed)
+    idx = pd.date_range(start, periods=n, freq='15min', tz=tz)
+    close = 1.1000 + np.cumsum(rng.normal(0, 0.0004, n))
+    return pd.DataFrame({
+        'open': close, 'high': close + 0.0006, 'low': close - 0.0006,
+        'close': close, 'ny_hour': idx.hour,
+    }, index=idx)
+
+
+def _pivot(idx, kind, level, reveal):
+    return {'idx': idx, 'kind': kind, 'level': level, 'reveal_bar': reveal}
+
+
+def test_divergence_entry_is_reveal_bar_not_the_swing():
+    """DIV TEST 1 (the important one): an event's entry index must be
+    reveal_bar(s2), NOT s2. The forward return must be measured from
+    close[reveal_bar]; measuring from close[s2] is look-ahead. Asserted
+    non-vacuously -- the two values are shown to differ."""
+    import src.divergence as dv
+
+    df = _div_frame(40)
+    close = df['close'].to_numpy()
+    # force a REGULAR BULLISH pair: lower low in price, higher low in oscillator
+    s1_i, s2_i, reveal = 5, 20, 26
+    df.iloc[s2_i, df.columns.get_loc('close')] = close[s1_i] - 0.0050
+    close = df['close'].to_numpy()
+    osc = pd.Series(np.linspace(20.0, 80.0, len(df)), index=df.index)
+    pivots = [_pivot(s1_i, 'L', close[s1_i] - 0.0006, s1_i + 3),
+              _pivot(12, 'H', close[12] + 0.0006, 15),
+              _pivot(s2_i, 'L', close[s2_i] - 0.0006, reveal)]
+    atr = np.full(len(df), 0.0010)
+
+    ev = dv.build_events(df, pivots, osc, 'osc', atr)
+    assert len(ev) == 1
+    e = ev.iloc[0]
+    assert e['div_type'] == 'regular_bullish' and e['direction'] == +1
+
+    # the entry is the REVEAL bar, and it is genuinely later than the swing
+    assert int(e['reveal_idx']) == reveal
+    assert int(e['reveal_idx']) != int(e['s2_idx'])
+    assert e['confirm_lag_bars'] == reveal - s2_i > 0
+    assert e['entry_close'] == close[reveal]
+
+    n = dv.PRIMARY_HORIZON
+    out = dv.attach_forward_returns(ev, df, horizons=(n,))
+    got = out[f'signed_return_pips_n{n}'].iloc[0]
+    from_reveal = (close[reveal + n] - close[reveal]) / dv.PIP
+    from_swing = (close[s2_i + n] - close[s2_i]) / dv.PIP
+    assert abs(got - from_reveal) < 1e-9
+    # non-vacuous: the look-ahead version really is a different number
+    assert abs(from_reveal - from_swing) > 1e-6
+    assert abs(got - from_swing) > 1e-6
+
+
+def test_divergence_classification_all_four_types_and_a_null():
+    """DIV TEST 2: the STEP 0 specification, on hand-built two-swing cases."""
+    import src.divergence as dv
+
+    # lows: price lower-low + oscillator higher-low -> REGULAR BULLISH
+    assert dv.classify('L', 1.1000, 1.0900, 30.0, 40.0) == ('regular_bullish', +1)
+    # lows: price higher-low + oscillator lower-low -> HIDDEN BULLISH
+    assert dv.classify('L', 1.0900, 1.1000, 40.0, 30.0) == ('hidden_bullish', +1)
+    # highs: price higher-high + oscillator lower-high -> REGULAR BEARISH
+    assert dv.classify('H', 1.1000, 1.1100, 70.0, 60.0) == ('regular_bearish', -1)
+    # highs: price lower-high + oscillator higher-high -> HIDDEN BEARISH
+    assert dv.classify('H', 1.1100, 1.1000, 60.0, 70.0) == ('hidden_bearish', -1)
+
+    # both moving the SAME way is not a divergence
+    assert dv.classify('L', 1.1000, 1.0900, 40.0, 30.0) == (None, 0)
+    assert dv.classify('H', 1.1000, 1.1100, 60.0, 70.0) == (None, 0)
+    # a flat leg is not a divergence either
+    assert dv.classify('L', 1.1000, 1.1000, 30.0, 40.0) == (None, 0)
+    assert dv.classify('L', 1.1000, 1.0900, 30.0, 30.0) == (None, 0)
+    assert dv.classify('X', 1.1, 1.0, 30.0, 40.0) == (None, 0)
+
+    # only the two REGULAR types are decision-bearing
+    assert set(dv.REGULAR_TYPES) == {'regular_bullish', 'regular_bearish'}
+    assert 'hidden_bullish' not in dv.REGULAR_TYPES
+
+
+def test_divergence_macd_normalisation_is_scale_invariant():
+    """DIV TEST 3: MACD is unbounded and scales with price, so the raw line
+    cannot be compared across periods. macd_norm = MACD/ATR14 must be invariant
+    to a pure rescaling of the price series; the raw line must not be."""
+    import src.divergence as dv
+    from src.zigzag_swings import _atr14
+
+    df = _div_frame(300, seed=5)
+    scaled = df.copy()
+    for col in ('open', 'high', 'low', 'close'):
+        scaled[col] = scaled[col] * 3.0
+
+    def _macd(frame):
+        atr = pd.Series(_atr14(frame['high'], frame['low'], frame['close']),
+                        index=frame.index)
+        return dv.compute_macd(frame['close'], atr)
+
+    a, b = _macd(df), _macd(scaled)
+    tail = slice(100, None)
+    norm_a = a['macd_norm'].to_numpy()[tail]
+    norm_b = b['macd_norm'].to_numpy()[tail]
+    assert np.allclose(norm_a, norm_b, rtol=1e-6, atol=1e-9)
+
+    # ...while the RAW line does move with the price scale (so the test bites)
+    raw_a = a['macd_line'].to_numpy()[tail]
+    raw_b = b['macd_line'].to_numpy()[tail]
+    assert not np.allclose(raw_a, raw_b, rtol=1e-6, atol=1e-9)
+    assert np.allclose(raw_b, raw_a * 3.0, rtol=1e-6, atol=1e-12)
+
+
+def test_divergence_oscillators_use_full_history_not_the_session_subset():
+    """DIV TEST 4: oscillators are computed on the CONTINUOUS series. An RSI
+    value inside the session window must equal the full-history value, and must
+    DIFFER from one computed on the session subset alone -- otherwise every
+    session boundary would silently reset the indicator."""
+    import src.divergence as dv
+
+    df = _div_frame(400, start='2024-01-15 00:00', seed=9)
+    full = dv.oscillator_series(df, 'rsi', dv.DEFAULT_RSI)
+
+    in_session = (df['ny_hour'] >= dv.SESSION_START_NY) & (df['ny_hour'] < dv.SESSION_END_NY)
+    subset = df[in_session]
+    assert len(subset) > dv.DEFAULT_RSI * 2
+    subset_rsi = dv.oscillator_series(subset, 'rsi', dv.DEFAULT_RSI)
+
+    probe = subset.index[-1]
+    assert np.isfinite(full.loc[probe])
+    # the pipeline's value is the full-history one...
+    pipeline = dv.oscillator_series(df, 'rsi', dv.DEFAULT_RSI).loc[probe]
+    assert pipeline == full.loc[probe]
+    # ...and it is genuinely different from the subset-computed value
+    assert abs(float(full.loc[probe]) - float(subset_rsi.loc[probe])) > 1e-6
+
+
+def test_divergence_session_filter_selects_on_reveal_bar_not_s2():
+    """DIV TEST 5: an event whose swing sat OUTSIDE the window but was confirmed
+    inside it belongs to the session; one whose swing sat inside but was only
+    confirmed after it does not."""
+    import src.divergence as dv
+
+    df = _div_frame(200, start='2024-01-15 04:00')
+    idx = df.index
+    # swing at 06:00 NY (outside), revealed at 07:30 NY (inside)
+    s2_in = int(np.flatnonzero(idx.hour == 6)[0])
+    rev_in = int(np.flatnonzero((idx.hour == 7) & (idx.minute == 30))[0])
+    # swing at 09:00 NY (inside), revealed at 11:00 NY (outside)
+    s2_out = int(np.flatnonzero(idx.hour == 9)[0])
+    rev_out = int(np.flatnonzero(idx.hour == 11)[0])
+
+    ev = pd.DataFrame([
+        {'s2_idx': s2_in, 'reveal_idx': rev_in},
+        {'s2_idx': s2_out, 'reveal_idx': rev_out},
+    ])
+    out = dv.attach_session(ev, idx)
+
+    assert out['s2_ny_hour'].tolist() == [6, 9]
+    assert out['reveal_ny_hour'].tolist() == [7, 11]
+    # selection follows the REVEAL hour, not the swing hour
+    assert out['in_session'].tolist() == [True, False]
+
+
+def test_divergence_gap_windows_and_test_block_are_excluded():
+    """DIV TEST 6: a forward window crossing a weekend/holiday gap is EXCLUDED,
+    never padded; and a window reaching into the reserved test block is excluded
+    too, so the test block is never indexed."""
+    import src.divergence as dv
+
+    df = _div_frame(60, start='2024-01-15 04:00')
+    # punch a gap: drop four bars in the middle
+    df = pd.concat([df.iloc[:30], df.iloc[34:]])
+    contig = dv.contiguous_mask(df.index)
+    assert not contig[29], 'expected the bar before the gap to be non-contiguous'
+
+    close = df['close'].to_numpy()
+    ev = pd.DataFrame([
+        {'reveal_idx': 27, 'direction': 1},    # window straddles the gap
+        {'reveal_idx': 10, 'direction': 1},    # clean window
+        {'reveal_idx': 40, 'direction': -1},   # clean, but inside the test block
+    ])
+    n = dv.PRIMARY_HORIZON
+    out = dv.attach_forward_returns(ev, df, horizons=(n,), test_start_idx=42)
+
+    assert not out[f'window_ok_n{n}'].iloc[0], 'gap-crossing window must be excluded'
+    assert np.isnan(out[f'signed_return_pips_n{n}'].iloc[0])
+    assert out[f'window_ok_n{n}'].iloc[1]
+    assert abs(out[f'signed_return_pips_n{n}'].iloc[1]
+               - (close[14] - close[10]) / dv.PIP) < 1e-9
+    # 40 + 4 = 44 >= 42 -> reaches into the reserved block -> excluded
+    assert not out[f'window_ok_n{n}'].iloc[2]
+    assert np.isnan(out[f'signed_return_pips_n{n}'].iloc[2])
+
+
+def test_divergence_features_have_no_look_ahead():
+    """DIV TEST 7: every feature is computable from bars <= reveal_bar. Rebuild
+    the events on a frame TRUNCATED just after an event's reveal bar and assert
+    its features are bit-identical to the full-frame values."""
+    import src.divergence as dv
+
+    df = _div_frame(500, start='2024-01-10 00:00', seed=21)
+    pivots = dv.detect_swings(df)
+    full = dv.build_all_events(df, pivots, {'rsi14': ('rsi', dv.DEFAULT_RSI)})
+    assert len(full) >= 2, 'need at least one event to compare'
+
+    e = full.iloc[0]
+    cut = int(e['reveal_idx']) + 1
+    truncated = df.iloc[:cut]
+    piv_t = dv.detect_swings(truncated)
+    trunc = dv.build_all_events(truncated, piv_t, {'rsi14': ('rsi', dv.DEFAULT_RSI)})
+    match = trunc[trunc['reveal_idx'] == e['reveal_idx']]
+    assert len(match) == 1, 'the event must still be detectable with no future bars'
+    m = match.iloc[0]
+
+    for col in ['price_slope_norm', 'osc_slope', 'div_magnitude',
+                'swing_gap_bars', 'confirm_lag_bars', 'osc_level_at_s1',
+                'osc_level_at_s2', 'price_move_since_s2_pips', 'entry_close',
+                's1_idx', 's2_idx', 'reveal_idx']:
+        assert m[col] == e[col], f'{col} changed when future bars were removed'
+    assert m['div_type'] == e['div_type'] and m['direction'] == e['direction']
+
+
+def test_divergence_run_never_touches_protected_files(tmp_path):
+    """DIV TEST 8: a full run must leave the protected set byte-identical --
+    models/, the pipeline modules, the cached M15 and H1 sources, the existing
+    results/pooled_h1 files, src/zigzag_swings.py, src/h1_newyork_time.py and
+    every pre-existing hypothesis log."""
+    import glob
+    import hashlib
+    import os
+    import src.divergence_check as dc
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'results/eurusd_m15.csv', 'src/zigzag_swings.py',
+                 'src/h1_newyork_time.py', 'src/pooled_h1_model.py',
+                 'src/h1_direction_model.py']
+    protected += [p for p in glob.glob('results/pooled_h1/*') if 'm15_newyork' not in p]
+    protected += glob.glob('results/*hypothesis_log.csv')
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+    assert any(p.endswith('eurusd_m15.csv') for p in protected)
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    result = dc.run(ny_path=str(tmp_path / 'm15_ny.csv'),
+                    log_path=str(tmp_path / 'divergence_hypothesis_log.csv'),
+                    register=True, write_ny=True, verbose=False, run_band=False)
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"divergence run must never modify: {changed}"
+
+    # its OWN log is written, in its own new family -- FOUR rows since the
+    # triggered-entry amendment grew it 2 -> 4 and tightened alpha to 0.05/4
+    log = pd.read_csv(str(tmp_path / 'divergence_hypothesis_log.csv'))
+    assert sorted(log['n'].tolist()) == [1, 2, 3, 4]
+    assert (log['alpha'] == 0.0125).all()
+    assert set(log['verdict']) <= {'KEEP', 'DROP'}
+    # the post-result amendment sequence is on the record in every new row
+    assert log[log['n'].isin([3, 4])]['notes'].str.contains('POST-RESULT').all()
+
+    # the reserved test block was never indexed
+    assert (result['study']['slice'] != 'test').all()
+    assert (result['val_events']['reveal_idx'] < result['split']['val_end']).all()
+    # ...and a test block genuinely exists, so that is not vacuous
+    assert result['split']['val_end'] < result['n_bars']
+
+
+# ───────── AMENDMENT: setup -> structural-break entry (H_div.3 / H_div.4) ─────
+
+def _setup_arrays(highs, lows, closes):
+    h = np.asarray(highs, float); l = np.asarray(lows, float); c = np.asarray(closes, float)
+    contig = np.ones(len(c), dtype=bool); contig[-1] = False
+    return h, l, c, contig
+
+
+def test_setup_outcomes_are_exhaustive_and_mutually_exclusive():
+    """AMEND TEST 1: every setup ends in exactly one of TRIGGERED / INVALIDATED
+    / EXPIRED. Asserted on hand-built cases for each outcome AND on the real
+    resolved table, where the three counts must sum to the total with no row
+    carrying two states."""
+    import src.divergence as dv
+
+    # bearish setup off a swing HIGH at index 2: high=1.1050, low=1.1000
+    h = [1.1000, 1.1020, 1.1050, 1.1010, 1.1005, 1.1005]
+    l = [1.0990, 1.1000, 1.1000, 1.0980, 1.0960, 1.0960]
+    # TRIGGERED: bar 4 closes below low[s2]=1.1000
+    trig = dv.resolve_setup(*_setup_arrays(h, l,
+        [1.0995, 1.1010, 1.1005, 1.1002, 1.0965, 1.0965]),
+        'H', s2=2, reveal=3, max_idx=None)
+    assert trig['outcome'] == dv.OUTCOME_TRIGGERED
+    assert trig['trigger_idx'] == 4 and trig['bars_reveal_to_trigger'] == 1
+
+    # INVALIDATED: bar 3's HIGH exceeds high[s2]=1.1050 before any trigger
+    h_inv = [1.1000, 1.1020, 1.1050, 1.1060, 1.1005, 1.1005]
+    inval = dv.resolve_setup(*_setup_arrays(h_inv, l,
+        [1.0995, 1.1010, 1.1005, 1.1002, 1.0965, 1.0965]),
+        'H', s2=2, reveal=3, max_idx=None)
+    assert inval['outcome'] == dv.OUTCOME_INVALIDATED
+    assert inval['trigger_idx'] == -1
+
+    # EXPIRED: neither happens inside the window
+    flat_c = [1.1005] * 40
+    flat_h = [1.1049] * 40; flat_h[2] = 1.1050
+    flat_l = [1.1000] * 40
+    exp = dv.resolve_setup(*_setup_arrays(flat_h, flat_l, flat_c),
+                           'H', s2=2, reveal=3, max_idx=None)
+    assert exp['outcome'] == dv.OUTCOME_EXPIRED and exp['trigger_idx'] == -1
+
+    # bullish mirror: swing LOW, trigger = close strictly ABOVE high[s2]
+    bh = [1.1000, 1.1000, 1.1010, 1.1000, 1.1000]
+    bl = [1.0990, 1.0990, 1.0950, 1.0990, 1.0990]
+    bull = dv.resolve_setup(*_setup_arrays(bh, bl,
+        [1.0995, 1.0995, 1.0960, 1.0995, 1.1020]),
+        'L', s2=2, reveal=3, max_idx=None)
+    assert bull['outcome'] == dv.OUTCOME_TRIGGERED and bull['trigger_idx'] == 4
+
+    # and on the REAL table: exhaustive, mutually exclusive, consistent
+    ny = dv.load_m15_newyork()
+    ev, _piv, _c = dv.build_event_table(ny)
+    setups = dv.build_triggered_table(ev, ny)
+    assert set(setups['outcome']) <= set(dv.SETUP_OUTCOMES)
+    counts = setups['outcome'].value_counts()
+    assert int(counts.reindex(list(dv.SETUP_OUTCOMES)).fillna(0).sum()) == len(setups)
+    triggered = setups['outcome'] == dv.OUTCOME_TRIGGERED
+    # trigger_idx is set iff TRIGGERED -- no row is in two states at once
+    assert ((setups['trigger_idx'] >= 0) == triggered).all()
+    assert (setups.loc[triggered, 'bars_reveal_to_trigger'] >= 0).all()
+    assert (setups.loc[~triggered, 'bars_reveal_to_trigger'] == -1).all()
+    # only regular divergences become setups
+    assert setups['is_regular'].all()
+
+
+def test_setup_entry_is_the_trigger_bar_close_not_the_break_level():
+    """AMEND TEST 2: entry must be the CLOSE of the triggering bar, never the
+    break level -- we hold bar data, not ticks, so an exact-level fill is an
+    intrabar assumption the data cannot support. Also pins the precedence rule:
+    a bar that both invalidates and triggers counts as INVALIDATED."""
+    import src.divergence as dv
+
+    h = [1.1000, 1.1020, 1.1050, 1.1010, 1.1005]
+    l = [1.0990, 1.1000, 1.1000, 1.0980, 1.0960]
+    c = [1.0995, 1.1010, 1.1005, 1.1002, 1.0940]
+
+    df = pd.DataFrame({'open': c, 'high': h, 'low': l, 'close': c},
+                      index=pd.date_range('2024-01-15 08:00', periods=5,
+                                          freq='15min', tz='America/New_York'))
+    ev = pd.DataFrame([{'swing_kind': 'H', 's2_idx': 2, 'reveal_idx': 3,
+                        'direction': -1, 'p2': c[2], 'is_regular': True}])
+    out = dv.resolve_setups(ev, df, max_idx=None)
+    row = out.iloc[0]
+
+    assert row['outcome'] == dv.OUTCOME_TRIGGERED and row['trigger_idx'] == 4
+    # the entry is the CLOSE (1.0940), not the break level low[s2] (1.1000)
+    assert row['trigger_close'] == c[4]
+    assert row['trigger_close'] != l[2]
+    # pips given up is measured IN the signalled direction (bearish -> price fell)
+    assert abs(row['pips_given_up'] - (-1 * (c[4] - c[2]) / dv.PIP)) < 1e-9
+    assert row['pips_given_up'] > 0
+
+    # precedence: a bar that BOTH exceeds high[s2] and closes below low[s2]
+    h2 = list(h); h2[4] = 1.1060
+    both = dv.resolve_setup(*_setup_arrays(h2, l, c), 'H', s2=2, reveal=3,
+                            max_idx=None)
+    assert both['outcome'] == dv.OUTCOME_INVALIDATED
+    assert both['both_on_same_bar'] is True
+
+
+def test_triggered_arm_filters_on_trigger_bar_and_excludes_untraded_setups():
+    """AMEND TEST 3: the H_div.3/.4 session filter applies to the TRIGGER bar,
+    and INVALIDATED/EXPIRED setups carry no forward return -- there was no
+    trade. That exclusion is causal, not survivorship: it is decided on the same
+    bar a live trader would decide it, with no knowledge of the future."""
+    import src.divergence as dv
+
+    ny = dv.load_m15_newyork()
+    ev, _piv, _c = dv.build_event_table(ny)
+    setups = dv.build_triggered_table(ev, ny)
+
+    col = f'trig_return_pips_n{dv.PRIMARY_HORIZON}'
+    untraded = setups['outcome'] != dv.OUTCOME_TRIGGERED
+    # no return, and no window, for anything that never became a trade
+    assert setups.loc[untraded, col].isna().all()
+    assert (~setups.loc[untraded, f'trig_window_ok_n{dv.PRIMARY_HORIZON}']).all()
+    assert (setups.loc[untraded, 'trigger_ny_hour'] == -1).all()
+    assert (~setups.loc[untraded, 'trigger_in_session']).all()
+
+    # session membership follows the TRIGGER bar's NY hour
+    traded = setups[setups['outcome'] == dv.OUTCOME_TRIGGERED]
+    assert len(traded) > 0
+    expected = ((traded['trigger_ny_hour'] >= dv.SESSION_START_NY)
+                & (traded['trigger_ny_hour'] < dv.SESSION_END_NY))
+    assert (traded['trigger_in_session'] == expected).all()
+    # ...and it genuinely differs from filtering on the reveal bar, so the
+    # distinction is not vacuous
+    assert (traded['trigger_in_session'] != traded['in_session']).any()
+
+    study = dv.triggered_study_events(setups, dv.PRIMARY_HORIZON)
+    assert (study['outcome'] == dv.OUTCOME_TRIGGERED).all()
+    assert study['trigger_in_session'].all()
+    assert study[col].notna().all()
+    # the reserved test block is never entered
+    assert (study['trigger_slice'] != 'test').all()
+
+
+def test_divergence_family_alpha_is_bonferroni_over_four_hypotheses():
+    """AMEND TEST 4: registering the triggered-entry arms grew the family from 2
+    to 4, so the bar tightened to 0.05/4 = 0.0125 and applies to ALL FOUR rows,
+    retroactively including H_div.1 and H_div.2."""
+    import src.divergence_check as dc
+
+    assert dc.FAMILY_SIZE == 4
+    assert abs(dc.FAMILY_ALPHA - 0.0125) < 1e-12
+    assert abs(dc.ORIGINAL_FAMILY_ALPHA - 0.025) < 1e-12
+    # the honest sequence is recorded, not glossed
+    assert 'POST-RESULT' in dc.AMENDMENT_NOTE
+    assert 'already been reported' in dc.AMENDMENT_NOTE
+
+
+# ────────── DIVERGENCE AT A MULTI-DAY HORIZON (H_div.5 / H_div.6) ────────────
+# Seven tests. The point of this program is that detection is REUSED unchanged
+# and only the horizon and scope move, so the tests mostly police that boundary.
+
+def test_horizon_reuses_divergence_sources_unmodified():
+    """HORIZ TEST 1: src/divergence.py and src/divergence_check.py must be
+    reused byte-for-byte. If the detection logic could be edited alongside the
+    horizon change, a null at N=4 and a result at N=96 would not be comparable."""
+    import pytest
+    import src.divergence_horizon as dh
+
+    hashes = dh.source_hashes()
+    assert set(hashes) == {'src/divergence.py', 'src/divergence_check.py'}
+    assert all(len(v) == 64 for v in hashes.values())
+    assert dh.assert_sources_unmodified(hashes) is True
+
+    # ...and the guard actually fires when a hash differs
+    tampered = dict(hashes)
+    tampered['src/divergence.py'] = '0' * 64
+    with pytest.raises(dh.ReusedSourceModifiedError):
+        dh.assert_sources_unmodified(tampered)
+
+
+def test_horizon_timing_still_anchors_on_reveal_bar():
+    """HORIZ TEST 2: the timing rule is unchanged at the long horizon -- the
+    return is measured from close[reveal_bar(s2)], never from close[s2].
+    Asserted non-vacuously: the look-ahead version is a different number."""
+    import src.divergence as dv
+    import src.divergence_horizon as dh
+
+    n = 400
+    idx = pd.date_range('2024-01-15 00:00', periods=n, freq='15min',
+                        tz='America/New_York')
+    rng = np.random.default_rng(3)
+    close = 1.1000 + np.cumsum(rng.normal(0, 0.0004, n))
+    df = pd.DataFrame({'open': close, 'high': close + 0.0006,
+                       'low': close - 0.0006, 'close': close}, index=idx)
+
+    s2_i, reveal = 100, 120
+    ev = pd.DataFrame([{'reveal_idx': reveal, 's2_idx': s2_i, 'direction': 1}])
+    H = dh.PRIMARY_HORIZON_BARS
+    out = dv.attach_forward_returns(ev, df, horizons=(H,))
+    got = out[f'signed_return_pips_n{H}'].iloc[0]
+
+    from_reveal = (close[reveal + H] - close[reveal]) / dv.PIP
+    from_swing = (close[s2_i + H] - close[s2_i]) / dv.PIP
+    assert abs(got - from_reveal) < 1e-9
+    assert abs(from_reveal - from_swing) > 1e-6      # non-vacuous
+    assert abs(got - from_swing) > 1e-6
+
+
+def test_horizon_arithmetic_is_exactly_96_bars():
+    """HORIZ TEST 3: the N=96 return must use close[reveal+96] exactly. An
+    off-by-one would change the value, and that is asserted rather than assumed."""
+    import src.divergence as dv
+    import src.divergence_horizon as dh
+
+    n = 300
+    idx = pd.date_range('2024-02-01 00:00', periods=n, freq='15min',
+                        tz='America/New_York')
+    close = 1.1000 + np.arange(n) * 0.00001        # strictly monotone -> no ties
+    df = pd.DataFrame({'open': close, 'high': close + 0.0001,
+                       'low': close - 0.0001, 'close': close}, index=idx)
+
+    H = dh.PRIMARY_HORIZON_BARS
+    assert H == 96
+    r = 50
+    ev = pd.DataFrame([{'reveal_idx': r, 'direction': 1}])
+    got = dv.attach_forward_returns(ev, df, horizons=(H,))[f'signed_return_pips_n{H}'].iloc[0]
+
+    assert abs(got - (close[r + 96] - close[r]) / dv.PIP) < 1e-9
+    # an off-by-one really would differ
+    assert abs(got - (close[r + 95] - close[r]) / dv.PIP) > 1e-6
+    assert abs(got - (close[r + 97] - close[r]) / dv.PIP) > 1e-6
+    # direction is applied, not ignored
+    ev2 = pd.DataFrame([{'reveal_idx': r, 'direction': -1}])
+    got2 = dv.attach_forward_returns(ev2, df, horizons=(H,))[f'signed_return_pips_n{H}'].iloc[0]
+    assert abs(got2 + got) < 1e-9
+
+
+def test_horizon_gap_and_test_block_windows_excluded_at_96_and_192():
+    """HORIZ TEST 4: at 96 and 192 bars a window is far more likely to hit a
+    weekend gap or the reserved block. Both must be EXCLUDED, never padded."""
+    import src.divergence as dv
+    import src.divergence_horizon as dh
+
+    n = 600
+    idx = pd.date_range('2024-02-01 00:00', periods=n, freq='15min',
+                        tz='America/New_York')
+    close = 1.1000 + np.arange(n) * 0.00001
+    df = pd.DataFrame({'open': close, 'high': close + 0.0001,
+                       'low': close - 0.0001, 'close': close}, index=idx)
+    df = pd.concat([df.iloc[:300], df.iloc[320:]])      # punch a gap after bar 299
+
+    H, HC = dh.PRIMARY_HORIZON_BARS, dh.CORROBORATING_HORIZON_BARS
+    ev = pd.DataFrame([
+        {'reveal_idx': 250, 'direction': 1},   # 250+96 = 346 -> straddles the gap
+        {'reveal_idx': 150, 'direction': 1},   # clean at 96 (ends 246, before the gap)
+        {'reveal_idx': 450, 'direction': 1},   # clean, but reaches the test block
+    ])
+    out = dv.attach_forward_returns(ev, df, horizons=(H, HC), test_start_idx=500)
+
+    assert not out[f'window_ok_n{H}'].iloc[0]
+    assert np.isnan(out[f'signed_return_pips_n{H}'].iloc[0])
+    assert out[f'window_ok_n{H}'].iloc[1]
+    assert not out[f'window_ok_n{H}'].iloc[2]          # 450+96 >= 500
+    # the SAME event that is clean at 96 straddles the gap at 192 (150+192=342),
+    # so the longer horizon really does exclude strictly more events
+    assert not out[f'window_ok_n{HC}'].iloc[1]
+    assert np.isnan(out[f'signed_return_pips_n{HC}'].iloc[1])
+
+
+def test_horizon_label_uniqueness_on_a_hand_built_case():
+    """HORIZ TEST 5: label uniqueness with a KNOWN answer.
+
+    Two labels of span 2 bars each on a 4-bar grid, [0,1] and [1,2]. Bar 0 has
+    concurrency 1, bar 1 has 2, bar 2 has 1. Label A averages (1/1 + 1/2)/2 =
+    0.75; label B averages (1/2 + 1/1)/2 = 0.75; mean uniqueness = 0.75.
+    Two NON-overlapping labels must give exactly 1.0.
+    """
+    import src.divergence_horizon as dh
+    from src.h1_horizon_feasibility import uniqueness_from_spans
+
+    assert abs(uniqueness_from_spans([0, 1], [1, 2], 4) - 0.75) < 1e-12
+    assert abs(uniqueness_from_spans([0, 2], [1, 3], 4) - 1.0) < 1e-12
+
+    # and the accounting wrapper turns that into n_independent
+    ev = pd.DataFrame({'reveal_idx': [10, 11]})
+    acc = dh.independence_accounting(ev, horizon=1, grid_lo=10, grid_hi=14)
+    assert acc['n_events'] == 2
+    assert abs(acc['mean_uniqueness'] - 0.75) < 1e-12
+    assert acc['n_independent'] == 2          # round(2 * 0.75) = 2
+
+    ev2 = pd.DataFrame({'reveal_idx': [10, 12]})
+    acc2 = dh.independence_accounting(ev2, horizon=1, grid_lo=10, grid_hi=14)
+    assert abs(acc2['mean_uniqueness'] - 1.0) < 1e-12
+    assert acc2['n_independent'] == 2
+
+
+def test_horizon_power_statement_and_underpowered_gate():
+    """HORIZ TEST 6: the minimum detectable edge must scale as z*sd/sqrt(n_indep),
+    and the underpowered flag must fire when that exceeds 25% of the typical
+    move. A DROP from an underpowered test means 'no LARGE edge', not 'no edge'."""
+    import src.divergence_horizon as dh
+
+    vals = np.array([10.0, -10.0] * 200)      # sd = 10.02..., mean|move| = 10
+    p = dh.power_statement(vals, n_independent=100, alpha=dh.FAMILY_ALPHA)
+    expected_se = float(np.std(vals, ddof=1)) / 10.0
+    assert abs(p['standard_error_pips'] - expected_se) < 1e-9
+    assert abs(p['min_detectable_edge_pips'] - p['z_alpha'] * expected_se) < 1e-9
+    assert p['z_alpha'] > 2.5                 # two-sided at 0.00833
+
+    # more independent observations -> smaller detectable edge
+    p2 = dh.power_statement(vals, n_independent=10000, alpha=dh.FAMILY_ALPHA)
+    assert p2['min_detectable_edge_pips'] < p['min_detectable_edge_pips']
+    # the underpowered flag keys on the 25% criterion
+    assert p['underpowered'] is True and p2['underpowered'] is False
+    assert dh.MIN_INDEPENDENT_EVENTS == 150
+
+
+def test_horizon_run_never_touches_protected_files(tmp_path):
+    """HORIZ TEST 7: a full run leaves the protected set byte-identical -- now
+    including src/divergence.py, src/divergence_check.py and the built
+    results/pooled_h1/EURUSD_m15_newyork.csv -- never indexes the test block,
+    and writes all SIX family rows at the resized bar 0.05/6."""
+    import glob
+    import hashlib
+    import os
+    import src.divergence_horizon as dh
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'results/eurusd_m15.csv', 'src/zigzag_swings.py',
+                 'src/h1_newyork_time.py', 'src/divergence.py',
+                 'src/divergence_check.py',
+                 'results/pooled_h1/EURUSD_m15_newyork.csv']
+    protected += [p for p in glob.glob('results/*hypothesis_log.csv')
+                  if 'divergence' not in p]
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    log_path = str(tmp_path / 'divergence_hypothesis_log.csv')
+    r = dh.run(log_path=log_path, register=True, verbose=False, run_band=False)
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"horizon retest must never modify: {changed}"
+
+    # the reserved test block was never indexed, in either scope or horizon
+    for frame in r['sets'].values():
+        assert (frame['slice'] != 'test').all()
+
+    log = pd.read_csv(log_path)
+    assert sorted(log['n'].tolist()) == [1, 2, 3, 4, 5, 6]
+    assert np.allclose(log['alpha'], 0.05 / 6)
+    assert set(log['verdict']) <= {'KEEP', 'DROP'}
+    # the horizon revision and the binding pre-commitment are on the record
+    new_rows = log[log['n'].isin([5, 6])]
+    assert new_rows['notes'].str.contains('AFTER SEEING NULLS').all()
+    assert new_rows['notes'].str.contains('BINDING PRE-COMMITMENT').all()
+    assert (new_rows['horizon_bars'] == 96).all()
+    assert (new_rows['session_scope'] == dh.SCOPE_ALL).all()
+    assert (new_rows['n_independent'] >= dh.MIN_INDEPENDENT_EVENTS).all()
+
+
+# ──────────────── GLOBAL MACRO FX PANEL (new hypothesis family) ───────────────
+# Nine tests. The dominant risk in a macro study is look-ahead through vintages
+# and publication lags, so most of these police the availability rule.
+
+def test_macro_availability_dating_uses_publication_not_reference_date():
+    """MACRO TEST 1: a feature for predicting month M+1 may contain only values
+    PUBLISHED on or before the last day of month M. Built on a synthetic series
+    with a known publication calendar; the same series dated by REFERENCE period
+    would leak, and that is asserted to differ."""
+    import src.macro_panel_data as mpd
+
+    # CPI for reference month M is published mid-month M+1
+    refs = pd.date_range('2020-01-01', periods=6, freq='MS')
+    series = pd.DataFrame({
+        'ref_date': refs,
+        'value': [100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+        'publication_date': refs + pd.DateOffset(months=1, days=14),
+    })
+
+    asof = pd.Timestamp('2020-03-31')          # predicting April
+    value, ref, pub = mpd.as_of(series, asof, 'M')
+    # the newest print available on 31 Mar is FEBRUARY's (published 15 Mar)
+    assert ref == pd.Timestamp('2020-02-01')
+    assert value == 101.0
+    assert pub <= asof
+
+    # dating by REFERENCE period would have handed over March's value -> leak
+    by_reference = series[series['ref_date'] <= asof].iloc[-1]
+    assert by_reference['value'] == 102.0
+    assert by_reference['value'] != value, 'test is vacuous if the two agree'
+
+    # nothing published yet -> missing, never guessed
+    v0, _r0, _p0 = mpd.as_of(series, pd.Timestamp('2020-01-05'), 'M')
+    assert np.isnan(v0)
+
+    # staleness guard: a discontinued series must not forward-fill forever
+    v_stale, _r, _p = mpd.as_of(series, pd.Timestamp('2024-01-31'), 'M')
+    assert np.isnan(v_stale)
+
+
+def test_macro_alfred_first_print_differs_from_revised():
+    """MACRO TEST 2: proves vintages are genuinely being fetched rather than
+    silently falling back to the latest revised value. US CPI's first print for
+    a reference month must differ from today's value for at least some months."""
+    import src.macro_panel_data as mpd
+
+    first = mpd.load_or_fetch('CPIAUCSL', first_release=True)
+    revised = mpd.load_or_fetch('CPIAUCSL', first_release=False)
+    assert len(first) and len(revised)
+
+    merged = first.merge(revised[['ref_date', 'value']], on='ref_date',
+                         suffixes=('_first', '_revised'))
+    merged = merged[merged['ref_date'] >= pd.Timestamp('1999-01-01')]
+    assert len(merged) > 100
+    differing = (merged['value_first'] != merged['value_revised']).sum()
+    assert differing > 0, 'first prints identical to revised -> vintages not fetched'
+
+    # first prints must carry a real publication date, and it must be AFTER the
+    # reference month -- that is what makes the availability rule bite
+    assert first['publication_date'].notna().all()
+    lag_days = (pd.DatetimeIndex(first['publication_date'])
+                - pd.DatetimeIndex(first['ref_date'])).days
+    assert (lag_days > 0).all()
+
+
+def test_macro_quote_inversion_roundtrip_and_high_low_swap():
+    """MACRO TEST 3: USD/XXX -> XXX/USD is a reciprocal, and where a frame has a
+    high and a low they SWAP (1/low_old becomes the new high). Every pair must
+    end up FOREIGN/USD so a 'dollar strengthens' month is a down-move in all
+    nine."""
+    import src.macro_panel_data as mpd
+
+    frame = pd.DataFrame({'open': [0.9000], 'high': [0.9200],
+                          'low': [0.8800], 'close': [0.9100]})
+    inv = mpd.invert_quote(frame)
+    assert abs(inv['close'].iloc[0] - 1 / 0.9100) < 1e-12
+    assert abs(inv['open'].iloc[0] - 1 / 0.9000) < 1e-12
+    # the SWAP: new high comes from the old LOW
+    assert abs(inv['high'].iloc[0] - 1 / 0.8800) < 1e-12
+    assert abs(inv['low'].iloc[0] - 1 / 0.9200) < 1e-12
+    assert inv['high'].iloc[0] > inv['low'].iloc[0]
+    # round trip returns the original
+    back = mpd.invert_quote(inv)
+    for col in ('open', 'high', 'low', 'close'):
+        assert abs(back[col].iloc[0] - frame[col].iloc[0]) < 1e-12
+
+    # the four already-foreign/USD pairs are not inverted; the five others are
+    assert [p for p, s in mpd.PAIRS.items() if not s['invert']] == \
+        ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD']
+    assert sorted(p for p, s in mpd.PAIRS.items() if s['invert']) == \
+        ['CADUSD', 'CHFUSD', 'JPYUSD', 'NOKUSD', 'SEKUSD']
+
+
+def test_macro_label_uniqueness_is_exactly_one():
+    """MACRO TEST 4: monthly observations do not overlap, so each label occupies
+    exactly one month for its own pair and uniqueness is exactly 1.0. This is
+    the property every prior H1 program in this project lacked."""
+    import src.macro_panel_model as mpm
+
+    panel = mpm.load_panel()
+    assert abs(mpm.label_uniqueness(panel) - 1.0) < 1e-12
+    # one row per (pair, month) -- no duplicates that would break the claim
+    assert not panel.duplicated(['pair', 'month_end']).any()
+
+
+def test_macro_split_boundaries_identical_across_all_pairs():
+    """MACRO TEST 5: the split is on the TIME axis with the SAME boundaries for
+    all nine pairs. A per-pair split would place one currency's future beside
+    another's present, and they co-move -- cross-sectional leakage."""
+    import src.macro_panel_model as mpm
+
+    panel = mpm.load_panel()
+    tr_end, val_end = mpm.split_months(panel)
+    train, val, test = mpm.slice_panel(panel, tr_end, val_end)
+
+    assert train['month_end'].max() <= tr_end < val['month_end'].min()
+    assert val['month_end'].max() <= val_end < test['month_end'].min()
+    # every pair present in a slice obeys the SAME boundary
+    for pair, sub in panel.groupby('pair'):
+        s_tr, s_va, s_te = mpm.slice_panel(sub, tr_end, val_end)
+        if len(s_tr):
+            assert s_tr['month_end'].max() <= tr_end
+        if len(s_va):
+            assert s_va['month_end'].min() > tr_end
+            assert s_va['month_end'].max() <= val_end
+        if len(s_te):
+            assert s_te['month_end'].min() > val_end
+
+
+def test_macro_no_time_index_or_pair_identity_in_features():
+    """MACRO TEST 6: no time index, trend or pair-identity column may reach the
+    feature matrix -- the model must not be able to memorise which currency or
+    which decade a row came from."""
+    import src.macro_panel_model as mpm
+    import pytest
+
+    assert mpm.assert_no_forbidden_features(mpm.FEATURE_COLUMNS) is True
+    for banned in ('pair', 'country', 'month_end', 'months_since_data_start'):
+        assert banned not in mpm.FEATURE_COLUMNS
+    # every feature is a country block member or a declared global/momentum term
+    allowed = set()
+    for c in mpm.COUNTRY_BLOCK:
+        allowed |= {f'for_{c}', f'us_{c}'}
+    allowed |= {'vix_level', 'us_equity_1m_return',
+                'own_return_1m', 'own_return_3m', 'own_return_12m'}
+    assert set(mpm.FEATURE_COLUMNS) == allowed
+
+    # ...and the guard actually fires
+    with pytest.raises(ValueError):
+        mpm.assert_no_forbidden_features(list(mpm.FEATURE_COLUMNS) + ['pair_id'])
+
+
+def test_macro_test_block_never_indexed():
+    """MACRO TEST 7: the reserved test block is never used for fitting or
+    scoring. Asserted non-vacuously -- a test block genuinely exists."""
+    import src.macro_panel_model as mpm
+
+    r = mpm.run(register=False, verbose=False, run_lookahead_control=False)
+    tr_end, val_end = r['split']
+    assert r['train']['month_end'].max() <= tr_end
+    assert r['val']['month_end'].max() <= val_end
+    assert len(r['test']) > 0, 'non-vacuous: a reserved block must exist'
+    assert r['test']['month_end'].min() > val_end
+    # the independence accounting is computed on train/val only
+    assert r['independence']['n_val_rows'] == len(r['val'])
+
+
+def test_macro_standardisation_uses_train_only_statistics():
+    """MACRO TEST 8: validation rows must not influence the fitted mean/std.
+    Asserted by perturbing the validation block and showing the statistics do
+    not move, while perturbing TRAIN does move them."""
+    import src.macro_panel_model as mpm
+
+    panel = mpm.load_panel()
+    tr_end, val_end = mpm.split_months(panel)
+    train, val, _t = mpm.slice_panel(panel, tr_end, val_end)
+
+    _a, _b, mu, sd = mpm.standardize(train, val)
+    val_shifted = val.copy()
+    val_shifted[list(mpm.FEATURE_COLUMNS)] += 1000.0
+    _a2, _b2, mu2, sd2 = mpm.standardize(train, val_shifted)
+    assert np.allclose(mu.to_numpy(), mu2.to_numpy())
+    assert np.allclose(sd.to_numpy(), sd2.to_numpy())
+
+    # the test bites: perturbing TRAIN does change the statistics
+    train_shifted = train.copy()
+    train_shifted[list(mpm.FEATURE_COLUMNS)] += 1000.0
+    _a3, _b3, mu3, _sd3 = mpm.standardize(train_shifted, val)
+    assert not np.allclose(mu.to_numpy(), mu3.to_numpy())
+
+
+def test_macro_run_never_touches_protected_files(tmp_path):
+    """MACRO TEST 9: the protected set must be byte-identical after a full run --
+    models/, the production pipeline, src/macro_data.py, the cached price files
+    and every pre-existing hypothesis log."""
+    import glob
+    import hashlib
+    import os
+    import src.macro_panel_model as mpm
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/macro_data.py', 'src/paper_trading.py', 'config.json',
+                 'results/eurusd_h1.csv', 'results/eurusd_m15.csv']
+    protected += glob.glob('results/pooled_h1/*')
+    protected += [p for p in glob.glob('results/*hypothesis_log.csv')
+                  if 'macro_panel' not in p]
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    log_path = str(tmp_path / 'macro_panel_hypothesis_log.csv')
+    r = mpm.run(log_path=log_path, register=True, verbose=False,
+                run_lookahead_control=False)
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f"macro panel run must never modify: {changed}"
+
+    log = pd.read_csv(log_path)
+    assert sorted(log['n'].tolist()) == [1, 2]
+    assert np.allclose(log['alpha'], 0.025)
+    # the panel is underpowered, so both arms are registered UNSPENT (no alpha)
+    if r['stopped']:
+        assert (log['verdict'] == mpm.UNSPENT).all()
+        assert log['notes'].str.contains('STOPPED BEFORE FITTING').all()
+        assert (log['n_independent'] < mpm.MIN_INDEPENDENT).all()
+    assert np.allclose(log['mean_label_uniqueness'], 1.0)
