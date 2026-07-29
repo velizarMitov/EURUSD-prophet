@@ -3759,3 +3759,415 @@ def test_feasibility_run_never_touches_protected_files(monkeypatch, tmp_path):
     after = {p: _hash(p) for p in protected}
     changed = [p for p in protected if before[p] != after[p]]
     assert changed == [], f"feasibility run must never modify: {changed}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# H1 NEXT-BAR DIRECTION — new hypothesis family (research-only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fake_flat_features(df):
+    """Stand-in for compute_pooled_features that needs NO warm-up, so the target
+    logic can be tested on a hand-built 6-bar frame. Returns finite constants in
+    the real FEATURE_COLUMNS so build_direction_dataset's dropna keeps every bar
+    and ONLY the target rules decide what survives."""
+    from src.pooled_h1_model import FEATURE_COLUMNS
+    return pd.DataFrame(1.0, index=df.index, columns=FEATURE_COLUMNS)
+
+
+def _hand_built_6bar_frame():
+    """6 hourly bars with KNOWN close moves:
+        t0 1.10 -> t1 1.11   up      => y[t0] = 1
+        t1 1.11 -> t2 1.10   down    => y[t1] = 0
+        t2 1.10 -> t3 1.10   FLAT    => y[t2] DROPPED (exactly zero return)
+        t3 1.10 -> t4 1.12   up      => y[t3] = 1
+        t4 1.12 -> t5 1.11   down    => y[t4] = 0
+        t5 has NO next bar           => dropped by construction
+    """
+    close = np.array([1.10, 1.11, 1.10, 1.10, 1.12, 1.11])
+    idx = pd.date_range('2020-01-01', periods=6, freq='h', tz='UTC')
+    return pd.DataFrame({'open': close, 'high': close + 0.001,
+                         'low': close - 0.001, 'close': close}, index=idx)
+
+
+def test_h1_direction_target_is_sign_of_next_bar_and_last_row_dropped(monkeypatch):
+    """TEST 1: on a hand-built 6-bar frame, y[t] equals the sign of the NEXT
+    bar's return and the final row (no next bar) is dropped."""
+    import src.h1_direction_model as h1d
+
+    monkeypatch.setattr(h1d, 'compute_pooled_features', _fake_flat_features)
+    df = _hand_built_6bar_frame()
+    context, target_index, counts = h1d.build_direction_dataset(df)
+
+    # final bar has no next close -> gone from the context entirely
+    assert df.index[-1] not in context.index
+    assert counts['n_feature_valid'] == 5           # t0..t4
+
+    labels = context['label']
+    assert labels.loc[df.index[0]] == 1.0           # 1.10 -> 1.11 up
+    assert labels.loc[df.index[1]] == 0.0           # 1.11 -> 1.10 down
+    assert labels.loc[df.index[3]] == 1.0           # 1.10 -> 1.12 up
+    assert labels.loc[df.index[4]] == 0.0           # 1.12 -> 1.11 down
+    assert list(target_index) == [df.index[0], df.index[1], df.index[3], df.index[4]]
+
+
+def test_h1_direction_zero_return_rows_dropped_not_assigned(monkeypatch):
+    """TEST 2: a zero next-bar return is DROPPED, never silently assigned to a
+    class -- it carries a NaN label and is absent from the target index."""
+    import src.h1_direction_model as h1d
+
+    monkeypatch.setattr(h1d, 'compute_pooled_features', _fake_flat_features)
+    df = _hand_built_6bar_frame()
+    context, target_index, counts = h1d.build_direction_dataset(df)
+
+    flat_ts = df.index[2]                            # 1.10 -> 1.10
+    assert counts['n_zero_return_dropped'] == 1
+    assert flat_ts in context.index                  # kept as sequence CONTEXT
+    assert np.isnan(context.loc[flat_ts, 'label'])   # but never given a class
+    assert flat_ts not in set(target_index)
+    assert counts['n_labelled'] == 4
+
+
+def test_h1_direction_feed_gate_keys_on_frozen_runs_not_on_the_rate():
+    """TEST 2b: the REVISED feed gate. It must FIRE on an 8-bar frozen run (the
+    actual signature of a stale/replayed feed) and must NOT fire on a frame whose
+    zero-returns are ISOLATED SINGLES at ~0.6% -- the natural discreteness of a
+    5-decimal quote at hourly resolution, which is what the original 0.5%-rate
+    gate wrongly tripped on."""
+    import src.h1_direction_model as h1d
+
+    def _frame(close):
+        idx = pd.date_range('2020-01-01', periods=len(close), freq='h', tz='UTC')
+        close = np.asarray(close, dtype=float)
+        return pd.DataFrame({'open': close, 'high': close + 0.001,
+                             'low': close - 0.001, 'close': close}, index=idx)
+
+    # (a) isolated singles at ~0.6% -- must PASS the revised gate
+    rng = np.random.default_rng(3)
+    n = 2000
+    close = 1.10 * np.exp(np.cumsum(rng.normal(0, 0.0006, n)))
+    for i in range(220, n, 160):                 # 12 isolated repeats ≈ 0.67%
+        close[i] = close[i - 1]
+    benign = _frame(close)
+    assert h1d.longest_identical_close_run(benign['close']) == 2
+    _, _, benign_counts = h1d.build_direction_dataset(benign)
+    rate = benign_counts['zero_return_share']
+    assert 0.005 < rate < 0.010, f"expected ~0.6% isolated zero-returns, got {rate:.4%}"
+    assert rate > 0.005, "this rate would have tripped the ORIGINAL 0.5% gate"
+    h1d.assert_feed_not_stale(benign_counts)     # must NOT raise
+
+    # (b) an 8-bar frozen run -- must FIRE, even though the rate stays tiny
+    frozen_close = close.copy()
+    frozen_close[900:908] = frozen_close[899]    # 9 identical closes in a row
+    frozen = _frame(frozen_close)
+    assert h1d.longest_identical_close_run(frozen['close']) >= 8
+    _, _, frozen_counts = h1d.build_direction_dataset(frozen)
+    assert frozen_counts['zero_return_share'] < h1d.ZERO_RETURN_MAX_SHARE
+    with pytest.raises(h1d.StaleFeedError, match='identical consecutive closes'):
+        h1d.assert_feed_not_stale(frozen_counts)
+
+    # (c) the rate limb still exists, an order of magnitude up
+    with pytest.raises(h1d.StaleFeedError, match='zero next-bar return'):
+        h1d.assert_feed_not_stale({'longest_identical_close_run': 2,
+                                   'zero_return_share': 0.05,
+                                   'n_zero_return_dropped': 100,
+                                   'n_feature_valid': 2000})
+
+
+def test_h1_direction_label_uniqueness_is_exactly_one():
+    """TEST 3: the program's PREMISE -- 1-bar-ahead labels do not overlap, so
+    mean label uniqueness is EXACTLY 1.0 (contrast: the 120-bar triple-barrier
+    labels scored ~0.011)."""
+    import src.h1_direction_model as h1d
+
+    df, _ = _synth_ohlc(900, 1.10, 0.0, 7)
+    context, target_index, counts = h1d.build_direction_dataset(df)
+    h1d.assert_feed_not_stale(counts)
+
+    splits, _ = h1d.split_purge_embargo(target_index)
+    u = h1d.mean_label_uniqueness(context, splits['train'])
+    assert u == 1.0
+    h1d.assert_labels_independent(u)                 # hard gate must not raise
+
+    # and the gate really does reject a non-1.0 value
+    with pytest.raises(h1d.LabelOverlapError):
+        h1d.assert_labels_independent(0.9999)
+
+
+def test_h1_direction_features_have_no_look_ahead():
+    """TEST 4: every feature at bar t is computable from bars <= t only.
+    Recompute on a TRUNCATED frame and compare at the shared timestamps -- if
+    any feature peeked forward, the truncated values would differ."""
+    import src.h1_direction_model as h1d
+    from src.pooled_h1_model import FEATURE_COLUMNS
+
+    df, _ = _synth_ohlc(900, 1.10, 0.0, 11)
+    full_ctx, _, _ = h1d.build_direction_dataset(df)
+    trunc_ctx, _, _ = h1d.build_direction_dataset(df.iloc[:600])
+
+    shared = full_ctx.index.intersection(trunc_ctx.index)
+    assert len(shared) > 300
+    np.testing.assert_allclose(
+        full_ctx.loc[shared, FEATURE_COLUMNS].to_numpy(),
+        trunc_ctx.loc[shared, FEATURE_COLUMNS].to_numpy(),
+        rtol=0, atol=0,
+    )
+
+
+def test_h1_direction_target_uses_close_only_no_future_high_low_open():
+    """TEST 5: the target reads close[t+1] and NOTHING else from the future.
+    Perturbing every FUTURE bar's high/low/open (leaving close untouched) must
+    change no label at all, and no feature at or before the perturbation point."""
+    import src.h1_direction_model as h1d
+    from src.pooled_h1_model import FEATURE_COLUMNS
+
+    df, _ = _synth_ohlc(900, 1.10, 0.0, 13)
+    base_ctx, base_targets, _ = h1d.build_direction_dataset(df)
+
+    k = 700
+    tampered = df.copy()
+    tampered.iloc[k:, tampered.columns.get_loc('high')] += 0.05
+    tampered.iloc[k:, tampered.columns.get_loc('low')] -= 0.05
+    tampered.iloc[k:, tampered.columns.get_loc('open')] += 0.02
+    tamp_ctx, tamp_targets, _ = h1d.build_direction_dataset(tampered)
+
+    # labels depend on close ONLY -> not one of them may move
+    assert list(base_targets) == list(tamp_targets)
+    np.testing.assert_array_equal(
+        base_ctx['label'].to_numpy(), tamp_ctx['label'].to_numpy())
+
+    # and no feature at/before the perturbed bar saw the tampering
+    cutoff = df.index[k - 1]
+    shared = base_ctx.index[base_ctx.index <= cutoff]
+    np.testing.assert_allclose(
+        base_ctx.loc[shared, FEATURE_COLUMNS].to_numpy(),
+        tamp_ctx.loc[shared, FEATURE_COLUMNS].to_numpy(), rtol=0, atol=0)
+
+
+def test_h1_direction_purge_drops_final_training_row():
+    """TEST 6: the final training row -- whose label is the return into the
+    first validation bar -- is absent from the training set."""
+    import src.h1_direction_model as h1d
+
+    df, _ = _synth_ohlc(1200, 1.10, 0.0, 17)
+    _, target_index, _ = h1d.build_direction_dataset(df)
+    splits, counts = h1d.split_purge_embargo(target_index)
+
+    n = len(target_index)
+    train_end = int(n * h1d.TRAIN_FRAC)
+    dropped = target_index[train_end - 1]
+
+    assert counts['n_purged'] == 1
+    assert dropped not in set(splits['train'])
+    assert len(splits['train']) == train_end - 1
+    assert splits['train'][-1] == target_index[train_end - 2]
+
+
+def test_h1_direction_embargo_removes_first_24_validation_bars():
+    """TEST 7: the first 24 validation bars are absent from the scored set (so a
+    24-bar LSTM window at the start of validation cannot straddle the split)."""
+    import src.h1_direction_model as h1d
+
+    df, _ = _synth_ohlc(1200, 1.10, 0.0, 19)
+    _, target_index, _ = h1d.build_direction_dataset(df)
+    splits, counts = h1d.split_purge_embargo(target_index)
+
+    n = len(target_index)
+    train_end, val_end = int(n * h1d.TRAIN_FRAC), int(n * h1d.VAL_FRAC)
+    embargoed = set(target_index[train_end:train_end + h1d.EMBARGO_BARS])
+
+    assert counts['n_embargoed'] == h1d.EMBARGO_BARS == 24
+    assert embargoed.isdisjoint(set(splits['val']))
+    assert splits['val'][0] == target_index[train_end + h1d.EMBARGO_BARS]
+    assert len(splits['val']) == val_end - train_end - h1d.EMBARGO_BARS
+
+
+def test_h1_direction_test_block_never_indexed():
+    """TEST 8: no index used anywhere by train/val (including the 24-bar
+    sequence context reaching backwards) exceeds the validation upper bound --
+    the reserved test block [85:100%] is never touched."""
+    import src.h1_direction_model as h1d
+
+    df, _ = _synth_ohlc(1200, 1.10, 0.0, 23)
+    context, target_index, _ = h1d.build_direction_dataset(df)
+    splits, counts = h1d.split_purge_embargo(target_index)
+
+    val_end_ts = target_index[counts['val_end_position'] - 1]
+    assert splits['train'].max() <= val_end_ts
+    assert splits['val'].max() <= val_end_ts
+
+    mean, std = h1d.fit_standardizer(context, splits['train'])
+    pos = {ts: i for i, ts in enumerate(context.index)}
+    for which in ('train', 'val'):
+        _, _, kept = h1d.build_sequences(context, splits[which], mean, std)
+        # a sequence's OLDEST bar is 23 rows back; even that must stay in-bounds
+        oldest = min(pos[ts] for ts in kept) - h1d.SEQ_LEN + 1
+        newest = max(pos[ts] for ts in kept)
+        assert oldest >= 0
+        assert context.index[newest] <= val_end_ts
+
+    # every reserved test timestamp is strictly after everything used
+    assert min(splits['test']) > val_end_ts
+
+
+def test_h1_direction_sequences_are_24_contiguous_bars():
+    """TEST 9: every LSTM input sequence is 24 CONTIGUOUS EURUSD bars, and no
+    validation sequence reaches back across the purge boundary."""
+    import src.h1_direction_model as h1d
+    from src.pooled_h1_model import FEATURE_COLUMNS
+
+    df, _ = _synth_ohlc(1200, 1.10, 0.0, 29)
+    context, target_index, _ = h1d.build_direction_dataset(df)
+    splits, _ = h1d.split_purge_embargo(target_index)
+
+    mean = np.zeros(len(FEATURE_COLUMNS))
+    std = np.ones(len(FEATURE_COLUMNS))
+    seqs, ys, kept = h1d.build_sequences(context, splits['val'], mean, std)
+
+    assert seqs.shape[1] == h1d.SEQ_LEN == 24
+    assert len(kept) == len(splits['val'])           # embargo leaves full context
+
+    raw = context[FEATURE_COLUMNS].to_numpy(dtype=float)
+    pos = {ts: i for i, ts in enumerate(context.index)}
+    val_start_pos = pos[splits['val'][0]] - h1d.SEQ_LEN + 1
+
+    for s, ts in zip(seqs, kept):
+        j = pos[ts]
+        # positionally contiguous window of the frame -- no dropped row inside
+        np.testing.assert_allclose(s, raw[j - h1d.SEQ_LEN + 1: j + 1],
+                                   rtol=1e-6, atol=1e-6)
+        # strictly increasing timestamps across the window
+        window_ts = context.index[j - h1d.SEQ_LEN + 1: j + 1]
+        assert (np.diff(window_ts.values.astype('int64')) > 0).all()
+        # never reaches back past the first bar the embargo makes safe
+        assert j - h1d.SEQ_LEN + 1 >= val_start_pos
+
+    # the oldest bar of the FIRST validation sequence sits after the purged
+    # final training row -> no straddle of the train/validation boundary
+    assert pos[splits['train'][-1]] < val_start_pos
+
+
+def test_h1_direction_run_never_touches_protected_files(monkeypatch, tmp_path):
+    """TEST 10: a full run() (orchestration + every write path) must leave the
+    ENTIRE protected set byte-identical -- sha256 before vs after. Heavy
+    training and the cached-CSV read are stubbed so this exercises the real
+    orchestration cheaply."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_direction_model as h1d
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'src/triple_barrier.py', 'src/pooled_h1_data.py',
+                 'src/pooled_h1_model.py', 'src/h1_horizon_feasibility.py',
+                 'results/pooled_h1/EURUSD_h1.csv']
+    protected += glob.glob('results/*hypothesis_log.csv')
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    synth, _ = _synth_ohlc(1200, 1.10, 0.0, 31)
+    rng = np.random.default_rng(5)
+
+    monkeypatch.setattr(h1d, 'load_eurusd_h1', lambda out_dir=None: synth)
+    monkeypatch.setattr(h1d, 'shuffled_label_control',
+                        lambda Xtr, ytr, Xval, yval, seed=42: 0.50)
+    monkeypatch.setattr(h1d, 'train_gbm', lambda X, y, seed=42: 'stub')
+    monkeypatch.setattr(h1d, 'predict_gbm_proba',
+                        lambda clf, X: rng.uniform(0, 1, len(X)))
+    monkeypatch.setattr(h1d, 'train_lstm',
+                        lambda Xtr, ytr, Xval, yval, device, seed=42, **k:
+                        (rng.uniform(0, 1, len(yval)), 0.69))
+
+    before = {p: _hash(p) for p in protected}
+    result = h1d.run(log_path=str(tmp_path / 'h1_direction_hypothesis_log.csv'),
+                     register=True, verbose=False)
+    after = {p: _hash(p) for p in protected}
+
+    changed = [p for p in protected if before[p] != after[p]]
+    assert changed == [], f"H1 direction run must never modify: {changed}"
+    assert result['h_dir_1']['verdict'] in ('KEEP', 'DROP')
+    assert os.path.exists(str(tmp_path / 'h1_direction_hypothesis_log.csv'))
+
+
+def test_h1_direction_replication_rows_log_their_own_instrument():
+    """TEST 13: a replication row must record the pair it was actually scored on
+    (GBPUSD/AUDUSD/CHFUSD), not the EURUSD default -- otherwise the log would
+    misattribute all three replications to EURUSD."""
+    import src.h1_direction_model as h1d
+
+    acc = h1d.arbiter(np.array([1, 0, 1, 0]), np.array([1, 1, 0, 0]),
+                      np.array([1, 0, 1, 0]), n_boot=10)
+    counts = {'n_feature_valid': 100, 'n_zero_return_dropped': 1,
+              'zero_return_share': 0.01, 'longest_identical_close_run': 2}
+    sc = {'n_purged': 1, 'n_embargoed': 24, 'n_train': 70, 'n_val': 15}
+    balances = {'train_pct1': 50.0, 'val_pct1': 50.0}
+
+    row = h1d._log_row(4, 'H_dir.4_replication_AUDUSD', acc, counts, sc, 1.0,
+                       balances, 0.5, 'cuda', 'n', instrument='AUDUSD')
+    assert row['instrument'] == 'AUDUSD'
+    # the EURUSD default still applies to the primary hypotheses
+    assert h1d._log_row(1, 'H_dir.1', acc, counts, sc, 1.0, balances, 0.5,
+                        'cuda', 'n')['instrument'] == 'EURUSD'
+
+
+def test_h1_direction_replication_trigger_fires_only_on_a_cleared_bar():
+    """TEST 11 (addendum): the replication arm's TRIGGER is exactly 'H_dir.1 OR
+    H_dir.2 cleared its bar' -- two DROPs must NOT arm it."""
+    import src.h1_direction_model as h1d
+
+    drop = {'cleared_bar': False}
+    keep = {'cleared_bar': True}
+    assert h1d.replication_triggered(drop, drop) is False
+    assert h1d.replication_triggered(keep, drop) is True
+    assert h1d.replication_triggered(drop, keep) is True
+    assert h1d.replication_triggered(keep, keep) is True
+
+
+def test_h1_direction_untriggered_replication_is_registered_unspent(monkeypatch, tmp_path):
+    """TEST 12 (addendum): when neither primary hypothesis clears, H_dir.3/.4/.5
+    are written as REGISTERED-UNSPENT (never run, no alpha consumed, family
+    stays at size 2), with the tightened alpha=0.01 and the reporting rule
+    recorded AT REGISTRATION TIME rather than afterwards."""
+    import src.h1_direction_model as h1d
+
+    synth, _ = _synth_ohlc(1200, 1.10, 0.0, 37)
+    rng = np.random.default_rng(9)
+
+    monkeypatch.setattr(h1d, 'load_eurusd_h1', lambda out_dir=None: synth)
+    monkeypatch.setattr(h1d, 'shuffled_label_control',
+                        lambda Xtr, ytr, Xval, yval, seed=42: 0.50)
+    monkeypatch.setattr(h1d, 'train_gbm', lambda X, y, seed=42: 'stub')
+    monkeypatch.setattr(h1d, 'predict_gbm_proba',
+                        lambda clf, X: rng.uniform(0, 1, len(X)))
+    monkeypatch.setattr(h1d, 'train_lstm',
+                        lambda Xtr, ytr, Xval, yval, device, seed=42, **k:
+                        (rng.uniform(0, 1, len(yval)), 0.69))
+    # a DROP on both primaries must leave the replication arm unrun
+    monkeypatch.setattr(h1d, 'run_replication_arm',
+                        lambda *a, **k: pytest.fail(
+                            "replication arm must NOT run when the trigger did not fire"))
+
+    log_path = str(tmp_path / 'h1_direction_hypothesis_log.csv')
+    result = h1d.run(log_path=log_path, register=True, verbose=False)
+
+    assert result['h_dir_1']['verdict'] == 'DROP'
+    assert result['h_dir_2']['verdict'] == 'DROP'
+    assert result['replication_triggered'] is False
+    assert result['replication'] is None
+
+    log = pd.read_csv(log_path)
+    unspent = log[log['verdict'] == h1d.UNSPENT_VERDICT]
+    assert sorted(unspent['n'].tolist()) == [3, 4, 5]
+    assert sorted(unspent['instrument'].tolist()) == ['AUDUSD', 'CHFUSD', 'GBPUSD']
+    # the tightened bar is on the record now, not applied retroactively
+    assert (unspent['alpha'] == 0.01).all()
+    assert unspent['notes'].str.contains('consumed NO alpha').all()
+    assert unspent['notes'].str.contains('SIGN and rough MAGNITUDE').all()
+    # the two SPENT hypotheses still sit at the family-of-2 bar
+    spent = log[log['verdict'].isin(['KEEP', 'DROP'])]
+    assert (spent['alpha'] == 0.025).all()

@@ -1542,6 +1542,154 @@ pre-registered hypothesis with its own arbiter). 7 unit tests (hand-computed
 uniqueness, sqrt-time scaling, pip conversion, early-resolution-raises-uniqueness,
 train-slice-only entry bound, no-hypothesis-log-written, protected-files-untouched).
 
+## Backlog — H1 NEXT-BAR DIRECTION (added 2026-07-28, NEW OWN family, VERDICT: H_dir.1 KEEP / H_dir.2 DROP, replication TRIGGERED)
+
+**New files only:** `src/h1_direction_model.py`,
+`results/h1_direction_hypothesis_log.csv`, 14 unit tests. Reuses the cached
+`results/pooled_h1/*.csv` (never refetches MT5) and imports
+`src/pooled_h1_model.py`'s pre-registered feature set UNCHANGED. Research-only:
+**no P&L, no position sizing, no costs, no backtest** — the arbiter is
+prediction accuracy against a baseline and nothing else. Protected set hashed
+before/after a full `run()`.
+
+**Why this family exists.** Every prior H1 program used a triple-barrier target
+at a 120-bar horizon, and the label-geometry scan above showed why they all
+failed: overlapping labels cut 192,560 pooled rows to ~2,164 independent
+observations. This program drops that target and asks whether the DIRECTION of
+the next H1 bar is predictable. A 1-bar-ahead label has no overlap, so **mean
+label uniqueness = 1.0 exactly** (hard-gated, and it measured exactly 1.0) —
+48,543 training rows are 48,543 independent observations. Sample size is, for
+the first time in this project, not the binding constraint.
+
+### Feed-integrity gate — REVISED AFTER IT FIRED (recorded honestly, no alpha consumed)
+
+The original gate was *"STOP if the exact-zero next-bar return rate exceeds
+0.5%."* It fired on the real EURUSD H1 cache at **0.6461%**. Stated plainly:
+**that 0.5% was a round number chosen without first measuring the feed's natural
+rate — it was set BELOW the normal rate of the very data it was meant to
+protect.** The gate's stated rationale ("the feed carries stale/repeated
+closes") is a testable claim, and measurement REFUTED it:
+
+| Diagnostic | Measured |
+|---|---|
+| Longest run of identical consecutive closes | **3 bars** |
+| Runs of ≥ 3 identical closes | 5, in 70,000 bars |
+| Rate by year, 2015–2026 | 0.40–0.90%, stable, no bad patch |
+| Concentration | thin-liquidity hours (20–22h, 03–06h UTC) |
+
+A genuinely stale feed produces multi-hour flat runs; there is not one. The
+~0.64% rate is the discreteness of a 5-decimal quote at hourly resolution.
+
+**Revised gate keys on the MECHANISM, not the rate:** STOP if (a) any run of
+identical consecutive closes ≥ 6 bars, OR (b) the zero-return rate exceeds 3.0%
+(an order of magnitude above the measured 0.64%). Every run records the observed
+rate, the dropped-row count and the longest flat run in the hypothesis log.
+
+**What the revision does and does not change.** The 451 zero-return rows are
+dropped IDENTICALLY under both the old and the new gate, so the revision changes
+**no analysis input, no model, no split and no decision rule** — only whether the
+program may continue past STEP 1. **It consumes no alpha.** It was made *after*
+the gate fired, and is justified by the refutation of the gate's own stated
+mechanism, **not** by a desire to proceed.
+
+*Correction to the record:* the amendment request restated the diagnostic as
+"longest run = 2 bars, runs of ≥3 = ZERO." The measured values are **3 bars and
+5 runs**. The conclusion is unaffected (3 ≪ the new 6-bar gate), but the logged
+values are the measured ones.
+
+**Documented sampling skew:** the dropped rows cluster in thin-liquidity hours,
+so the hour-of-day feature is marginally under-sampled at 20–22h and 03–06h UTC.
+At 0.64% of rows this is negligible — recorded rather than left silent.
+
+### Design (pre-registered before any result was seen)
+
+EURUSD only (pooled training deliberately out of scope — already DROPped for the
+triple-barrier target; re-testing it here would be a separate hypothesis with its
+own Bonferroni cost). Split train `[0:70%]` / validation `[70:85%]` (**the
+arbiter**) / test `[85:100%]` (**RESERVED, never indexed**). Purge 1 row (its
+label is the return into the first validation bar), embargo 24 validation bars
+(≥ the LSTM sequence length, so no window straddles the boundary). Family size 2,
+**alpha = 0.05/2 = 0.025**, independent of every other family's log.
+
+**Leakage control (mandatory, no alpha):** GBM refit on **randomly permuted
+training labels**, scored on the real validation rows → **0.5002**. Squarely at
+chance; the pipeline does not leak. No prior program in this project ran this.
+
+### Results (validation slice, n = 10,378; block bootstrap governs)
+
+Class balance train 50.33% / val 50.44% (barely moved, so the majority baseline
+is not a moving target). Device: **CUDA, RTX 4070 Laptop GPU**, seed 42.
+
+| # | Hypothesis | Challenger | Reference | Δacc | Block CI (α=0.025) | McNemar p | Verdict |
+|---|---|---|---|---|---|---|---|
+| H_dir.1 | GBM vs train-majority | 0.5275 | 0.5044 | **+0.0230** | [+0.0075, +0.0392] | 0.00169 | **KEEP** |
+| H_dir.2 | LSTM vs GBM (primary) | 0.5162 | 0.5275 | −0.0113 | [−0.0237, +0.0018] | 0.0527 | **DROP** |
+| — | LSTM vs majority (corroborating only) | 0.5162 | 0.5044 | +0.0118 | [−0.0022, +0.0266] | 0.0939 | not a path to KEEP |
+
+ROC-AUC (descriptive only, not decision-bearing): GBM 0.5411, LSTM 0.5198.
+
+**H_dir.2 DROP is the anti-cherry-pick convention working.** The LSTM beats the
+trivial baseline (+0.0118) but loses to the simpler GBM (−0.0113). A model that
+clears the trivial reference but not the simpler model is not a KEEP. The
+deep-sequential arm fails again — this time with 48,520 genuinely independent
+training sequences, so "not enough data" is no longer available as an excuse.
+
+### Conditional replication arm (registered up front, TRIGGERED)
+
+Registered before the run with its trigger, its tightened alpha and its reporting
+rule all fixed in advance. H_dir.1 cleared → trigger fired → family grew 2 → 5,
+**alpha tightened to 0.05/5 = 0.01** for the replication arm. Winning model (GBM)
+refit independently per pair on that pair's own slices at the **same global date
+boundaries**.
+
+| # | Pair | acc | majority | Δacc | Block CI (α=0.01) | McNemar p | Verdict |
+|---|---|---|---|---|---|---|---|
+| H_dir.3 | GBPUSD | 0.5120 | 0.5004 | +0.0116 | [−0.0065, +0.0296] | 0.120 | DROP |
+| H_dir.4 | AUDUSD | 0.5218 | 0.5013 | +0.0205 | [+0.0046, +0.0375] | 0.0034 | KEEP |
+| H_dir.5 | CHFUSD | 0.5294 | 0.4984 | +0.0311 | [+0.0145, +0.0472] | 5.6e-06 | KEEP |
+
+**Read by the pre-registered rule, not by counting KEEPs.** The question was
+never "does any pair clear" — that is cherry-picking across four correlated
+draws. It is whether SIGN and rough MAGNITUDE persist. They do: **3/3 pairs
+positive**, all in the +0.012 to +0.031 band around EURUSD's +0.023. GBPUSD is
+the weakest but points the same way. This is the pattern that would be expected
+if the effect were real, and it is emphatically NOT the "one clearing pair, two
+at chance" pattern that would have been evidence against.
+
+**The decisive caveat: these are not three independent confirmations.** The four
+majors are strongly contemporaneously correlated (rho_bar ≈ 0.54, k_eff ≈ 1.53
+from the pooled program). Four correlated pairs over the same calendar window are
+closer to ~1.5 independent looks than to four. Consistent signs across them are
+weaker evidence than the table's appearance suggests.
+
+### What this is and is not
+
+It is **one cleared bar on one validation slice**, not a discovery and not a
+production change. The honest reading: a GBM on trailing price/time features
+predicts next-H1-bar direction at **52.75% vs a 50.44% baseline** — a +2.3pp
+edge that is statistically distinguishable from zero at the pre-registered bar
+under the conservative block bootstrap, replicates in sign across three
+correlated pairs, and survives a clean shuffled-label control. Accuracy is not
+profitability, and this program deliberately computed **no P&L, spread, or cost
+figure** — whether a ~2pp directional edge survives an H1 spread is a separate
+question that this family did not ask and cannot answer.
+
+**Next step is forward testing, not deployment.** The test block `[85:100%]`
+remains unspent and is the natural one-shot confirmation; beyond that, the
+project's standing rule is that forward, out-of-sample evidence — not a
+validation-slice result — decides production worthiness. Nothing in `models/`,
+`_train_pipeline.py`, `src/inference.py` or the paper-trading ledgers was
+touched.
+
+**14 unit tests**, all passing: target = sign of next bar with the final row
+dropped; zero-return rows dropped not assigned; **the revised gate fires on an
+8-bar frozen run and does NOT fire on isolated singles at 0.6%**; uniqueness
+exactly 1.0; no look-ahead (truncated-frame recompute, `atol=0`); target reads
+`close[t+1]` only (tampering all future high/low/open moves no label); purge;
+embargo; test block never indexed including sequence lookback; 24 contiguous
+bars per sequence; protected files hash-identical; replication trigger logic;
+REGISTERED-UNSPENT rows at alpha 0.01; replication rows log their own instrument.
+
 ## Diagnostics — Ch.11 train-vs-test capacity check (2026-07-17, diagnostic only)
 
 Settles the repeatedly-flagged question: could more capacity (epochs/layers)
