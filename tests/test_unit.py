@@ -5700,3 +5700,347 @@ def test_macro_run_never_touches_protected_files(tmp_path):
         assert log['notes'].str.contains('STOPPED BEFORE FITTING').all()
         assert (log['n_independent'] < mpm.MIN_INDEPENDENT).all()
     assert np.allclose(log['mean_label_uniqueness'], 1.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-DAY MEAN REVERSION ON H1 (src/h1_multiday_reversion.py) — STEP 8.
+# Nine tests: the variance-ratio implementation against known cases, the STEP 0
+# motivation gate firing on a random walk, target correctness, purge/embargo,
+# MEASURED label uniqueness, the trivial rule including its zero-return edge
+# case, non-vacuous test-block containment, causality of the three added
+# features, and sha256 containment of the whole protected set.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _md_synthetic_frame(close, start='2020-01-01'):
+    """OHLC frame around a given close path, on an hourly index."""
+    close = np.asarray(close, dtype=float)
+    idx = pd.date_range(start, periods=len(close), freq='h', tz='UTC')
+    return pd.DataFrame({
+        'open': close, 'high': close * 1.0005,
+        'low': close * 0.9995, 'close': close,
+    }, index=idx)
+
+
+def test_md_variance_ratio_against_known_cases():
+    """MD TEST 1: the VR implementation, validated on two series whose answer is
+    known in closed form.
+
+      * a PURE RANDOM WALK must give VR ~ 1 at every q, with both z statistics
+        near zero (and they must agree, since under i.i.d. returns the robust
+        phi* converges to phi/n);
+      * an AR(1) return process with a NEGATIVE coefficient is mean reverting,
+        so VR < 1 -- and at q = 2 the closed form is exactly VR = 1 + phi.
+
+    Both are asserted. A sign error or a missing sqrt(n) in either z is caught
+    here rather than by a plausible-looking number on real data.
+    """
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(20260730)
+
+    # (a) pure random walk -> VR ~ 1
+    p_rw = np.cumsum(rng.normal(0.0, 0.001, 60000))
+    for q in (2, 8, 24, 96):
+        r = md.variance_ratio(p_rw, q)
+        assert abs(r['vr'] - 1.0) < 0.12, f'random walk VR({q}) = {r["vr"]}'
+        assert abs(r['z_robust']) < 4.0
+        # under i.i.d. returns the two standard errors must nearly coincide
+        assert abs(r['z_robust'] - r['z_homoskedastic']) < 0.5 * abs(r['z_homoskedastic']) + 0.5
+
+    # (b) AR(1) returns with a NEGATIVE coefficient -> mean reversion, VR < 1
+    phi = -0.3
+    e = rng.normal(0.0, 0.001, 60000)
+    r_ar = np.zeros(60000)
+    for i in range(1, 60000):
+        r_ar[i] = phi * r_ar[i - 1] + e[i]
+    p_ar = np.cumsum(r_ar)
+
+    vr2 = md.variance_ratio(p_ar, 2)
+    assert vr2['vr'] < 1.0
+    assert abs(vr2['vr'] - (1.0 + phi)) < 0.02, 'VR(2) must equal 1 + phi for AR(1)'
+    assert vr2['z_robust'] < -5.0
+    for q in (4, 8, 24, 96):
+        assert md.variance_ratio(p_ar, q)['vr'] < 1.0
+
+    # (c) a POSITIVE AR(1) coefficient trends: VR(2) = 1 + phi > 1
+    r_pos = np.zeros(60000)
+    for i in range(1, 60000):
+        r_pos[i] = 0.3 * r_pos[i - 1] + e[i]
+    vr_pos = md.variance_ratio(np.cumsum(r_pos), 2)
+    assert vr_pos['vr'] > 1.0 and abs(vr_pos['vr'] - 1.3) < 0.02
+
+
+def test_md_step0_gate_fires_on_a_random_walk_train_slice():
+    """MD TEST 2: the STEP 0 motivation gate must FIRE (raise, cancelling the
+    whole program) when the train-only robust z fails to clear -1.96. Exercised
+    with a synthetic random-walk train slice, which by construction has no mean
+    reversion to re-derive."""
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(11)
+    walk = np.exp(np.cumsum(rng.normal(0.0, 0.0005, 40000))) * 1.1
+    profile = md.variance_ratio_profile(walk)
+
+    with pytest.raises(md.MotivationGateError):
+        md.step0_gate(profile)
+
+    # and it does NOT fire on a genuinely mean-reverting series
+    e = rng.normal(0.0, 0.0005, 40000)
+    r = np.zeros(40000)
+    for i in range(1, 40000):
+        r[i] = -0.25 * r[i - 1] + e[i]
+    reverting = md.variance_ratio_profile(np.exp(np.cumsum(r)) * 1.1)
+    rec = md.step0_gate(reverting)
+    assert rec['passed'] and rec['train_vr'] < 1.0 and rec['train_z_robust'] < -1.96
+
+    # the gate keys on q = 24 with the ROBUST z, at the stated thresholds
+    assert md.GATE_Q == 24 and md.GATE_MAX_Z_ROBUST == -1.96 and md.GATE_MAX_VR == 1.0
+
+
+def test_md_target_is_sign_of_close_24_bars_ahead():
+    """MD TEST 3: y at bar t is the sign of close[t+24]/close[t]; the last 24
+    rows carry no label; and an OFF-BY-ONE target gives a different answer (so
+    the test is not satisfied by shift(-23) or shift(-25))."""
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(3)
+    close = 1.1 + np.cumsum(rng.normal(0.0, 0.0004, 900))
+    df = _md_synthetic_frame(close)
+    ctx, _counts = md.build_multiday_context(df, horizons=(24,))
+
+    lab = ctx['label_24'].to_numpy()
+    raw_pos = {ts: i for i, ts in enumerate(df.index)}
+    positions = np.array([raw_pos[ts] for ts in ctx.index])
+    close_full = df['close'].to_numpy()
+
+    # explicit re-derivation, row by row, from the RAW series
+    for k in range(len(ctx)):
+        j = positions[k]
+        if j + 24 >= len(close_full):
+            assert not np.isfinite(lab[k]), 'the final 24 bars must carry no label'
+            continue
+        expected = 1.0 if close_full[j + 24] > close_full[j] else 0.0
+        assert lab[k] == expected
+
+    # exactly 24 unlabelable tail rows (this synthetic path has no exact zeros)
+    assert int(np.sum(~np.isfinite(lab))) == 24
+
+    # OFF-BY-ONE must disagree -- the test bites
+    labelled = np.isfinite(lab)
+    for offset in (23, 25):
+        # keep only rows where BOTH targets are computable, so the comparison is
+        # like-for-like rather than an index error at the tail
+        usable = labelled & (positions + max(offset, 24) < len(close_full))
+        j0 = positions[usable]
+        alt = (close_full[j0 + offset] > close_full[j0]).astype(float)
+        assert not np.array_equal(lab[usable], alt), (
+            f'a {offset}-bar target is indistinguishable from the 24-bar one')
+
+
+def test_md_purge_removes_last_24_train_rows_and_embargo_removes_first_96():
+    """MD TEST 4: the PURGE must remove exactly the last `horizon` training rows
+    (24 at the primary) and the EMBARGO exactly the first 96 validation bars --
+    both absent from the scored sets, verified positionally, not by count alone.
+    """
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(4)
+    close = 1.1 + np.cumsum(rng.normal(0.0, 0.0004, 4000))
+    ctx, _c = md.build_multiday_context(_md_synthetic_frame(close))
+    splits, counts = md.split_purge_embargo(ctx, 24)
+
+    n = len(ctx)
+    train_end, _val_end = md.split_bounds(n)
+    pos = {ts: i for i, ts in enumerate(ctx.index)}
+    train_pos = set(pos[ts] for ts in splits['train'])
+    val_pos = set(pos[ts] for ts in splits['val'])
+
+    # PURGE: positions [train_end-24, train_end) are gone; train_end-25 survives
+    assert max(train_pos) == train_end - 25
+    assert train_pos.isdisjoint(range(train_end - 24, train_end))
+    assert counts['n_purged'] == 24
+
+    # EMBARGO: positions [train_end, train_end+96) are gone; the first scored
+    # validation row is exactly at train_end+96
+    assert min(val_pos) == train_end + md.EMBARGO_BARS
+    assert val_pos.isdisjoint(range(train_end, train_end + md.EMBARGO_BARS))
+    assert counts['n_embargoed'] == md.EMBARGO_BARS == 96
+
+    # band horizons purge their own horizon (the stated rationale: those labels
+    # need validation bars), and always embargo 96
+    for h in md.BAND_HORIZONS:
+        _s, cb = md.split_purge_embargo(ctx, h)
+        assert cb['n_purged'] == h and cb['n_embargoed'] == 96
+
+
+def test_md_label_uniqueness_is_measured_and_lands_near_one_over_24():
+    """MD TEST 5: label uniqueness is MEASURED with the shared Lopez de Prado
+    estimator, never assumed. For overlapping 24-bar windows it must land at
+    ~1/24, and it must FALL as the horizon grows (1/48, 1/72, 1/96)."""
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(5)
+    close = 1.1 + np.cumsum(rng.normal(0.0, 0.0004, 6000))
+    ctx, _c = md.build_multiday_context(_md_synthetic_frame(close))
+
+    splits, _counts = md.split_purge_embargo(ctx, 24)
+    u24 = md.measure_label_uniqueness(ctx, splits['val'], 24)
+    assert abs(u24 - 1.0 / 24.0) < 0.005, f'measured uniqueness {u24}, expected ~1/24'
+
+    previous = u24
+    for h in md.BAND_HORIZONS:
+        s, _cc = md.split_purge_embargo(ctx, h)
+        u = md.measure_label_uniqueness(ctx, s['val'], h)
+        assert abs(u - 1.0 / h) < 0.005
+        assert u < previous
+        previous = u
+
+    # the estimator is the shared one, and a NON-overlapping label set gives 1.0
+    from src.h1_horizon_feasibility import uniqueness_from_spans
+    assert abs(uniqueness_from_spans([0, 24, 48], [23, 47, 71], 72) - 1.0) < 1e-12
+
+
+def test_md_trivial_rule_is_exactly_the_stated_sign_flip():
+    """MD TEST 6: the trivial rule is EXACTLY 'positive trailing return -> DOWN,
+    negative -> UP', with a zero trailing return predicting the train-majority
+    class. Asserted on a hand-built series that includes the zero edge case in
+    both majority settings."""
+    import src.h1_multiday_reversion as md
+
+    trailing = np.array([0.004, -0.004, 0.0, 1e-12, -1e-12, -0.02, 0.02])
+
+    got1 = md.trivial_rule(trailing, majority_class=1)
+    assert list(got1) == [0, 1, 1, 0, 1, 1, 0]
+
+    got0 = md.trivial_rule(trailing, majority_class=0)
+    assert list(got0) == [0, 1, 0, 0, 1, 1, 0]
+
+    # ONLY the zero row depends on the majority class
+    assert list(np.flatnonzero(got1 != got0)) == [2]
+
+    # it is a pure sign flip: prediction == 1 iff trailing < 0 (zeros aside)
+    nonzero = trailing != 0.0
+    assert np.array_equal(got1[nonzero], (trailing[nonzero] < 0).astype(int))
+
+    # and the rule's lookback is the 24-bar column of the imported feature set
+    assert md.TRIVIAL_RULE_LOOKBACK == 24
+    assert md.TRIVIAL_RULE_COLUMN == 'logret_24'
+    assert md.TRIVIAL_RULE_COLUMN in md.FEATURE_COLUMNS
+
+
+def test_md_test_block_is_never_indexed_non_vacuously():
+    """MD TEST 7: the reserved test block [85:100%] must never be indexed --
+    INCLUDING through a label's forward window, which is the way this program
+    could touch it silently. Non-vacuous: the test block is asserted to be
+    non-empty, the guard is shown to FIRE when the boundary is moved, and the
+    furthest position actually read is pinned strictly below it."""
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(7)
+    close = 1.1 + np.cumsum(rng.normal(0.0, 0.0004, 6000))
+    ctx, _c = md.build_multiday_context(_md_synthetic_frame(close))
+
+    for h in (md.PRIMARY_HORIZON,) + md.BAND_HORIZONS:
+        splits, counts = md.split_purge_embargo(ctx, h)
+        assert counts['n_test_reserved'] > 0, 'the test block must be non-empty'
+        assert len(splits['val']) > 0, 'and the validation set non-empty'
+        # every scored row PLUS its whole label window stays inside validation
+        assert counts['max_position_read'] < counts['val_end_pos']
+        assert md.assert_no_test_block(counts) is True
+        # no returned index reaches the test block either
+        pos = {ts: i for i, ts in enumerate(ctx.index)}
+        assert max(pos[ts] for ts in splits['val']) + h < counts['val_end_pos']
+
+        # the guard BITES: pretend the boundary sits at the furthest read
+        tripped = dict(counts, val_end_pos=counts['max_position_read'])
+        with pytest.raises(md.TestBlockTouchedError):
+            md.assert_no_test_block(tripped)
+
+
+def test_md_three_added_features_use_only_bars_up_to_t():
+    """MD TEST 8: logret_48/72/96 must be computable from bars <= t ONLY.
+    Asserted by perturbing every FUTURE bar and showing the added columns at t
+    do not move, while perturbing bar t-48 does move logret_48."""
+    import src.h1_multiday_reversion as md
+
+    rng = np.random.default_rng(8)
+    close = 1.1 + np.cumsum(rng.normal(0.0, 0.0004, 800))
+    df = _md_synthetic_frame(close)
+    base = md.build_features(df)
+
+    t = 600
+    mutated = df.copy()
+    mutated.iloc[t + 1:, :] *= 1.05                 # every FUTURE bar changed
+    after = md.build_features(mutated)
+
+    for col in md.ADDED_FEATURE_COLUMNS:
+        assert np.isfinite(base[col].iloc[t])
+        assert abs(base[col].iloc[t] - after[col].iloc[t]) < 1e-12, (
+            f'{col} at t moved when only future bars changed -- look-ahead')
+
+    # the test BITES: perturbing a PAST bar inside the window does move it
+    past = df.copy()
+    past.iloc[t - 48, :] *= 1.02
+    moved = md.build_features(past)
+    assert abs(moved['logret_48'].iloc[t] - base['logret_48'].iloc[t]) > 1e-9
+
+    # exactly three columns were added to the imported 15
+    from src.pooled_h1_model import FEATURE_COLUMNS as POOLED_COLS
+    assert md.ADDED_FEATURE_COLUMNS == ['logret_48', 'logret_72', 'logret_96']
+    assert md.FEATURE_COLUMNS == list(POOLED_COLS) + md.ADDED_FEATURE_COLUMNS
+    assert len(POOLED_COLS) == 15 and len(md.FEATURE_COLUMNS) == 18
+
+
+def test_md_run_never_touches_protected_files(tmp_path):
+    """MD TEST 9: a full run leaves the ENTIRE protected set byte-identical
+    (sha256 before vs after) -- including src/pooled_h1_model.py,
+    src/h1_direction_model.py and every pre-existing hypothesis log -- registers
+    exactly the two family rows at alpha = 0.025, and records all three
+    mandatory disclosures in the notes."""
+    import glob
+    import hashlib
+    import os
+    import src.h1_multiday_reversion as md
+
+    protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
+                 'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
+                 'results/eurusd_m15.csv', 'src/pooled_h1_model.py',
+                 'src/pooled_h1_data.py', 'src/h1_direction_model.py',
+                 'src/h1_direction_diagnostics.py', 'src/h1_newyork_time.py',
+                 'src/h1_horizon_feasibility.py']
+    protected += glob.glob('results/pooled_h1/*')
+    protected += [p for p in glob.glob('results/*hypothesis_log.csv')
+                  if 'h1_multiday' not in p]
+    for root, _dirs, files in os.walk('models'):
+        for fname in files:
+            protected.append(os.path.join(root, fname))
+
+    def _hash(p):
+        with open(p, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    before = {p: _hash(p) for p in protected}
+    log_path = str(tmp_path / 'h1_multiday_hypothesis_log.csv')
+    r = md.run(log_path=log_path, register=True, verbose=False,
+               run_band=False, run_persistence=False)
+    changed = [p for p in protected if before[p] != _hash(p)]
+    assert changed == [], f'the multi-day program must never modify: {changed}'
+
+    assert r['gate']['passed'] and not r.get('cancelled')
+    assert r['primary']['power']['n_independent'] >= md.MIN_INDEPENDENT
+
+    log = pd.read_csv(log_path)
+    assert sorted(log['n'].tolist()) == [1, 2]
+    assert np.allclose(log['alpha'], 0.025)
+    assert list(log.columns) == md.LOG_COLUMNS
+    assert (log['horizon_bars'] == 24).all()
+    assert (log['block_len'] == 96).all()
+    assert set(log['verdict']) <= {'KEEP', 'DROP'}
+    # n_independent is the honest denominator, not the raw row count
+    assert np.allclose(log['n_independent'], (log['n_rows'] / 24).round(2), atol=0.01)
+    # STEP 7: all three mandatory disclosures are on the record
+    assert log['notes'].str.contains('CONTAMINATION DISCLOSURE').all()
+    assert log['notes'].str.contains('STEP 0 REMEDY').all()
+    assert log['notes'].str.contains('PRIOR-ATTEMPT COUNT').all()
+    assert log['notes'].str.contains('logret_48, logret_72, logret_96').all()
