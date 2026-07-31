@@ -330,3 +330,185 @@ def build_h1_inference_sample(cache_path: str = DEFAULT_H1_CACHE, now=None, h1: 
     flat_row = feats.iloc[[-1]]
     seq = build_lstm_tensor(h1, feats.index[[-1]])
     return flat_row, seq, as_of, data_source
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# H1 NEXT-BAR DIRECTION — the canonical feature contract for H_dir.1
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# TWO DIFFERENT H1 FEATURE SETS LIVE IN THIS FILE. They are not interchangeable
+# and nothing below touches anything above:
+#
+#   * ABOVE -- H1 -> DAILY aggregation (FLAT_FEATURE_COLUMNS /
+#     SEQ_FEATURE_COLUMNS). Collapses 24 hourly bars into one DAILY row for the
+#     auxiliary daily predictor. Consumed by _train_pipeline.py and the daily
+#     PredictionService.
+#   * BELOW -- H1 NEXT-BAR DIRECTION (DIRECTION_FEATURE_COLUMNS). One row PER
+#     HOURLY BAR, predicting the direction of the NEXT hourly bar. Consumed by
+#     src/train_h1_direction.py and the /api/h1-direction serving path.
+#
+# WHY THIS SECTION EXISTS. H_dir.1 was developed against src/pooled_h1_model.py,
+# a RESEARCH module. Production must never depend on a research module drifting
+# underneath it, and training and serving must compute BYTE-IDENTICAL features or
+# the single-source-of-truth contract this project is built on is a fiction. So
+# the definition is extracted HERE, once, and both the production trainer and the
+# serving path import it.
+#
+# src/pooled_h1_model.py and src/h1_direction_model.py are deliberately NOT
+# modified: they stay exactly as committed so every existing hypothesis log stays
+# reproducible. This is a faithful EXTRACTION, not a reimplementation with
+# improvements. There are no improvements here on purpose -- a "better" feature
+# would be a different model, and a different model has not cleared any bar.
+#
+# THE HARD GATE: tests/test_h1_production.py asserts this section's matrix is
+# byte-identical to pooled_h1_model.compute_pooled_features on the same frame,
+# column names and order included. If that test fails the extraction is
+# unfaithful and nothing downstream of it is valid.
+
+DIRECTION_EWMA_SPAN = 24                # matches pooled_h1_model.EWMA_SPAN
+
+# The canonical column list AND ORDER. The serving path pins this against the
+# order recorded in h1_direction_meta.json at train time, so a reordering can
+# never silently feed the booster a permuted matrix.
+DIRECTION_FEATURE_COLUMNS = [
+    'logret_1', 'logret_2', 'logret_3', 'logret_6', 'logret_12', 'logret_24',
+    'atr14_norm', 'rsi14', 'dist_sma50_atr', 'dist_sma200_atr', 'ewma_std_24',
+    'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
+]
+
+# Longest warm-up any column needs (SMA200). A serving fetch shorter than this
+# cannot produce a single complete feature row.
+MIN_BARS_FOR_DIRECTION_FEATURES = 200
+
+
+def wilder_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder's RSI (causal EWM smoothing, adjust=False). A flat window maps to
+    the neutral 50 convention; an all-gain window to 100.
+
+    NOTE: deliberately NOT the same estimator as this module's `_rsi` above,
+    which is a simple rolling mean over a 24-bar window for the DAILY
+    aggregation. Wilder smoothing is what H_dir.1 was validated with, so it is
+    what ships. Two different questions, two different estimators, both pinned.
+    """
+    delta = close.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100.0 - 100.0 / (1.0 + rs)
+    rsi = rsi.where(avg_loss != 0.0, 100.0)
+    rsi = rsi.where(~((avg_gain == 0.0) & (avg_loss == 0.0)), 50.0)
+    return rsi
+
+
+def wilder_atr(high: pd.Series, low: pd.Series, close: pd.Series,
+               period: int = 14) -> pd.Series:
+    """Wilder ATR (causal): EWM(alpha=1/period, adjust=False) of the true range.
+    Trailing by construction -- bar t never reflects a future bar."""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+
+
+def compute_h1_direction_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    The canonical H1 next-bar-direction feature matrix from one OHLC frame.
+
+    Byte-identical to `src.pooled_h1_model.compute_pooled_features` -- asserted
+    by unit test, not assumed. Every column is trailing/causal: a feature at bar
+    t is computable from bars <= t only. NO raw price level, NO tick volume, NO
+    symbol identifier. Index is preserved; warm-up rows carry NaN and are dropped
+    by the caller.
+    """
+    # Imported here rather than at module scope: src/h1_features.py is imported
+    # at PredictionService construction, and the daily serving path has no reason
+    # to pull in the triple-barrier module. The estimator is SHARED rather than
+    # copied so feature and label cannot drift apart on the one definition of
+    # "recent volatility" they both use. src/triple_barrier.py is unchanged.
+    from src.triple_barrier import ewma_log_return_std
+
+    close, high, low = df['close'], df['high'], df['low']
+    out = pd.DataFrame(index=df.index)
+
+    log_close = np.log(close)
+    for k in (1, 2, 3, 6, 12, 24):
+        out[f'logret_{k}'] = log_close - log_close.shift(k)
+
+    atr14 = wilder_atr(high, low, close, 14)
+    out['atr14_norm'] = atr14 / close
+    out['rsi14'] = wilder_rsi(close, 14)
+
+    sma50 = close.rolling(50).mean()
+    sma200 = close.rolling(200).mean()
+    out['dist_sma50_atr'] = (close - sma50) / atr14
+    out['dist_sma200_atr'] = (close - sma200) / atr14
+
+    out['ewma_std_24'] = ewma_log_return_std(close.to_numpy(), DIRECTION_EWMA_SPAN)
+
+    hour = df.index.hour.to_numpy()
+    dow = df.index.dayofweek.to_numpy()
+    out['hour_sin'] = np.sin(2 * np.pi * hour / 24.0)
+    out['hour_cos'] = np.cos(2 * np.pi * hour / 24.0)
+    out['dow_sin'] = np.sin(2 * np.pi * dow / 7.0)
+    out['dow_cos'] = np.cos(2 * np.pi * dow / 7.0)
+
+    return out[DIRECTION_FEATURE_COLUMNS]
+
+
+# ── the standardiser, shared by trainer and server ────────────────────────────
+# Replicates the research path exactly: population std (ddof=0), zero-variance
+# columns pinned to 1.0 so a constant feature maps to 0 rather than to inf.
+
+def fit_direction_standardizer(X) -> dict:
+    """Per-feature mean/std from the TRAINING rows only."""
+    X = np.asarray(X, dtype=float)
+    mean = X.mean(axis=0)
+    std = X.std(axis=0)
+    std[std == 0.0] = 1.0
+    return {'mean': mean, 'std': std,
+            'feature_columns': list(DIRECTION_FEATURE_COLUMNS)}
+
+
+def apply_direction_standardizer(X, scaler: dict) -> np.ndarray:
+    """Standardise with a FITTED scaler. Never refits -- refitting at serve time
+    would rescale against whatever window the live fetch happened to return,
+    which is the intraday cousin of the look-ahead this project exists to avoid."""
+    return (np.asarray(X, dtype=float) - scaler['mean']) / scaler['std']
+
+
+# ── the parity gate ───────────────────────────────────────────────────────────
+
+def feature_frame_signature(frame: pd.DataFrame) -> tuple:
+    """
+    (column names, raw bytes) of a feature matrix -- the comparison the parity
+    gate uses. BYTES rather than a tolerance: the contract is byte-identical, so
+    `np.allclose` would be the wrong test and would hide a real drift.
+    """
+    return (tuple(frame.columns), frame.to_numpy(dtype=float).tobytes())
+
+
+def assert_feature_parity(frame_a: pd.DataFrame, frame_b: pd.DataFrame,
+                          label_a: str = 'h1_features',
+                          label_b: str = 'pooled_h1_model') -> None:
+    """Raise unless two feature matrices are byte-identical, columns included."""
+    cols_a, bytes_a = feature_frame_signature(frame_a)
+    cols_b, bytes_b = feature_frame_signature(frame_b)
+    if cols_a != cols_b:
+        raise AssertionError(
+            f'feature COLUMN mismatch: {label_a}={cols_a} vs {label_b}={cols_b}')
+    if frame_a.shape != frame_b.shape:
+        raise AssertionError(
+            f'feature SHAPE mismatch: {label_a}={frame_a.shape} vs '
+            f'{label_b}={frame_b.shape}')
+    if bytes_a != bytes_b:
+        a, b = frame_a.to_numpy(dtype=float), frame_b.to_numpy(dtype=float)
+        diff = np.nanmax(np.abs(a - b))
+        raise AssertionError(
+            f'feature VALUE mismatch between {label_a} and {label_b}: not '
+            f'byte-identical (max abs difference {diff!r}). The extraction is '
+            'unfaithful and nothing downstream of it is valid.')

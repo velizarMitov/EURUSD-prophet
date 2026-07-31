@@ -1,0 +1,92 @@
+==============================================================================
+H_dir FAMILY — FINAL ONE-SHOT TEST-BLOCK REPORT (irreversible)
+==============================================================================
+
+1. DEVICE
+   CUDA available : True
+   CUDA device    : NVIDIA GeForce RTX 4070 Laptop GPU
+   device used    : cuda     seed = 42
+
+2. REPRODUCTION GATE (claim A) — checked BEFORE the test block was read
+   registered validation accuracy : 0.527462
+   refit validation accuracy      : 0.527462
+   |difference|                   : 0.000000   tolerance 0.003
+   -> GATE PASSED. The block is being spent on the registered model.
+
+3. ROW COUNTS
+   raw H1 bars             : 70000
+   feature-valid rows      : 69800
+   zero-return dropped     : 451 (0.6461%)
+   dropped at series end   : 1 (label needs a bar beyond the series; DROPPED, never padded)
+   train / validation      : 48543 / 10378
+   TEST BLOCK              : 10403   2024-11-19T05:00:00+00:00 .. 2026-07-28T14:00:00+00:00
+   purged 1, embargoed 24 (train/val boundary only, exactly as the protected module does; the train/test gap is the whole validation slice)
+   mean label uniqueness   : 1.000000
+
+4. VALIDATION SLICE [70:85%] — CONTEXT ONLY (already spent, not new evidence)
+   CLAIM A  direction, validation
+     acc model 0.527462   acc train-majority 0.504432   delta +0.023029 (+2.3029 pp)
+     block CI [+0.005781, +0.041919]  (block_len=24 bars = 1 trading day) <- governs
+     iid CI   [+0.003404, +0.042977]  (context only)
+     McNemar exact b=2993 c=2754 p=0.0016902076     ROC-AUC 0.541059 (descriptive)
+     -> KEEP
+   CLAIM B  magnitude, validation
+     MAE model    0.053735 %   MAE baseline 0.053688 %
+     MAE diff (model - baseline) +0.00004749 %   block CI [-0.00013783, +0.00023293]
+     RMSE model   0.082780 %   RMSE baseline 0.082613 %   R^2 -0.00404873
+     PREDICTIONS  mean -0.00034182 %   sd 0.00711167 %
+     TARGET       mean +0.00002330 %   sd 0.08261281 %   (shrinkage ratio sd_pred/sd_target = 0.086084)
+     -> DROP
+
+5. *** TEST BLOCK FIRST READ AT 2026-07-30T10:52:03.354228+00:00Z ***
+   Fits performed BEFORE that instant, in order: claim A direction classifier, claim B magnitude regressor, H_dir.4 re-statement refit (AUDUSD), H_dir.5 re-statement refit (CHFUSD)
+   Nothing was fitted, tuned, thresholded or selected after that instant.
+   Enforced by TestBlockGuard: every fit call site asserts the read flag is
+   still unset, and raises FitAfterTestBlockReadError if it is not.
+
+6. TEST BLOCK — CLAIM A (DIRECTION)
+   H_dir.1 on [85:100%], n=10403
+     acc model 0.529559   acc train-majority 0.498510   delta +0.031049 (+3.1049 pp)
+     block CI [+0.011404, +0.049667]  (block_len=24 bars = 1 trading day) <- governs
+     iid CI   [+0.012785, +0.049156]  (context only)
+     McNemar exact b=2966 c=2643 p=1.703588e-05     ROC-AUC 0.546423 (descriptive)
+     -> KEEP
+
+7. TEST BLOCK — CLAIM B (MAGNITUDE)
+   H_dir.6 on [85:100%], n=10403
+     MAE model    0.062415 %   MAE baseline 0.062349 %
+     MAE diff (model - baseline) +0.00006604 %   block CI [-0.00021954, +0.00041193]
+     RMSE model   0.096293 %   RMSE baseline 0.095499 %   R^2 -0.01676649
+     PREDICTIONS  mean -0.00061721 %   sd 0.01353229 %
+     TARGET       mean +0.00072939 %   sd 0.09549606 %   (shrinkage ratio sd_pred/sd_target = 0.141705)
+     -> DROP
+   baseline constant = train-slice mean = -0.00003544 % per bar
+
+8. DESCRIPTIVE BREAKDOWNS (never a decision path)
+   (a) BY NY SESSION BUCKET — the single most informative line here.
+       On validation the direction edge was ABSENT in the London/NY overlap
+       (+1.00pp against SE 1.39pp). Does that repeat on the test block?
+       group           n       acc     major  delta pp     MAE %    base %  |move| %
+       Asia         3467    0.5042    0.5068   -0.2596  0.054740  0.054589  0.054588
+       London       2176    0.5331    0.4839   +4.9173  0.073887  0.073819  0.073820
+       overlap      1303    0.5188    0.4820   +3.6838  0.091986  0.091769  0.091771
+       NY-only      2156    0.5362    0.4564   +7.9777  0.054268  0.053927  0.053930
+       rollover     1301    0.5911    0.5872   +0.3843  0.047563  0.048334  0.048328
+   (b) BY CALENDAR YEAR within the test block
+       2024          705    0.5220    0.4950   +2.6950  0.071704  0.071438  0.071438
+       2025         6182    0.5322    0.5074   +2.4749  0.066662  0.066413  0.066412
+       2026         3516    0.5265    0.4835   +4.2947  0.053084  0.053381  0.053382
+   (c) SIGN AGREEMENT classifier vs regressor: 7765/10403 = 0.7464
+       classifier predicts UP 0.4608 of the time; regressor sign is UP 0.5045
+
+9. VERDICTS AT alpha = 0.05/6 = 0.008333
+   H_dir.1 direction, TEST BLOCK : KEEP
+   H_dir.6 magnitude, TEST BLOCK : DROP
+
+   RETROACTIVE RE-STATEMENT of H_dir.1-H_dir.5 at the new alpha:
+       hypothesis                              prior a    was    now  changed  method
+       H_dir.1_GBM_vs_train_majority             0.025   True   True    False  REFIT + re-cut at new alpha
+       H_dir.2_LSTM_vs_GBM                       0.025  False  False    False  monotonicity (no refit needed)
+       H_dir.3_replication_GBPUSD                 0.01  False  False    False  monotonicity (no refit needed)
+       H_dir.4_replication_AUDUSD                 0.01   True   True    False  REFIT + re-cut at new alpha
+       H_dir.5_replication_CHFUSD                 0.01   True   True    False  REFIT + re-cut at new alpha

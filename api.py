@@ -143,7 +143,7 @@ def prediction_history():
     except OSError:
         pass
 
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=_with_h1_nav(html))
 
 
 @app.get("/api/paper-trading")
@@ -184,7 +184,88 @@ def paper_trading_page():
     spread_pips = pt_cfg.get('spread_pips', 1.5)
 
     all_ledgers = build_all_ledgers(log_path, CONFIG['data'], pt_cfg, base_dir=BASE_DIR)
-    return HTMLResponse(content=render_html(all_ledgers, spread_pips))
+    return HTMLResponse(content=_with_h1_nav(render_html(all_ledgers, spread_pips)))
+
+
+# Cross-links to the H1 direction ledger, injected HERE rather than edited into
+# src/tracking.py and src/paper_trading.py. Those two modules are byte-pinned --
+# src/paper_trading.py by a pre-existing test that diffs it against git HEAD, and
+# both by the protected-set fixtures -- so adding navigation at the render layer
+# gives the pages their links without modifying a single page module.
+_H1_NAV = (
+    '<p style="max-width:1100px;margin:1.25rem auto;padding:0 1rem;font-size:.85rem;'
+    'font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#555;">'
+    'Also: <a href="/h1-direction">⏱ H1 next-bar direction ledger</a> (observational) '
+    '&nbsp;·&nbsp; <a href="/">dashboard</a> '
+    '&nbsp;·&nbsp; <a href="/history">prediction-vs-actual history</a> '
+    '&nbsp;·&nbsp; <a href="/paper-trading">paper-trading ledgers</a></p>')
+
+
+def _with_h1_nav(html: str) -> str:
+    """Append the cross-link block without touching the page modules."""
+    if '</body>' in html:
+        return html.replace('</body>', _H1_NAV + '</body>', 1)
+    return html + _H1_NAV
+
+
+@app.get("/api/h1-direction")
+def h1_direction_endpoint():
+    """
+    H_dir.1 next-H1-bar direction, ON DEMAND. One call, one prediction.
+
+    The base bar is always the last FULLY CLOSED hourly bar — the currently
+    forming hour is never the base. `minutes_remaining` is a first-class field,
+    not a nicety: the model predicts the CURRENT, still-forming hour, so a call
+    at 14:05 leaves 55 minutes of the predicted move ahead while a call at 14:50
+    leaves 10. When the forecast bar has ALREADY closed (weekend, holiday or a
+    stale feed) the response says so via `forecast_bar_status` and never presents
+    a bar that is already history as though it were actionable.
+
+    Observational. Simulated ledger only. Not a trading instruction. Returns a
+    clear `available: false` payload rather than a 500 when the artifacts or the
+    H1 feed are missing, and can never affect /api/predict, /history or
+    /paper-trading.
+    """
+    if not service.h1_dir_ready:
+        return {
+            "available": False,
+            "reason": "H1 direction artifacts missing (models/h1_direction/).",
+            "errors": [e for e in service.load_errors if e.startswith("H1 direction")],
+            "disclaimer": "Observational. Simulated ledger only. Not a trading instruction.",
+        }
+    try:
+        result = service.predict_h1_direction()
+    except Exception as e:
+        return {
+            "available": False,
+            "reason": f"H1 data pipeline unavailable: {e}",
+            "disclaimer": "Observational. Simulated ledger only. Not a trading instruction.",
+        }
+
+    try:
+        from src.h1_direction_serving import log_prediction, build_ledger
+        log_prediction(result, log_path=os.path.join(BASE_DIR, 'results/h1_direction_log.csv'))
+        ledger = build_ledger(log_path=os.path.join(BASE_DIR, 'results/h1_direction_log.csv'),
+                              base_dir=BASE_DIR)
+        settled = int((ledger['model_version'] == result['model_version']).sum()) if len(ledger) else 0
+    except Exception:
+        settled = 0                       # logging must never break the response
+
+    result["available"] = True
+    result["forward_observations"] = settled
+    return result
+
+
+@app.get("/h1-direction", response_class=HTMLResponse)
+def h1_direction_page():
+    """Forward ledger for the observational H1 direction model, grouped BY
+    model_version. A blended hit rate across a retrain would describe a model
+    that is no longer served, so the view never leads with one."""
+    from src.h1_direction_serving import build_and_save, read_log, render_html
+
+    log_path = os.path.join(BASE_DIR, 'results/h1_direction_log.csv')
+    ledger = build_and_save(log_path=log_path, base_dir=BASE_DIR)
+    return HTMLResponse(content=render_html(ledger, read_log(log_path), base_dir=BASE_DIR))
 
 
 if __name__ == "__main__":

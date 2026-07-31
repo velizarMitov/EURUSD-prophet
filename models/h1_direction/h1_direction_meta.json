@@ -1,0 +1,51 @@
+{
+  "model_version": "h1dir-full-20260728-69349",
+  "train_start": "2015-05-08T03:00:00+00:00",
+  "train_end": "2026-07-28T14:00:00+00:00",
+  "n_train_rows": 69349,
+  "trained_at_utc": "2026-07-30T18:11:32.184604+00:00",
+  "seed": 42,
+  "feature_columns": [
+    "logret_1",
+    "logret_2",
+    "logret_3",
+    "logret_6",
+    "logret_12",
+    "logret_24",
+    "atr14_norm",
+    "rsi14",
+    "dist_sma50_atr",
+    "dist_sma200_atr",
+    "ewma_std_24",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos"
+  ],
+  "validated_out_of_sample": false,
+  "provenance_note": "Trained on the full available history. The out-of-sample confirmation (52.96% vs 49.85%, +3.10pp, block CI [+0.0114,+0.0497], McNemar p=1.7e-05) belongs to the [0:70%] model and does NOT transfer to this one, which has seen that test block during training. This model's only honest evidence is its own forward ledger.",
+  "hyperparameters": {
+    "n_estimators": 300,
+    "max_depth": 4,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "tree_method": "hist",
+    "device": "cuda",
+    "scale_pos_weight": "balanced",
+    "early_stopping": false,
+    "eval_set": false
+  },
+  "build_time_pipeline_check": {
+    "check_val_accuracy": 0.5274619387165157,
+    "check_abs_delta": 6.12834842872445e-08,
+    "check_target": 0.527462,
+    "check_tolerance": 0.003,
+    "check_n_train": 48543,
+    "check_n_val": 10378,
+    "passed": true
+  },
+  "source_cache": "results/pooled_h1/EURUSD_h1.csv",
+  "train_class_balance_pct_up": 50.270372
+}

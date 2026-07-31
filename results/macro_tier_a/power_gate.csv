@@ -1,0 +1,3 @@
+n_pairs,n_windows,n_oos_rows,n_oos_months,n_train_months,rho_bar,k_eff,n_independent,n_independent_crosscheck,mean_label_uniqueness,se_accuracy,z_two_sided,min_detectable_edge_pp,power_gate_band,proceed,panel
+9,38,3481,450,564,0.5028721348434557,1.7917660898910424,693,806,1.0,0.018993429409939658,2.241402727604947,4.257192448601077,PROCEED-UPPER-HALF-ONLY,True,G10_primary
+11,38,4195,450,564,0.46630515869566724,1.9424156448328251,741,874,1.0,0.018367958959266125,2.241402727604947,4.116999331183481,PROCEED-UPPER-HALF-ONLY,True,extended_G10_plus_EM

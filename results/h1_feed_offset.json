@@ -1,0 +1,13 @@
+{
+ "offset_hours": 2,
+ "accepted_at_utc": "2026-07-30T20:52:32.962385",
+ "pending": null,
+ "history": [
+  {
+   "offset_hours": 2,
+   "previous_offset_hours": null,
+   "accepted_at_utc": "2026-07-30T20:52:32.962385",
+   "reason": "cold_start"
+  }
+ ]
+}

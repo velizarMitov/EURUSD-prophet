@@ -1,0 +1,125 @@
+==============================================================================
+TIER-A MACRO FX DIRECTION, WALK-FORWARD
+==============================================================================
+
+1. DEVICE
+   cpu -- CPU only. A logistic regression needs no GPU and none
+   was used. No neural network and no GBM were fitted anywhere in this program.
+
+2. DATA PROVENANCE
+   Tier-A series only, 50 series. Full table: results/macro_tier_a/series_provenance.csv
+   DISCONTINUED mid-sample (4):
+      NZ  policy_rate                IRSTCI01NZM156N  last print 2024-12  (staleness guard -> MISSING after 200d)
+      CH  policy_rate                IRSTCI01CHM156N  last print 2024-03  (staleness guard -> MISSING after 200d)
+      SE  policy_rate                IRSTCI01SEM156N  last print 2020-10  (staleness guard -> MISSING after 200d)
+      EZ  fx_EURUSD_predecessor_DEM  EXGEUS           last print 2001-12  (staleness guard -> MISSING after 200d)
+   EUR/DEM SPLICE: EXGEUS x 1.95583 DEM/EUR before 1999-01; overlap check on 36 months (1999-01..2001-12): mean abs diff 1.550%, max 4.316% (EXGEUS is a monthly average vs a month-end point).
+   Per-pair start and the feature that BINDS it:
+      CADUSD  1976-01  bound by for_rate_change_12m
+      GBPUSD  1979-01  bound by for_rate_change_12m
+      NOKUSD  1985-01  bound by for_curve_slope|for_yield_10y
+      NZDUSD  1986-01  bound by for_rate_change_12m
+      SEKUSD  1986-12  bound by for_curve_slope|for_yield_10y
+      AUDUSD  1991-08  bound by for_rate_change_12m
+      EURUSD  1995-01  bound by for_rate_change_12m
+      CHFUSD  1999-07  bound by for_curve_slope|for_rate_3m
+      JPYUSD  2002-04  bound by for_curve_slope|for_rate_3m
+   Panel usable start: 1976-01  end: 2026-06
+   EM extension: MXN and ZAR have a complete Tier-A block and are included in
+   the extended arm. Declared but NOT buildable on Tier-A terms:
+      TRY: IRLTLT01TR (10y) does not exist on FRED; IR3TIB01TRM156N ends 2008-04; no FRED daily TRY spot series. No complete Tier-A block.
+      BRL: IR3TIB01BR and IRLTLT01BR do not exist on FRED (only the policy rate IRSTCI01BRM156N and a discount rate). No complete Tier-A block.
+      INR: IR3TIB01IN and IRLTLT01IN do not exist on FRED (only IRSTCI01INM156N and INTDSRINM193N, which ends 2022-07). No complete Tier-A block.
+
+3. THE POWER GATE  (computed and reported BEFORE any model)
+  G10_primary            pairs= 9  rho_bar=0.5029  k_eff=1.7918
+                         n_oos_rows=3481  n_oos_months=450  n_independent=693 (cross-check 806)
+                         label_uniqueness=1.0000  SE(acc)=0.018993
+                         MIN DETECTABLE EDGE = 4.2572 pp  -> PROCEED-UPPER-HALF-ONLY
+  extended_G10_plus_EM   pairs=11  rho_bar=0.4663  k_eff=1.9424
+                         n_oos_rows=4195  n_oos_months=450  n_independent=741 (cross-check 874)
+                         label_uniqueness=1.0000  SE(acc)=0.018368
+                         MIN DETECTABLE EDGE = 4.1170 pp  -> PROCEED-UPPER-HALF-ONLY
+   Bands: <=4.0pp PROCEED | 4.0-5.0pp PROCEED, upper half of the literature range only | >5.0pp STOP.
+   *** ONLY THE UPPER HALF OF THE LITERATURE RANGE IS RESOLVABLE. A DROP
+       HERE DOES NOT RULE OUT A 2-3pp EFFECT. ***
+
+4. WALK-FORWARD STRUCTURE
+   38 expanding windows, annual refit, min train 120 months.
+   train months 120..564, train rows 216..3649, oos rows/window 48..108
+   RESERVED HOLDOUT: 36 months 2023-07..2026-06 -- never trained on,
+   never predicted, never inspected. Asserted un-indexed by every window.
+
+5. MANDATORY CONTROLS  (no alpha)
+   shuffled-label control : acc 0.5237 on 3481 rows vs pooled majority rate 0.5128
+   look-ahead positive    : acc 0.9882 vs honest 0.5073  -> +48.09 pp
+        (features deliberately shifted one month LATER than the availability
+         rule permits. A measurable GAIN is what proves we would notice leakage.)
+   regime stability, carry rule by decade:
+      1980s  n=  229  carry 0.5895   logit 0.5983   base rate up 0.5983
+      1990s  n=  767  carry 0.5450   logit 0.5176   base rate up 0.4837
+      2000s  n= 1053  carry 0.5328   logit 0.4938   base rate up 0.5385
+      2010s  n= 1080  carry 0.5037   logit 0.5074   base rate up 0.4806
+      2020s  n=  352  carry 0.5227   logit 0.4659   base rate up 0.5426
+
+6. H_tA.1 -- DOES CARRY WORK?   (carry rule vs per-window train majority)
+   acc challenger 0.5292   acc reference 0.5013   delta +0.0279
+   block bootstrap CI [-0.0086, +0.0710]  (2000 resamples, 12-month moving blocks over months)
+   exact McNemar b=835 c=738 p=0.0154722   AUC 0.5270 (descriptive)
+   -> DROP
+
+7. H_tA.2 -- DOES THE MODEL BEAT CARRY?   (L2 logistic vs carry, same rows)
+   acc challenger 0.5073   acc reference 0.5292   delta -0.0218
+   block bootstrap CI [-0.0503, +0.0014]  (2000 resamples, 12-month moving blocks over months)
+   exact McNemar b=502 c=578 p=0.0224351   AUC 0.5117 (descriptive)
+   -> DROP
+   corroborating only, never a path to KEEP: logistic vs train-majority delta +0.0060, McNemar p 0.6185
+
+8. DESCRIPTIVE ARMS  (never a path to KEEP)
+   rolling 120-month window, n=3481: carry 0.5294  logit 0.4970  majority 0.4772
+   extended panel (+MXN,+ZAR), n=4195: carry 0.5197  logit 0.4985  majority 0.4522
+      carry vs majority  delta +0.0675 CI [+0.0253, +0.1111] p 3.717e-09  -> would have cleared the bar, DESCRIPTIVE ONLY, not a registered hypothesis and not a KEEP
+      logit vs carry   delta -0.0212 CI [-0.0467, +0.0000] p 0.02093  -> would not have cleared the bar, DESCRIPTIVE ONLY, not a registered hypothesis and not a KEEP
+   READ THIS CORRECTLY: the extended panels carry-vs-majority delta is LARGER
+   than the primary's (+0.0675 vs +0.0279) even though carry itself is LESS accurate there (0.5197 vs 0.5292). The gap
+   widens because the REFERENCE collapses (0.4522 vs 0.5013): MXN and ZAR trend down against the dollar,
+   so a train-majority baseline that predicts UP is badly wrong on them. That is
+   a weaker baseline, not a stronger signal, and it is exactly why this arm was
+   pre-registered as descriptive and never as a path to KEEP.
+   Agreement with the primary: both arms DROP the logistic against carry, and
+   both show carry above its baseline; they do not point in opposite directions.
+
+9. COEFFICIENTS AND BREAKDOWNS  (descriptive)
+      for_policy_rate          -0.2633 +-0.1510  pos in 5% of windows       sign OPPOSES theory
+      for_rate_3m              +0.2621 +-0.0493  pos in 100% of windows     sign MATCHES theory
+      for_yield_10y            +0.3268 +-0.0648  pos in 100% of windows     sign MATCHES theory
+      for_curve_slope          -0.0358 +-0.0566  pos in 16% of windows      
+      for_rate_change_3m       +0.1974 +-0.1295  pos in 100% of windows     sign MATCHES theory
+      for_rate_change_12m      +0.0772 +-0.0243  pos in 97% of windows      sign MATCHES theory
+      us_policy_rate           +0.1736 +-0.4394  pos in 63% of windows      sign OPPOSES theory
+      us_rate_3m               -0.2363 +-0.1757  pos in 11% of windows      sign MATCHES theory
+      us_yield_10y             -0.2974 +-0.0984  pos in 0% of windows       sign MATCHES theory
+      us_curve_slope           +0.0368 +-0.1971  pos in 63% of windows      
+      us_rate_change_3m        +0.0783 +-0.0430  pos in 95% of windows      sign OPPOSES theory
+      us_rate_change_12m       +0.0082 +-0.0567  pos in 58% of windows      sign OPPOSES theory
+      vix_level                     --      --   REMOVED BY AMENDMENT (was pre-registered)
+      us_equity_12m_return     -0.0673 +-0.0872  pos in 29% of windows      
+      own_return_1m            -0.0324 +-0.0798  pos in 32% of windows      
+      own_return_3m            -0.0226 +-0.0672  pos in 39% of windows      
+      own_return_12m           +0.0576 +-0.0500  pos in 87% of windows      
+   per-currency accuracy:
+      AUDUSD  n=  383  carry 0.5561  logit 0.5300  base rate up 0.5013
+      CADUSD  n=  450  carry 0.5378  logit 0.5244  base rate up 0.5111
+      CHFUSD  n=  288  carry 0.4792  logit 0.5104  base rate up 0.5243
+      EURUSD  n=  342  carry 0.5585  logit 0.5234  base rate up 0.4854
+      GBPUSD  n=  450  carry 0.4867  logit 0.4867  base rate up 0.4956
+      JPYUSD  n=  255  carry 0.4784  logit 0.5020  base rate up 0.5294
+      NOKUSD  n=  450  carry 0.5333  logit 0.4756  base rate up 0.5178
+      NZDUSD  n=  450  carry 0.5600  logit 0.5133  base rate up 0.5511
+      SEKUSD  n=  413  carry 0.5448  logit 0.5061  base rate up 0.5012
+
+10. VERDICTS
+   H_tA.1 carry vs train-majority : DROP
+   H_tA.2 logistic vs carry       : DROP
+   family alpha = 0.025 (size 2); KEEP requires the block CI
+   entirely above zero AND exact McNemar p < alpha.

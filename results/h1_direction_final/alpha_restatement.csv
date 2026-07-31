@@ -1,0 +1,6 @@
+hypothesis,method,prior_alpha,prior_cleared,new_cleared,changed,ci_low,ci_high,mcnemar_p
+H_dir.1_GBM_vs_train_majority,REFIT + re-cut at new alpha,0.025,True,True,False,0.0057814607824243636,0.041919204085565404,0.001690207646341239
+H_dir.2_LSTM_vs_GBM,monotonicity (no refit needed),0.025,False,False,False,-0.023704,0.001831,0.052685
+H_dir.3_replication_GBPUSD,monotonicity (no refit needed),0.01,False,False,False,-0.006459,0.02959,0.120051
+H_dir.4_replication_AUDUSD,REFIT + re-cut at new alpha,0.01,True,True,False,0.003942113367337153,0.03782239437975167,0.003403367531169827
+H_dir.5_replication_CHFUSD,REFIT + re-cut at new alpha,0.01,True,True,False,0.014084507042253502,0.048235819023731356,5.6200320807247975e-06

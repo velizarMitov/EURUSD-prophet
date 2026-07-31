@@ -66,9 +66,28 @@
         <button id="retrainBtn" class="secondary" onclick="startRetrain()">🔁 Retrain Models (runs in background)</button>
         <div id="retrainStatus" class="retrain-status"></div>
 
+        <!-- ── H1 NEXT-BAR DIRECTION (observational, on demand) ──────────────
+             Separate from the daily prediction above and deliberately NOT
+             fetched on page load: this is an on-demand model, and every call
+             writes a row to its forward log. -->
+        <div id="h1dirCard" class="card" style="background:#f4f6f9; border-left-color:#5d6d7e; border-left-width:6px; margin-top:1.5rem;">
+            <div class="label">H1 NEXT-BAR DIRECTION <span style="font-weight:400; color:#7f8c8d;">— observational, on demand</span></div>
+            <div id="h1dirBody" class="meta" style="margin-top:.5rem;">
+                Not fetched yet. This model predicts the direction of the <b>current, still-forming hourly bar</b>, so a call is only useful for the minutes left in that bar.
+            </div>
+            <div style="margin-top:.75rem;">
+                <button id="h1dirBtn" class="secondary" onclick="fetchH1Direction()" style="margin:0;">⏱ Get H1 direction</button>
+                <label style="margin-left:1rem; font-size:.85rem; color:#7f8c8d;">
+                    <input type="checkbox" id="h1dirAuto"> auto-refresh hourly
+                    <span title="Each refresh calls the endpoint and writes one row to results/h1_direction_log.csv.">(off by default — enabling it writes a log row every hour)</span>
+                </label>
+            </div>
+        </div>
+
         <div class="links">
             <a href="/history" target="_blank">📊 Prediction-vs-actual history →</a> &nbsp;·&nbsp;
-            <a href="/paper-trading" target="_blank">📒 Paper-trading ledgers (baseline vs macro) →</a>
+            <a href="/paper-trading" target="_blank">📒 Paper-trading ledgers (baseline vs macro) →</a> &nbsp;·&nbsp;
+            <a href="/h1-direction" target="_blank">⏱ H1 direction forward ledger →</a>
         </div>
     </div>
 
@@ -389,6 +408,117 @@
             btn.disabled = false;
             btn.textContent = '🔁 Retrain Models (runs in background)';
         }
+
+        // ── H1 NEXT-BAR DIRECTION ────────────────────────────────────────────
+        // STALENESS IS THE POINT HERE. The daily prediction stays valid all day;
+        // this one decays within the hour, so a card loaded at 14:05 must never
+        // still read "55 minutes remaining" at 14:50. Two mechanisms, both
+        // required: a live countdown, and a hard swap to a closed-bar notice
+        // when it hits zero.
+        let h1dirTimer = null;
+        let h1dirAutoTimer = null;
+        let h1dirRemaining = 0;
+
+        // A direction is actionable ONLY when the forecast bar is still open.
+        // Every other status is a degraded state and must not show a direction.
+        const H1_DEGRADED = {
+            already_closed: 'That forecast bar has already closed — the feed is behind, or the call came late. No actionable direction.',
+            market_closed: 'The market is closed for that hour (weekend gap), so the bar will not print at all.',
+            clock_unconfirmed: 'The broker feed clock is not yet confirmed (first reading landed in the top-of-hour window). No baseline was stored and no direction is presented — try again in a minute.',
+        };
+
+        function h1dirStopTimers() {
+            if (h1dirTimer) { clearInterval(h1dirTimer); h1dirTimer = null; }
+        }
+
+        function h1dirRenderClosed() {
+            h1dirStopTimers();
+            const dir = document.getElementById('h1dirDirection');
+            if (dir) { dir.style.color = '#95a5a6'; dir.style.opacity = '0.45'; }
+            const body = document.getElementById('h1dirLive');
+            if (body) {
+                body.innerHTML = '<b>This forecast bar has closed — refresh for the next hour.</b>';
+            }
+        }
+
+        function h1dirTick() {
+            h1dirRemaining -= 1;
+            const el = document.getElementById('h1dirMinutes');
+            if (h1dirRemaining <= 0) { h1dirRenderClosed(); return; }
+            if (el) el.textContent = h1dirRemaining;
+        }
+
+        function h1dirHHMM(iso) {
+            // The response timestamps are already in the FEED's clock; render
+            // them as given rather than reinterpreting them in the browser's tz.
+            return String(iso || '').slice(11, 16);
+        }
+
+        async function fetchH1Direction() {
+            const btn = document.getElementById('h1dirBtn');
+            const body = document.getElementById('h1dirBody');
+            h1dirStopTimers();
+            btn.disabled = true;
+            btn.textContent = 'Fetching…';
+            try {
+                const r = await fetch('/api/h1-direction');
+                const d = await r.json();
+                const fetchedAt = new Date().toTimeString().slice(0, 8);
+
+                if (d.available === false) {
+                    body.innerHTML = `<b>Unavailable.</b> ${d.reason || ''}
+                        <div class="meta" style="margin-top:.4rem;">fetched at ${fetchedAt}</div>`;
+                    return;
+                }
+
+                const degraded = H1_DEGRADED[d.forecast_bar_status];
+                const bar = `${h1dirHHMM(d.forecast_bar_start)}–${h1dirHHMM(d.forecast_bar_end)} (feed clock)`;
+                const provenance = `${d.model_version || '—'} · trained through ${d.trained_through || '—'}`;
+
+                if (degraded) {
+                    body.innerHTML = `<b>No direction shown.</b> ${degraded}
+                        <div class="meta" style="margin-top:.4rem;">Forecast bar ${bar} · ${provenance}</div>
+                        <div class="meta">fetched at ${fetchedAt}</div>
+                        <div class="meta" style="margin-top:.4rem;">${d.disclaimer || ''}</div>`;
+                    return;
+                }
+
+                h1dirRemaining = Number(d.minutes_remaining) || 0;
+                // Probability is PRINTED, never drawn. These sit within a couple
+                // of points of 0.50 by construction; a bar or gauge would make
+                // 0.506 read as a strong call, which it is not.
+                body.innerHTML = `
+                    <div id="h1dirDirection" style="font-size:2.1rem; font-weight:700; letter-spacing:.02em;">${d.direction}</div>
+                    <div class="meta">probability ${Number(d.probability).toFixed(3)} — printed, not drawn: these sit near 0.50 by construction</div>
+                    <div id="h1dirLive" style="margin-top:.5rem; font-size:1.15rem;">
+                        <b><span id="h1dirMinutes">${h1dirRemaining}</span> minutes remaining</b> in this forecast bar
+                    </div>
+                    <div class="meta" style="margin-top:.4rem;">Forecast bar ${bar} · source ${d.data_source || '—'}</div>
+                    <div class="meta">${provenance}</div>
+                    <div class="meta">fetched at ${fetchedAt}</div>
+                    <div class="meta" style="margin-top:.5rem; font-style:italic;">${d.disclaimer || ''}</div>
+                    <div class="meta" style="margin-top:.3rem;"><a href="/h1-direction" target="_blank">forward ledger →</a></div>`;
+
+                if (h1dirRemaining <= 0) { h1dirRenderClosed(); }
+                else { h1dirTimer = setInterval(h1dirTick, 60000); }
+            } catch (err) {
+                body.innerHTML = `<b>Request failed.</b> ${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⏱ Get H1 direction';
+            }
+        }
+
+        // Opt-in only, OFF by default: a background poller would silently fill
+        // the forward log with predictions nobody asked for.
+        document.addEventListener('DOMContentLoaded', () => {
+            const box = document.getElementById('h1dirAuto');
+            if (!box) return;
+            box.addEventListener('change', () => {
+                if (h1dirAutoTimer) { clearInterval(h1dirAutoTimer); h1dirAutoTimer = null; }
+                if (box.checked) { h1dirAutoTimer = setInterval(fetchH1Direction, 3600000); }
+            });
+        });
 
         // If a retrain is already running (e.g. page reloaded), resume polling.
         window.addEventListener('load', async () => {

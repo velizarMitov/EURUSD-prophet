@@ -1,0 +1,10 @@
+pair,country,first_complete_month,binding_feature,vix_level_first_month,months_bought_by_dropping_vix
+CADUSD,CA,1976-01,for_rate_change_12m,1990-01,168
+GBPUSD,GB,1979-01,for_rate_change_12m,1990-01,132
+NOKUSD,NO,1985-01,for_curve_slope|for_yield_10y,1990-01,60
+NZDUSD,NZ,1986-01,for_rate_change_12m,1990-01,48
+SEKUSD,SE,1986-12,for_curve_slope|for_yield_10y,1990-01,37
+AUDUSD,AU,1991-08,for_rate_change_12m,1990-01,0
+EURUSD,EZ,1995-01,for_rate_change_12m,1990-01,0
+CHFUSD,CH,1999-07,for_curve_slope|for_rate_3m,1990-01,0
+JPYUSD,JP,2002-04,for_curve_slope|for_rate_3m,1990-01,0

@@ -156,6 +156,40 @@ class PredictionService:
         self.ti_h1_ready = None not in (
             self.ti_model, self.ti_scaler, self.ti_config, self.ti_metrics,
         )
+
+        # H1 NEXT-BAR DIRECTION (models/h1_direction/): H_dir.1, the only claim in
+        # this project to survive a clean one-shot out-of-sample confirmation.
+        # Shipped OBSERVATIONALLY, exactly as ti_h1 was: served, logged, and given
+        # its own simulated forward ledger. NOT a real-money signal.
+        #
+        # The SHIPPED model is a full-history refit, so the confirmation does NOT
+        # transfer to it (it saw that test block in training). meta carries
+        # validated_out_of_sample=False and the serving response must never echo
+        # the test-block numbers -- they belong to a different model.
+        #
+        # All-or-nothing gate like vol_ready. A failure here can never affect
+        # /api/predict, /history or /paper-trading: it only appends to
+        # self.load_errors and leaves h1_dir_ready False.
+        self.h1_dir_model = self.h1_dir_scaler = self.h1_dir_meta = None
+        try:
+            import xgboost as xgb
+            h1d_dir = os.path.join(models_dir, 'h1_direction')
+            with open(os.path.join(h1d_dir, 'h1_direction_meta.json')) as f:
+                self.h1_dir_meta = json.load(f)
+            self.h1_dir_scaler = joblib.load(
+                os.path.join(h1d_dir, 'h1_direction_scaler.pkl'))
+            model = xgb.XGBClassifier()
+            model.load_model(os.path.join(h1d_dir, 'h1_direction_gbm.json'))
+            # Single-row inference does not benefit from GPU; force CPU so the
+            # artifact stays portable to machines without a CUDA device.
+            model.set_params(device='cpu')
+            self.h1_dir_model = model
+        except Exception as e:
+            self.load_errors.append(f"H1 direction (observational): {e}")
+
+        self.h1_dir_ready = None not in (
+            self.h1_dir_model, self.h1_dir_scaler, self.h1_dir_meta,
+        )
         # Independent per-variant readiness gates (the names the API surfaces).
         self.baseline_ready = self._variant_ready('baseline')
         self.macro_ready = self._variant_ready('with_macro')
@@ -564,6 +598,145 @@ class PredictionService:
                 "hypothesis_log": m.get('hypothesis_log'),
             },
         }
+
+    def predict_h1_direction(self, now=None, frame=None) -> dict:
+        """
+        H_dir.1 next-H1-bar direction, on demand. One call, one prediction.
+
+        THE COMPLETED-BAR RULE. The model is trained on *features from a
+        COMPLETED bar -> direction of the NEXT bar*, so the base bar here MUST be
+        the last fully closed hourly bar. `drop_incomplete_h1_bars` removes the
+        currently-forming hour (and weekend bars), so the still-moving hour can
+        never become the base. Every timestamp below is derived from that cleaned
+        frame, never from the wall clock alone.
+
+        BAR LABELLING. The feed labels a bar by its START, so the bar labelled
+        14:00 covers 14:00-15:00 and CLOSES at 15:00. `as_of_bar_close` is
+        therefore the base bar's label + 1h -- the instant it closed -- and the
+        forecast bar is the hour that begins at that instant.
+
+        HONESTY. The shipped model is a full-history refit and has NO
+        out-of-sample confirmation of its own, so the response carries
+        `validated_out_of_sample: false` and NEVER echoes H_dir.1's test-block
+        numbers -- those belong to the [0:70%] model, not this one. The only
+        evidence for this model is its own forward ledger, whose settled count
+        rides along in `forward_observations`.
+
+        Observational. Simulated ledger only. No order placement, no sizing, no
+        stop-loss -- nothing here converts a prediction into an action.
+        """
+        from .h1_features import (
+            DIRECTION_FEATURE_COLUMNS, apply_direction_standardizer,
+            compute_h1_direction_features, MIN_BARS_FOR_DIRECTION_FEATURES,
+        )
+        from .live_data import (drop_incomplete_h1_bars, fetch_h1_market_data,
+                                h1_feed_now_with_status)
+
+        # `frame` is a test seam: pass a hand-built OHLC frame to drive the
+        # completed-bar and minutes-remaining logic deterministically without a
+        # live feed. Production always leaves it None.
+        source = 'injected'
+        if frame is None:
+            # cache_path=None: never rewrite results/eurusd_h1.csv (a protected
+            # file owned by the DAILY auxiliary predictor) as a serving side effect.
+            frame, source = fetch_h1_market_data(bars=2000, cache_path=None)
+        if frame is None or len(frame) == 0:
+            fallback = os.path.join(self.base_dir, 'results/pooled_h1/EURUSD_h1.csv')
+            if not os.path.exists(fallback):
+                raise RuntimeError('No H1 data reachable (live chain failed, no cache).')
+            frame = pd.read_csv(fallback, index_col=0, parse_dates=True)
+            frame.index = (frame.index.tz_localize('UTC') if frame.index.tz is None
+                           else frame.index.tz_convert('UTC'))
+            source = 'cache'
+
+        frame = frame.sort_index()
+        # `now` is in the FEED'S clock (broker server time), inferred from the
+        # feed itself. Neither utcnow nor local time matches those bar labels --
+        # see live_data.infer_h1_feed_now for the measured evidence.
+        clock_confirmed = True
+        if now is None:
+            now_ts, clock_confirmed = h1_feed_now_with_status(frame.index)
+        else:
+            now_ts = pd.Timestamp(now)
+        if now_ts.tzinfo is not None:
+            now_ts = now_ts.tz_localize(None)
+
+        closed = drop_incomplete_h1_bars(frame, now=now_ts)
+        if closed is None or len(closed) < MIN_BARS_FOR_DIRECTION_FEATURES:
+            raise RuntimeError(
+                f'Not enough closed H1 bars for features: got '
+                f'{0 if closed is None else len(closed)}, need '
+                f'{MIN_BARS_FOR_DIRECTION_FEATURES}.')
+
+        feats = compute_h1_direction_features(closed).dropna(
+            subset=list(DIRECTION_FEATURE_COLUMNS))
+        if not len(feats):
+            raise RuntimeError('No complete H1 feature row available.')
+
+        # Pin the column order against what the model was trained with, so a
+        # reordering can never silently feed the booster a permuted matrix.
+        trained_cols = list((self.h1_dir_meta or {}).get(
+            'feature_columns', DIRECTION_FEATURE_COLUMNS))
+        row = feats.iloc[[-1]][trained_cols]
+        base_label = pd.Timestamp(feats.index[-1])
+        if base_label.tzinfo is not None:
+            base_label = base_label.tz_localize(None)
+
+        X = apply_direction_standardizer(row.to_numpy(float), self.h1_dir_scaler)
+        prob_up = float(self.h1_dir_model.predict_proba(X)[0, 1])
+
+        bar_close = base_label + pd.Timedelta(hours=1)      # the instant it closed
+        forecast_end = bar_close + pd.Timedelta(hours=1)
+        status = self._h1_forecast_status(bar_close, forecast_end, now_ts)
+        if not clock_confirmed:
+            # Cold start inside the emit-lag window: the base bar may be an hour
+            # off and there is no persisted baseline to check it against. A
+            # direction is only actionable when status == 'open', so this is
+            # reported plainly and is excluded from the ledger downstream.
+            status = 'clock_unconfirmed'
+        remaining = (0 if status != 'open'
+                     else int(max(0, (forecast_end - now_ts).total_seconds() // 60)))
+
+        meta = self.h1_dir_meta or {}
+        return {
+            "direction": "UP" if prob_up >= 0.5 else "DOWN",
+            "probability": prob_up,
+            "as_of_bar_close": bar_close.isoformat(),
+            "as_of_close": float(closed['close'].loc[feats.index[-1]]),
+            "forecast_bar_start": bar_close.isoformat(),
+            "forecast_bar_end": forecast_end.isoformat(),
+            "minutes_remaining": remaining,
+            "forecast_bar_status": status,
+            "data_source": source,
+            "model_version": meta.get('model_version'),
+            "trained_through": str(meta.get('train_end', ''))[:10],
+            "validated_out_of_sample": False,
+            "disclaimer": ("Trained on full history; not validated out of sample. "
+                           "The forward ledger is the only evidence for this "
+                           "model. Observational, simulated only, not a trading "
+                           "instruction."),
+        }
+
+    @staticmethod
+    def _h1_forecast_status(bar_close, forecast_end, now_ts) -> str:
+        """
+        'open'           -- the forecast hour is still forming; the call is live.
+        'already_closed' -- `now` has reached forecast_bar_end, so the predicted
+                            bar is already history. NEVER present that as
+                            actionable: a stale feed, a holiday or simply a call
+                            made an hour late all land here.
+        'market_closed'  -- the forecast hour falls in the weekend gap, so the
+                            bar will not print at all.
+        """
+        from .live_data import H1_WEEKLY_OPEN_HOUR
+        weekend_gap = (bar_close.weekday() == 5
+                       or (bar_close.weekday() == 6
+                           and bar_close.hour < H1_WEEKLY_OPEN_HOUR))
+        if weekend_gap:
+            return 'market_closed'
+        if now_ts >= forecast_end:
+            return 'already_closed'
+        return 'open'
 
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:
