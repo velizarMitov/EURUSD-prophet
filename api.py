@@ -196,6 +196,7 @@ _H1_NAV = (
     '<p style="max-width:1100px;margin:1.25rem auto;padding:0 1rem;font-size:.85rem;'
     'font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#555;">'
     'Also: <a href="/h1-direction">⏱ H1 next-bar direction ledger</a> (observational) '
+    '&nbsp;·&nbsp; <a href="/kronos-direction">🜂 Kronos forecast ledger</a> (external) '
     '&nbsp;·&nbsp; <a href="/">dashboard</a> '
     '&nbsp;·&nbsp; <a href="/history">prediction-vs-actual history</a> '
     '&nbsp;·&nbsp; <a href="/paper-trading">paper-trading ledgers</a></p>')
@@ -266,6 +267,65 @@ def h1_direction_page():
     log_path = os.path.join(BASE_DIR, 'results/h1_direction_log.csv')
     ledger = build_and_save(log_path=log_path, base_dir=BASE_DIR)
     return HTMLResponse(content=render_html(ledger, read_log(log_path), base_dir=BASE_DIR))
+
+
+@app.get("/api/kronos-direction")
+def kronos_direction_endpoint():
+    """
+    Kronos next-H1-bar forecast, ON DEMAND. EXTERNAL foundation model, zero-shot.
+
+    `p_up` is the headline field, not `direction`: Kronos emits a distribution
+    over sampled price paths and p_up is the share closing above the last actual
+    close. `mc_noise_estimate` rides along so a reader can see how precise that
+    number is (8.17pp run-to-run at 30 paths) rather than over-reading it.
+
+    GRACEFUL DEGRADATION. torch and a 102M-parameter checkpoint are OPTIONAL. A
+    missing package, missing checkpoint, absent GPU or load failure returns a
+    clear `available: false` and can NEVER affect /api/predict, /history,
+    /paper-trading or /h1-direction.
+
+    Observational. Simulated ledger only. Not a trading instruction.
+    """
+    unavailable = {
+        "available": False,
+        "disclaimer": ("External foundation model, zero-shot. Observational, "
+                       "simulated only, not a trading instruction."),
+    }
+    if not getattr(service, "kronos_ready", False):
+        unavailable["reason"] = (
+            getattr(service, "kronos_error", None)
+            or "Kronos unavailable (see requirements-kronos.txt).")
+        return unavailable
+    try:
+        result = service.predict_kronos_direction()
+    except Exception as e:
+        unavailable["reason"] = f"Kronos prediction unavailable: {e}"
+        return unavailable
+
+    try:
+        from src.external.kronos.serving import build_ledger, log_prediction
+        log_prediction(result, base_dir=BASE_DIR)
+        ledger = build_ledger(base_dir=BASE_DIR)
+        settled = int((ledger['model_version'] == result['model_version']).sum()) if len(ledger) else 0
+    except Exception:
+        settled = 0                        # logging must never break the response
+
+    result["available"] = True
+    result["forward_observations"] = settled
+    return result
+
+
+@app.get("/kronos-direction", response_class=HTMLResponse)
+def kronos_direction_page():
+    """Forward ledger for the external Kronos model, grouped by model_version and
+    leading with CALIBRATION rather than hit rate — the clean-window evaluation
+    showed the model is sharp, so whether p_up means anything is the open
+    question worth watching."""
+    from src.external.kronos.serving import build_and_save, read_log, render_html
+
+    ledger = build_and_save(base_dir=BASE_DIR)
+    return HTMLResponse(content=render_html(ledger, read_log(base_dir=BASE_DIR),
+                                            base_dir=BASE_DIR))
 
 
 if __name__ == "__main__":

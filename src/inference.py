@@ -190,6 +190,33 @@ class PredictionService:
         self.h1_dir_ready = None not in (
             self.h1_dir_model, self.h1_dir_scaler, self.h1_dir_meta,
         )
+
+        # KRONOS (external foundation model, 102.3M params): observational, its
+        # own forward ledger, NOT a real-money signal and not a family of ours.
+        #
+        # PROBE ONLY -- no weights are loaded here. `kronos_ready` answers "could
+        # this serve?" from the pinned-commit check plus an import test, so a
+        # server start never pays 400MB of download or ~1.3GB of VRAM for a model
+        # most requests do not touch. The checkpoint loads lazily on the first
+        # prediction and is cached for the process lifetime.
+        #
+        # torch and the checkpoint are OPTIONAL (requirements-kronos.txt). Their
+        # absence must leave every existing family untouched, so the probe is
+        # try/excepted like the others and only appends to self.load_errors.
+        self.kronos_ready = False
+        self.kronos_error = None
+        try:
+            from .external.kronos import loader as _kronos_loader
+            self.kronos_ready, reason = _kronos_loader.probe()
+            if not self.kronos_ready:
+                self.kronos_error = reason
+                self.load_errors.append(f"Kronos (external, observational): {reason}")
+        except Exception as e:
+            # Includes KronosPinMismatch: an upstream at the wrong revision must
+            # never quietly serve, but it also must not break the daily models.
+            self.kronos_error = str(e)
+            self.load_errors.append(f"Kronos (external, observational): {e}")
+
         # Independent per-variant readiness gates (the names the API surfaces).
         self.baseline_ready = self._variant_ready('baseline')
         self.macro_ready = self._variant_ready('with_macro')
@@ -737,6 +764,112 @@ class PredictionService:
         if now_ts >= forecast_end:
             return 'already_closed'
         return 'open'
+
+    def predict_kronos_direction(self, now=None, frame=None) -> dict:
+        """
+        Kronos next-H1-bar forecast, on demand. EXTERNAL foundation model,
+        zero-shot, 102.3M parameters.
+
+        THE HEADLINE FIELD IS `p_up`, NOT `direction`. Kronos emits a
+        distribution over sampled price paths; p_up is the share of those paths
+        closing above the last actual close. `direction` is a lossy reduction
+        provided only so the forward ledger has something binary to settle.
+
+        THE COMPLETED-BAR RULE, identical to predict_h1_direction: the last bar
+        of the 512-bar context must be FULLY CLOSED. This reuses
+        drop_incomplete_h1_bars and the inferred feed clock rather than
+        introducing new clock logic -- that logic already cost this project two
+        real bugs (an unconfirmed cold-start offset and an emit-lag off-by-one).
+
+        p_up IS COARSE. Tokenizer quantisation puts the 30 sampled closes on
+        roughly 6 distinct values, and A.2 measured a run-to-run spread of
+        8.17pp, which rides along as `mc_noise_estimate` so a reader can see the
+        precision of the number rather than guessing at it.
+
+        Observational. Simulated ledger only. No order placement, no sizing, no
+        stop-loss.
+        """
+        from .external.kronos import loader as kloader
+        from .external.kronos.predict import (context_has_weekend_gap,
+                                              p_up_from_paths, sample_paths)
+        from .live_data import (drop_incomplete_h1_bars, fetch_h1_market_data,
+                                h1_feed_now_with_status)
+
+        # `frame` is a test seam, as in predict_h1_direction: a hand-built OHLC
+        # frame drives the completed-bar and minutes-remaining logic
+        # deterministically. Production always leaves it None.
+        source = 'injected'
+        if frame is None:
+            # cache_path=None: never rewrite results/eurusd_h1.csv as a serving
+            # side effect -- it belongs to the daily auxiliary predictor.
+            frame, source = fetch_h1_market_data(bars=2000, cache_path=None)
+        if frame is None or len(frame) == 0:
+            fallback = os.path.join(self.base_dir, 'results/pooled_h1/EURUSD_h1.csv')
+            if not os.path.exists(fallback):
+                raise RuntimeError('No H1 data reachable (live chain failed, no cache).')
+            frame = pd.read_csv(fallback, index_col=0, parse_dates=True)
+            frame.index = (frame.index.tz_localize('UTC') if frame.index.tz is None
+                           else frame.index.tz_convert('UTC'))
+            source = 'cache'
+
+        frame = frame.sort_index()
+        clock_confirmed = True
+        if now is None:
+            now_ts, clock_confirmed = h1_feed_now_with_status(frame.index)
+        else:
+            now_ts = pd.Timestamp(now)
+        if now_ts.tzinfo is not None:
+            now_ts = now_ts.tz_localize(None)
+
+        closed = drop_incomplete_h1_bars(frame, now=now_ts)
+        if closed is None or len(closed) < kloader.CONTEXT_BARS:
+            raise RuntimeError(
+                f'Kronos needs {kloader.CONTEXT_BARS} closed H1 bars, got '
+                f'{0 if closed is None else len(closed)}.')
+
+        base_label = pd.Timestamp(closed.index[-1])
+        if base_label.tzinfo is not None:
+            base_label = base_label.tz_localize(None)
+        bar_close = base_label + pd.Timedelta(hours=1)   # the instant it closed
+        forecast_end = bar_close + pd.Timedelta(hours=1)
+        status = self._h1_forecast_status(bar_close, forecast_end, now_ts)
+        if not clock_confirmed:
+            status = 'clock_unconfirmed'
+        remaining = (0 if status != 'open'
+                     else int(max(0, (forecast_end - now_ts).total_seconds() // 60)))
+
+        predictor, meta = kloader.load()
+        context = closed.iloc[-kloader.CONTEXT_BARS:]
+        last_close = float(context['close'].iloc[-1])
+        paths = sample_paths(predictor, context, forecast_start=bar_close)
+        obj = p_up_from_paths(paths, last_close)
+
+        return {
+            "direction": "UP" if obj['p_up'] > 0.5 else "DOWN",
+            "p_up": obj['p_up'],
+            "n_paths": obj['n_paths'],
+            "gen_sd": obj['gen_sd'],
+            "gen_distinct_closes": obj['gen_distinct'],
+            "mc_noise_estimate": kloader.MC_NOISE_ESTIMATE,
+            "as_of_bar_close": bar_close.isoformat(),
+            "as_of_close": last_close,
+            "forecast_bar_start": bar_close.isoformat(),
+            "forecast_bar_end": forecast_end.isoformat(),
+            "minutes_remaining": remaining,
+            "forecast_bar_status": status,
+            "spans_weekend_gap": context_has_weekend_gap(context.index),
+            "context_bars": kloader.CONTEXT_BARS,
+            "data_source": source,
+            "device": meta.get('device'),
+            "model_version": kloader.model_version(),
+            "training_cutoff": kloader.TRAINING_CUTOFF,
+            "weights_uploaded": kloader.KRONOS_WEIGHTS_UPLOADED,
+            "validated_by_us": False,
+            "contamination_note": kloader.CONTAMINATION_NOTE,
+            "tokenizer_note": kloader.TOKENIZER_NOTE,
+            "weekend_note": kloader.WEEKEND_NOTE,
+            "disclaimer": kloader.DISCLAIMER,
+        }
 
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:

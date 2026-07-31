@@ -28,3 +28,6 @@ mlruns/
 mlflow.db
 mlartifacts/
 .gstack/
+
+# Commit-pinned external Kronos checkout (see requirements-kronos.txt); not vendored.
+src/external/kronos/upstream/

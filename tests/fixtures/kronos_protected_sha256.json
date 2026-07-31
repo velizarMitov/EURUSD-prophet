@@ -10,6 +10,9 @@
  "models/baseline/lstm_time_steps.pkl": "47256b4f96280bd6b7611f759a601078b886fe5c47dc85c428945b6953693727",
  "models/exploratory_gbm_baseline.pkl": "53ceefd82de8bdf2d2c3af568df1eac3478d7cfb97422e2266e23f23658305f9",
  "models/exploratory_gbm_scaler.pkl": "8b3859eb3b103d4c4c6a7352bff1627af73e516eeaf7baad20430f4374f02d49",
+ "models/h1_direction/h1_direction_gbm.json": "3edd3fa8db55f57d82b3e7eeae6ea8eac80fdea3528e525260ba51177e5633e8",
+ "models/h1_direction/h1_direction_meta.json": "eed19c6ffe3ad7c7f052c0883e3ad061dc52c8c81a8a42d0e1ac37cce9953d88",
+ "models/h1_direction/h1_direction_scaler.pkl": "88041d42006da6f80b9c295abb0cee7c618f0ba63a3dd72eff8e3ea79e1328c9",
  "models/h1_feature_columns.pkl": "5bd83461a82e5c9c581ff799c7395f2d6b6f17e0b75f6638b3082d4bf28ef2e0",
  "models/h1_feature_scaler.pkl": "03e3670183fa8bd415610e6e745a95272f5036be062e1a37f0caba6da1caf53e",
  "models/h1_lstm.keras": "6041aaba3e08cfba60aeb34747c351fec932b6b7ea71bcd8ad1d035aa88d62f5",
@@ -46,6 +49,7 @@
  "results/divergence_hypothesis_log.csv": "900a1024b602dfe90252300bf6e932995f3cbcae3e31ce7eba7a50a387fbcd28",
  "results/feature_hypothesis_log.csv": "b0e8443d3986f061f44ad96cdecee71f6dfe823a98d292c385cf9fb4a7f6614d",
  "results/fractal_breakout_driftcheck_hypothesis_log.csv": "a2621060072b0b76f34cfa7aadcaf029a908388ce9d5ec8c41cea3e413ed4d1b",
+ "results/h1_direction_hypothesis_log.csv": "3a246d6b7df06bf3de8ba773a2a06c539fc5fd66bec12388cf5b7230c5849710",
  "results/h1_multiday_hypothesis_log.csv": "c7f3c909175d70491a7b2dccfc7a2ee4b656aeaada6d2f1ebf3220c1ce7e7125",
  "results/harmonic_pattern_hypothesis_log.csv": "8fb19ae43e68801e453a617a5332303d8ed29def6843c07904af80ba8ed888db",
  "results/macro_panel_hypothesis_log.csv": "27087abb07773467a9467df51a9669b973862fa62212901aa42a562f13f6fa28",
@@ -55,6 +59,7 @@
  "results/volatility_hypothesis_log.csv": "3a4383a873bd987e0b44ee191efd6c23a7d872c3f5ed948444afd5ce42b4b5c6",
  "src/features.py": "a730f0b282382b355cc08010b0e38935c5141f46434a841fecf1becada891fc0",
  "src/h1_direction_model.py": "386433059fe4c136701c2d310b1e330ffdf30d20b92401a96837a913b9688121",
- "src/inference.py": "cf3284245226ca6388f47270c9b8c3e6f94a2958bdfc0fa9b1a03e370c166690",
- "src/paper_trading.py": "67307e15dfddc7d681affc91ab7243c831a23d9f9804eeeb3af9a6965146adf1"
+ "src/paper_trading.py": "67307e15dfddc7d681affc91ab7243c831a23d9f9804eeeb3af9a6965146adf1",
+ "src/pooled_h1_model.py": "c35c3999966bfceba6a3b3d47abf196851af3a6c6a2e1f80c6e580455547f382",
+ "src/volatility.py": "8b7dc5789577e3699ead89620d4e43bc1d741866c93583ccd4a514e96179e638"
 }

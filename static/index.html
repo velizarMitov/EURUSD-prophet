@@ -84,10 +84,28 @@
             </div>
         </div>
 
+        <!-- KRONOS (external foundation model). Same on-demand discipline as the
+             H1 card above: not fetched on page load, because every call runs a
+             102M-parameter model and writes a row to its own forward log.
+             p_up is printed as a NUMBER, never drawn as a gauge -- the model is
+             sharp but its probabilities are coarse (~6 distinct sampled closes
+             out of 30), and a gauge would make 0.53 read as a strong call. -->
+        <div id="kronosCard" class="card" style="background:#f6f4f9; border-left-color:#7d6e9e; border-left-width:6px; margin-top:1.5rem;">
+            <div class="label">KRONOS NEXT-BAR FORECAST <span style="font-weight:400; color:#7f8c8d;">— external, zero-shot, observational</span></div>
+            <div id="kronosBody" class="meta" style="margin-top:.5rem;">
+                Not fetched yet. External 102M-parameter foundation model (MIT). Its headline output is <b>p_up</b>, the share of 30 sampled price paths closing above the last actual close — not a direction.
+            </div>
+            <div style="margin-top:.75rem;">
+                <button id="kronosBtn" class="secondary" onclick="fetchKronos()" style="margin:0;">🜂 Get Kronos forecast</button>
+                <span style="margin-left:1rem; font-size:.85rem; color:#7f8c8d;">first call loads ~400&nbsp;MB of weights</span>
+            </div>
+        </div>
+
         <div class="links">
             <a href="/history" target="_blank">📊 Prediction-vs-actual history →</a> &nbsp;·&nbsp;
             <a href="/paper-trading" target="_blank">📒 Paper-trading ledgers (baseline vs macro) →</a> &nbsp;·&nbsp;
             <a href="/h1-direction" target="_blank">⏱ H1 direction forward ledger →</a>
+            &nbsp;·&nbsp; <a href="/kronos-direction" target="_blank">🜂 Kronos forward ledger →</a>
         </div>
     </div>
 
@@ -506,6 +524,91 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = '⏱ Get H1 direction';
+            }
+        }
+
+        // ── Kronos (external foundation model) ────────────────────────────────
+        // Same countdown discipline as the H1 card: the forecast bar decays
+        // within the hour, so the card must never keep claiming minutes it no
+        // longer has. No auto-refresh at all here -- each call runs a 102M model.
+        let kronosTimer = null;
+        let kronosRemaining = 0;
+
+        function kronosStopTimers() {
+            if (kronosTimer) { clearInterval(kronosTimer); kronosTimer = null; }
+        }
+
+        function kronosRenderClosed() {
+            kronosStopTimers();
+            const live = document.getElementById('kronosLive');
+            if (live) { live.innerHTML = '<b>This forecast bar has closed — refresh for the next hour.</b>'; }
+            const p = document.getElementById('kronosPup');
+            if (p) { p.style.color = '#95a5a6'; p.style.opacity = '0.45'; }
+        }
+
+        function kronosTick() {
+            kronosRemaining -= 1;
+            const el = document.getElementById('kronosMinutes');
+            if (kronosRemaining <= 0) { kronosRenderClosed(); return; }
+            if (el) el.textContent = kronosRemaining;
+        }
+
+        async function fetchKronos() {
+            const btn = document.getElementById('kronosBtn');
+            const body = document.getElementById('kronosBody');
+            kronosStopTimers();
+            btn.disabled = true;
+            btn.textContent = 'Fetching… (first call loads weights)';
+            try {
+                const r = await fetch('/api/kronos-direction');
+                const d = await r.json();
+                const fetchedAt = new Date().toTimeString().slice(0, 8);
+
+                if (d.available === false) {
+                    body.innerHTML = `<b>Unavailable.</b> ${d.reason || ''}
+                        <div class="meta" style="margin-top:.4rem;">The core app is unaffected — Kronos is an optional extra (requirements-kronos.txt).</div>
+                        <div class="meta">fetched at ${fetchedAt}</div>`;
+                    return;
+                }
+
+                const degraded = H1_DEGRADED[d.forecast_bar_status];
+                const bar = `${h1dirHHMM(d.forecast_bar_start)}–${h1dirHHMM(d.forecast_bar_end)} (feed clock)`;
+                const provenance = `${d.model_version || '—'} · cutoff ${d.training_cutoff || '—'} · validated by us: no`;
+
+                if (degraded) {
+                    body.innerHTML = `<b>No forecast shown.</b> ${degraded}
+                        <div class="meta" style="margin-top:.4rem;">Forecast bar ${bar} · ${provenance}</div>
+                        <div class="meta">fetched at ${fetchedAt}</div>
+                        <div class="meta" style="margin-top:.4rem; font-style:italic;">${d.disclaimer || ''}</div>`;
+                    return;
+                }
+
+                kronosRemaining = Number(d.minutes_remaining) || 0;
+                // p_up is PRINTED, never drawn. The sampled closes take only ~6
+                // distinct values out of 30 and the run-to-run spread is ~8pp,
+                // so a gauge would imply a precision this number does not have.
+                const mc = (Number(d.mc_noise_estimate) * 100).toFixed(1);
+                body.innerHTML = `
+                    <div id="kronosPup" style="font-size:2.1rem; font-weight:700; letter-spacing:.02em;">p_up ${Number(d.p_up).toFixed(3)}</div>
+                    <div class="meta">from ${d.n_paths} sampled paths (${d.gen_distinct_closes} distinct closes) · direction ${d.direction} is a lossy reduction of this number</div>
+                    <div class="meta">run-to-run Monte-Carlo spread ±${mc} pp — differences smaller than that are noise</div>
+                    <div id="kronosLive" style="margin-top:.5rem; font-size:1.15rem;">
+                        <b><span id="kronosMinutes">${kronosRemaining}</span> minutes remaining</b> in this forecast bar
+                    </div>
+                    <div class="meta" style="margin-top:.4rem;">Forecast bar ${bar} · context ${d.context_bars} bars · spans weekend gap: ${d.spans_weekend_gap ? 'yes' : 'no'}</div>
+                    <div class="meta">${provenance} · device ${d.device || '—'}</div>
+                    <div class="meta">settled forward observations: ${d.forward_observations ?? 0}</div>
+                    <div class="meta">fetched at ${fetchedAt}</div>
+                    <div class="meta" style="margin-top:.5rem; font-style:italic;">${d.disclaimer || ''}</div>
+                    <div class="meta" style="margin-top:.3rem;"><a href="/kronos-direction" target="_blank">forward ledger &amp; calibration →</a></div>`;
+
+                if (kronosRemaining <= 0) { kronosRenderClosed(); }
+                else { kronosTimer = setInterval(kronosTick, 60000); }
+            } catch (err) {
+                body.innerHTML = `<b>Request failed.</b> ${err.message}`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🜂 Get Kronos forecast';
             }
         }
 

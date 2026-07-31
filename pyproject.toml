@@ -1,5 +1,18 @@
+[tool.pytest.ini_options]
+# The commit-pinned Kronos checkout at src/external/kronos/upstream/ is a
+# third-party dependency, not our source. It ships its own pytest suite whose
+# modules do `from model import ...` against ITS repo root, so collecting it
+# from here fails at import and interrupts the whole run. It is also not ours to
+# test. The rest of this list is pytest's own default norecursedirs, restated
+# because setting the option replaces the default rather than extending it.
+norecursedirs = [
+    "src/external/kronos/upstream",
+    "notebooks", "*.egg", ".*", "_darcs", "build", "CVS", "dist",
+    "node_modules", "venv", ".venv", "{arch}",
+]
+
 [tool.ruff]
-exclude = ["notebooks/", ".venv/"]
+exclude = ["notebooks/", ".venv/", "src/external/kronos/upstream/"]
 
 [tool.ruff.lint]
 ignore = ["E402"]  # notebook-style imports in scripts are acceptable

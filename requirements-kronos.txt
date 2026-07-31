@@ -1,0 +1,27 @@
+# OPTIONAL dependencies for the Kronos evaluation harness (src/external/kronos/).
+#
+# The core app MUST install and run without any of this. Nothing in
+# requirements.txt depends on it, and src/inference.py degrades to
+# kronos_ready = False when it is absent.
+#
+#   pip install -r requirements-kronos.txt
+#
+# The upstream source is a COMMIT-PINNED checkout, not a package and not a git
+# submodule (a submodule would pull ~100MB on every clone of this repo, which
+# would break the "core app installs without them" requirement). Clone it once:
+#
+#   git clone https://github.com/shiyu-coder/Kronos.git src/external/kronos/upstream
+#   git -C src/external/kronos/upstream checkout 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+#
+# src/external/kronos/vendor.py RAISES if HEAD is not that commit. Set
+# KRONOS_UPSTREAM to point the harness at a checkout elsewhere.
+#
+# Weights (MIT licence) are pulled from the HF hub on first use, ~400MB:
+#   NeoQuasar/Kronos-base            102.3M params
+#   NeoQuasar/Kronos-Tokenizer-base
+
+torch>=2.0.0
+einops==0.8.1
+safetensors>=0.6.2
+huggingface_hub>=0.33.1
+tqdm>=4.67.1

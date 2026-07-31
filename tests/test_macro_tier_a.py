@@ -255,13 +255,16 @@ def test_protected_set_is_sha256_identical():
     The macro_tier_a program must not modify any of these.
 
     RE-BASELINE NOTE: this fixture pins repo state, so a DIFFERENT, separately
-    authorised program legitimately moves an entry. Twice so far, each time a
-    single key, each time only after asserting no OTHER entry had drifted:
+    authorised program legitimately moves an entry. Three times so far, each time
+    a single key, each time only after asserting no OTHER entry had drifted:
       * results/h1_direction_hypothesis_log.csv -- the H_dir one-shot test-block
         program spending that family's reserved block.
       * src/inference.py -- the H_dir.1 production integration, whose brief
         permits ADDITIVE modification of the serving module (verified: 173
         insertions, 0 deletions; not one existing line changed).
+      * src/inference.py again -- the Kronos external-model integration, whose
+        brief permits the same (verified: 133 insertions, 0 deletions). Kronos
+        loads behind its own kronos_ready probe and cannot touch this family.
     One entry was UNPINNED rather than re-baselined: results/eurusd_h1.csv is an
     operational cache the DAILY predictor rewrites whenever its staleness gate
     fires, so pinning it asserted only that nobody had run a prediction. The

@@ -169,7 +169,12 @@ def test_protected_set_is_sha256_identical():
     RE-BASELINE NOTE: src/inference.py was re-baselined for the H_dir.1
     production integration, whose brief permits ADDITIVE modification of the
     serving module (verified: 173 insertions, 0 deletions; not one existing line
-    changed). results/eurusd_h1.csv was UNPINNED: it is an operational cache the
+    changed), and AGAIN for the Kronos external-model integration, whose brief
+    permits the same (verified: 133 insertions, 0 deletions). On both occasions
+    src/inference.py was the ONLY drifting entry in this fixture; every other
+    pinned file was byte-identical, which is what makes it maintenance rather
+    than a boundary being crossed. results/eurusd_h1.csv was UNPINNED: it is an
+    operational cache the
     daily predictor rewrites whenever its staleness gate fires, and the invariant
     that matters -- the H1-direction path never writing it -- is asserted
     directly in tests/test_h1_production.py. Any other entry moving here is a
