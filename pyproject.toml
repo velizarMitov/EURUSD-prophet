@@ -12,7 +12,7 @@ norecursedirs = [
 ]
 
 [tool.ruff]
-exclude = ["notebooks/", ".venv/", "src/external/kronos/upstream/"]
+exclude = ["notebooks/", ".venv/"]
 
 [tool.ruff.lint]
 ignore = ["E402"]  # notebook-style imports in scripts are acceptable

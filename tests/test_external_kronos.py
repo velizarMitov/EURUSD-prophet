@@ -49,19 +49,40 @@ def test_protected_set_is_sha256_identical():
         assert got == digest, f'PROTECTED FILE MODIFIED: {rel}'
 
 
-def test_only_additive_changes_to_the_four():
-    """The four modifiable files must gain lines and lose none."""
-    out = subprocess.run(['git', '-C', REPO, 'diff', '--numstat', 'HEAD', '--',
-                          'src/inference.py', 'api.py', 'static/index.html',
-                          'src/live_data.py'],
-                         capture_output=True, text=True)
+# Last commit BEFORE any Kronos work (verified: no src/external in its tree).
+# The additive check must diff against THIS, not HEAD: once the Kronos work is
+# committed, a working-tree-vs-HEAD diff is empty and the test passes vacuously,
+# silently ceasing to guard the thing it exists to guard.
+PRE_KRONOS_REF = '6319df2'
+ADDITIVE_FILES = ['src/inference.py', 'api.py', 'static/index.html',
+                  'src/live_data.py', 'pyproject.toml', '.gitignore']
+
+
+def test_only_additive_changes_outside_the_new_package():
+    """Every file this program touched outside src/external/kronos/ and
+    results/external_kronos/ must GAIN lines and lose none."""
+    probe = subprocess.run(['git', '-C', REPO, 'cat-file', '-e', PRE_KRONOS_REF + '^{commit}'],
+                           capture_output=True, text=True)
+    if probe.returncode != 0:
+        pytest.skip(f'baseline commit {PRE_KRONOS_REF} not in this history')
+    tree = subprocess.run(['git', '-C', REPO, 'ls-tree', '-r', '--name-only', PRE_KRONOS_REF],
+                          capture_output=True, text=True).stdout
+    assert 'src/external' not in tree, f'{PRE_KRONOS_REF} is not a pre-Kronos baseline'
+
+    out = subprocess.run(['git', '-C', REPO, 'diff', '--numstat', PRE_KRONOS_REF, '--']
+                         + ADDITIVE_FILES, capture_output=True, text=True)
     if out.returncode != 0:
         pytest.skip('git unavailable')
+    seen = {}
     for line in out.stdout.strip().splitlines():
         added, removed, path = line.split('\t')
         if removed == '-':
             continue                                    # binary
+        seen[path] = (added, removed)
         assert int(removed) == 0, f'{path} DELETED {removed} lines; additive only'
+    # the guard must actually be looking at something
+    assert 'src/inference.py' in seen and int(seen['src/inference.py'][0]) > 0, \
+        'additive check found no changes at all -- wrong baseline?'
 
 
 def test_no_hypothesis_log_was_created_or_touched():

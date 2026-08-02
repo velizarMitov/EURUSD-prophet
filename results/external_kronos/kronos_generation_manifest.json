@@ -1,0 +1,14 @@
+{
+  "generated_at_utc": "2026-07-31 15:37:45.078878+00:00",
+  "upstream_commit": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+  "model": "NeoQuasar/Kronos-base",
+  "tokenizer": "NeoQuasar/Kronos-Tokenizer-base",
+  "T": 1.0,
+  "top_p": 0.9,
+  "pred_len": 1,
+  "sample_count": 30,
+  "context": 512,
+  "clean_window_start": "2024-07-01 00:00:00+00:00",
+  "n_windows": 12454,
+  "note": "generation only; no future close was read in this process"
+}

@@ -1,1 +1,5 @@
 forecast_bar_start,model_version,p_up,direction,as_of_close,realised_close,realised_direction,correct,spans_weekend_gap
+2026-07-31 17:00:00,kronos-base@2b554741ec+tok@0e0117387f+src@67b630e67f,0.2,DOWN,1.15042,1.15179,UP,False,False
+2026-07-31 15:00:00,kronos-base@2b554741ec+tok@0e0117387f+src@67b630e67f,0.2666666666666666,DOWN,1.1488,1.14663,DOWN,True,False
+2026-07-31 19:00:00,kronos-base@2b554741ec+tok@0e0117387f+src@67b630e67f,0.1666666666666666,DOWN,1.15168,1.15332,UP,False,False
+2026-07-31 18:00:00,kronos-base@2b554741ec+tok@0e0117387f+src@67b630e67f,0.2,DOWN,1.15179,1.15168,DOWN,True,False
