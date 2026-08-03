@@ -1,6 +1,6 @@
 {
- "offset_hours": -9,
- "accepted_at_utc": "2026-08-01T07:35:53.286076",
+ "offset_hours": 2,
+ "accepted_at_utc": "2026-08-02T21:04:26.708041",
  "pending": null,
  "history": [
   {
@@ -37,6 +37,12 @@
    "offset_hours": -9,
    "previous_offset_hours": 2,
    "accepted_at_utc": "2026-08-01T07:35:53.286076",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": 2,
+   "previous_offset_hours": -9,
+   "accepted_at_utc": "2026-08-02T21:04:26.708041",
    "reason": "clear_of_boundary"
   }
  ]
