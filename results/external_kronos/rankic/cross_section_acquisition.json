@@ -1,0 +1,158 @@
+{
+ "meta": {
+  "EURUSD": {
+   "base": "EURUSD",
+   "symbol": "EURUSD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "GBPUSD": {
+   "base": "GBPUSD",
+   "symbol": "GBPUSD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "AUDUSD": {
+   "base": "AUDUSD",
+   "symbol": "AUDUSD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "NZDUSD": {
+   "base": "NZDUSD",
+   "symbol": "NZDUSD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-26T23:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "JPYUSD": {
+   "base": "USDJPY",
+   "symbol": "USDJPY",
+   "inverted": true,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "CHFUSD": {
+   "base": "USDCHF",
+   "symbol": "USDCHF",
+   "inverted": true,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "CADUSD": {
+   "base": "USDCAD",
+   "symbol": "USDCAD",
+   "inverted": true,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "EURGBP": {
+   "base": "EURGBP",
+   "symbol": "EURGBP",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "EURJPY": {
+   "base": "EURJPY",
+   "symbol": "EURJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "EURCHF": {
+   "base": "EURCHF",
+   "symbol": "EURCHF",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "EURAUD": {
+   "base": "EURAUD",
+   "symbol": "EURAUD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "EURCAD": {
+   "base": "EURCAD",
+   "symbol": "EURCAD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "GBPJPY": {
+   "base": "GBPJPY",
+   "symbol": "GBPJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "GBPAUD": {
+   "base": "GBPAUD",
+   "symbol": "GBPAUD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "AUDJPY": {
+   "base": "AUDJPY",
+   "symbol": "AUDJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "AUDNZD": {
+   "base": "AUDNZD",
+   "symbol": "AUDNZD",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "CADJPY": {
+   "base": "CADJPY",
+   "symbol": "CADJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T02:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "CHFJPY": {
+   "base": "CHFJPY",
+   "symbol": "CHFJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-27T01:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  },
+  "NZDJPY": {
+   "base": "NZDJPY",
+   "symbol": "NZDJPY",
+   "inverted": false,
+   "rows": 25000,
+   "start": "2022-07-26T12:00:00+00:00",
+   "end": "2026-08-03T22:00:00+00:00"
+  }
+ },
+ "failed": {},
+ "bars_requested": 25000
+}
