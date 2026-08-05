@@ -55,11 +55,20 @@ def test_protected_set_is_sha256_identical():
 # silently ceasing to guard the thing it exists to guard.
 PRE_KRONOS_REF = '6319df2'
 ADDITIVE_FILES = ['src/inference.py', 'api.py', 'static/index.html',
-                  'src/live_data.py', 'pyproject.toml', '.gitignore']
+                  'pyproject.toml', '.gitignore']
+
+# src/live_data.py WAS on the additive list and is deliberately no longer.
+# The later MT5 data-integrity program (2026-08-04, results/DATA_STATUS.md) was
+# separately authorised to modify its fetch paths, and installing the coverage
+# guard replaced three bare `return df[[...]]` statements with a two-line
+# assign-then-`assert_coverage(...)` -- 3 deletions, in three functions. Those
+# are the ONLY deletions permitted here, and the count is asserted exactly so
+# the exemption cannot quietly widen.
+LATER_PROGRAM_FILES = {'src/live_data.py': 3}
 
 
 def test_only_additive_changes_outside_the_new_package():
-    """Every file this program touched outside src/external/kronos/ and
+    """Every file the Kronos program touched outside src/external/kronos/ and
     results/external_kronos/ must GAIN lines and lose none."""
     probe = subprocess.run(['git', '-C', REPO, 'cat-file', '-e', PRE_KRONOS_REF + '^{commit}'],
                            capture_output=True, text=True)
@@ -70,7 +79,8 @@ def test_only_additive_changes_outside_the_new_package():
     assert 'src/external' not in tree, f'{PRE_KRONOS_REF} is not a pre-Kronos baseline'
 
     out = subprocess.run(['git', '-C', REPO, 'diff', '--numstat', PRE_KRONOS_REF, '--']
-                         + ADDITIVE_FILES, capture_output=True, text=True)
+                         + ADDITIVE_FILES + sorted(LATER_PROGRAM_FILES),
+                         capture_output=True, text=True)
     if out.returncode != 0:
         pytest.skip('git unavailable')
     seen = {}
@@ -78,8 +88,14 @@ def test_only_additive_changes_outside_the_new_package():
         added, removed, path = line.split('\t')
         if removed == '-':
             continue                                    # binary
+        path = path.replace('\\', '/')
         seen[path] = (added, removed)
-        assert int(removed) == 0, f'{path} DELETED {removed} lines; additive only'
+        allowed = LATER_PROGRAM_FILES.get(path, 0)
+        assert int(removed) == allowed, (
+            f'{path} DELETED {removed} lines; additive only'
+            if not allowed else
+            f'{path} DELETED {removed} lines but only {allowed} are accounted for '
+            f'by the MT5 coverage guard -- a later program has widened its footprint')
     # the guard must actually be looking at something
     assert 'src/inference.py' in seen and int(seen['src/inference.py'][0]) > 0, \
         'additive check found no changes at all -- wrong baseline?'
@@ -134,7 +150,12 @@ def test_generation_parameters_are_frozen():
     is the same data-snooping the project's methodology exists to prevent."""
     assert loader.T == 1.0
     assert loader.TOP_P == 0.9
-    assert loader.PRED_LEN == 1
+    # pred_len moved 1 -> 24 with the direction->volatility retirement: the
+    # authors never use 1, and at 1 the sampled endpoints collapse onto ~7.6
+    # distinct values out of 30. 24 is the demo's horizon and the horizon the
+    # volatility numbers were measured at. See loader's module docstring.
+    assert loader.PRED_LEN == 24
+    assert loader.DEFAULT_MODEL == 'mini'
     assert loader.SAMPLE_COUNT == 30
     assert loader.CONTEXT_BARS == 512
     # sample_count was FIXED BY A.2, not chosen to make a number look better.
@@ -307,11 +328,15 @@ def test_kronos_unavailable_never_affects_any_existing_family():
     api_module.service.kronos_error = 'simulated: torch not installed'
     try:
         client = TestClient(api_module.app)
-        r = client.get('/api/kronos-direction')
+        r = client.get('/api/kronos-volatility')
         assert r.status_code == 200, 'must degrade, never 500'
         body = r.json()
         assert body['available'] is False
         assert 'torch not installed' in body['reason']
+        # the retired direction endpoint still answers, and never with a call
+        d = client.get('/api/kronos-direction').json()
+        assert d['available'] is False and d['retired'] is True
+        assert d.get('direction') is None
         assert 'not a trading instruction' in body['disclaimer']
 
         # every pre-existing surface is untouched
@@ -330,11 +355,12 @@ def test_kronos_page_renders_with_no_settled_observations():
     import api as api_module
 
     client = TestClient(api_module.app)
-    r = client.get('/kronos-direction')
+    r = client.get('/kronos-volatility')
     assert r.status_code == 200
     html = r.text
     assert 'Kronos' in html
-    assert 'p_up' in html
+    assert 'p_vol_amp_calibrated' in html
+    assert 'p_up' not in html, 'the retired direction number must not reappear'
     assert 'External foundation model' in html or 'external' in html.lower()
     # the caveats must be VISIBLE PAGE TEXT, not just module constants
     assert 'June 2024' in html
@@ -350,8 +376,8 @@ def test_kronos_is_linked_from_every_other_view():
 
     client = TestClient(api_module.app)
     for path in ('/history', '/paper-trading'):
-        assert '/kronos-direction' in client.get(path).text, f'{path} does not link to Kronos'
-    assert '/kronos-direction' in open(
+        assert '/kronos-volatility' in client.get(path).text, f'{path} does not link to Kronos'
+    assert '/kronos-volatility' in open(
         os.path.join(REPO, 'static', 'index.html'), encoding='utf-8').read()
 
 
@@ -359,7 +385,12 @@ def test_every_caveat_is_carried_and_says_the_right_thing():
     assert 'June 2024' in loader.CONTAMINATION_NOTE
     assert '2024-07-01' in loader.CONTAMINATION_NOTE
     assert '2025-06-30' in loader.CONTAMINATION_NOTE
-    assert '6.5%' in loader.TOKENIZER_NOTE and '18.1%' in loader.TOKENIZER_NOTE
+    # The note was rewritten for pred_len=24: the single-step collapse it used
+    # to describe is gone (29.9 distinct endpoints of 30), but the paths are
+    # still under-dispersed, which is what the scale correction exists for.
+    assert '0.206' in loader.TOKENIZER_NOTE and '0.411' in loader.TOKENIZER_NOTE
+    assert '29.9' in loader.TOKENIZER_NOTE and '0.655' in loader.TOKENIZER_NOTE
+    assert 'no information' in loader.DIRECTION_RETIRED_REASON
     assert 'weekend' in loader.WEEKEND_NOTE.lower()
     assert 'not a trading instruction' in loader.DISCLAIMER
     assert 'zero-shot' in loader.DISCLAIMER

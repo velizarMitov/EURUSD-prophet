@@ -62,6 +62,30 @@ POOLED_PAIRS = ('EURUSD', 'GBPUSD', 'AUDUSD', 'CHFUSD')
 
 POOLED_DIR = os.path.join('results', 'pooled_h1')
 
+# Retired instruments live here rather than being deleted, so every completed
+# program that consumed them stays reproducible (see load_pooled_h1).
+RETIRED_DIR = os.path.join(POOLED_DIR, 'retired')
+
+# ---------------------------------------------------------------------------
+# CHF RETIREMENT (owner decision, 2026-08-04)
+# ---------------------------------------------------------------------------
+# USDCHF/CHFUSD are retired from ACTIVE use. This is an OWNER DECISION, not a
+# data-driven withdrawal of any result -- see results/pooled_h1/retired/README.md
+# and results/DATA_STATUS.md.
+#
+# The historical POOLED_INSTRUMENTS/POOLED_PAIRS tuples above are deliberately
+# LEFT INTACT: they describe the pooled experiment (H_pool.1/H_pool.2) as it was
+# actually run, and src/pooled_h1_model.py -- a completed, protected program --
+# imports POOLED_PAIRS. Rewriting them would silently redefine a finished result.
+# Anything fetched GOING FORWARD uses the ACTIVE lists instead.
+RETIRED_INSTRUMENTS = {
+    'USDCHF': ('42-day hole 2026-06-15 06:00 -> 2026-07-28 00:00 from an MT5 '
+               'Market Watch partial history sync; retired by owner decision'),
+    'CHFUSD': ('derived by inversion from USDCHF and inherits the identical hole'),
+}
+ACTIVE_INSTRUMENTS = tuple(s for s in POOLED_INSTRUMENTS if s not in RETIRED_INSTRUMENTS)
+ACTIVE_PAIRS = tuple(s for s in POOLED_PAIRS if s not in RETIRED_INSTRUMENTS)
+
 # OHLC only -- tick_volume is intentionally never stored (see module docstring).
 OHLC_COLUMNS = ['open', 'high', 'low', 'close']
 
@@ -132,9 +156,17 @@ def _fetch_h1_ohlc_from_mt5(symbol: str, bars: int):
     except ImportError:
         return None
 
+    from .mt5_coverage import assert_coverage, sync_symbol
+
     try:
         if not mt5.initialize():
             return None
+        # PREVENTION. This is the exact path that produced the 42-day hole in
+        # USDCHF_h1.csv: the symbol was not in Market Watch, so only a partial
+        # history block existed, and copy_rates_from_pos reached further back to
+        # satisfy `bars` -- 70,000 bars and a correct-looking last timestamp
+        # around six missing weeks. Select and force the pull first.
+        sync_symbol(mt5, symbol)
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, bars)
         mt5.shutdown()
     except Exception:
@@ -150,7 +182,9 @@ def _fetch_h1_ohlc_from_mt5(symbol: str, bars: int):
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
     df.set_index('time', inplace=True)
     df.sort_index(inplace=True)
-    return df[OHLC_COLUMNS]
+    # DETECTION. Raises CoverageError naming the missing range rather than
+    # writing a holed CSV; never repairs by filling.
+    return assert_coverage(df[OHLC_COLUMNS], 'H1', label='MT5 %s H1' % symbol)
 
 
 def _resolve_all_or_stop(instruments):
@@ -176,7 +210,7 @@ def _resolve_all_or_stop(instruments):
     return resolved
 
 
-def fetch_pooled_h1(instruments=POOLED_INSTRUMENTS, bars: int = 70000,
+def fetch_pooled_h1(instruments=ACTIVE_INSTRUMENTS, bars: int = 70000,
                     out_dir: str = POOLED_DIR, write: bool = True):
     """
     STEP 0 acquisition: resolve and fetch H1 OHLC for every pooled instrument
@@ -281,7 +315,12 @@ def load_pooled_h1(instruments=POOLED_INSTRUMENTS, out_dir: str = POOLED_DIR):
     for base in instruments:
         path = os.path.join(out_dir, f"{base}_h1.csv")
         if not os.path.exists(path):
-            continue
+            # Retired instruments are MOVED, never deleted, so a completed
+            # program that consumed one still reproduces byte-for-byte.
+            retired = os.path.join(out_dir, 'retired', f"{base}_h1.csv")
+            if not os.path.exists(retired):
+                continue
+            path = retired
         df = pd.read_csv(path, index_col=0, parse_dates=True)
         df.index = df.index.tz_localize('UTC') if df.index.tz is None else df.index.tz_convert('UTC')
         frames[base] = df[OHLC_COLUMNS]

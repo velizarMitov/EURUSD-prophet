@@ -196,7 +196,7 @@ _H1_NAV = (
     '<p style="max-width:1100px;margin:1.25rem auto;padding:0 1rem;font-size:.85rem;'
     'font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#555;">'
     'Also: <a href="/h1-direction">⏱ H1 next-bar direction ledger</a> (observational) '
-    '&nbsp;·&nbsp; <a href="/kronos-direction">🜂 Kronos forecast ledger</a> (external) '
+    '&nbsp;·&nbsp; <a href="/kronos-volatility">🜂 Kronos volatility record</a> (external) '
     '&nbsp;·&nbsp; <a href="/">dashboard</a> '
     '&nbsp;·&nbsp; <a href="/history">prediction-vs-actual history</a> '
     '&nbsp;·&nbsp; <a href="/paper-trading">paper-trading ledgers</a></p>')
@@ -269,22 +269,27 @@ def h1_direction_page():
     return HTMLResponse(content=render_html(ledger, read_log(log_path), base_dir=BASE_DIR))
 
 
-@app.get("/api/kronos-direction")
-def kronos_direction_endpoint():
+@app.get("/api/kronos-volatility")
+def kronos_volatility_endpoint():
     """
-    Kronos next-H1-bar forecast, ON DEMAND. EXTERNAL foundation model, zero-shot.
+    Kronos next-24-hour VOLATILITY forecast, ON DEMAND. EXTERNAL foundation model
+    (Kronos-mini, 4.1M), zero-shot, at the authors' own demo configuration.
 
-    `p_up` is the headline field, not `direction`: Kronos emits a distribution
-    over sampled price paths and p_up is the share closing above the last actual
-    close. `mc_noise_estimate` rides along so a reader can see how precise that
-    number is (8.17pp run-to-run at 30 paths) rather than over-reading it.
+    This REPLACED the direction channel, which was measured to carry no
+    information three separate ways. Volatility is the channel with measured
+    signal: amplification AUC 0.689 [0.645, 0.731], n=519.
 
-    GRACEFUL DEGRADATION. torch and a 102M-parameter checkpoint are OPTIONAL. A
-    missing package, missing checkpoint, absent GPU or load failure returns a
-    clear `available: false` and can NEVER affect /api/predict, /history,
-    /paper-trading or /h1-direction.
+    WHAT IS THE MODEL'S AND WHAT IS OURS. `p_vol_amp_raw` and `pred_vol_pct_24h`
+    are the model's output. `p_vol_amp_calibrated` and `pred_vol_pct_24h_scaled`
+    apply OUR frozen corrections from models/external_kronos/vol_calibration.json
+    — loaded, never refitted at request time — and are labelled as ours.
 
-    Observational. Simulated ledger only. Not a trading instruction.
+    GRACEFUL DEGRADATION. torch, the checkpoint and the calibration file are
+    OPTIONAL. Anything missing returns a clear `available: false` and can NEVER
+    affect /api/predict, /history, /paper-trading or /h1-direction.
+
+    OBSERVATIONAL. Not tested against this project's own volatility ensemble.
+    Simulated ledger only. Not a trading instruction.
     """
     unavailable = {
         "available": False,
@@ -297,13 +302,13 @@ def kronos_direction_endpoint():
             or "Kronos unavailable (see requirements-kronos.txt).")
         return unavailable
     try:
-        result = service.predict_kronos_direction()
+        result = service.predict_kronos_volatility()
     except Exception as e:
-        unavailable["reason"] = f"Kronos prediction unavailable: {e}"
+        unavailable["reason"] = f"Kronos volatility unavailable: {e}"
         return unavailable
 
     try:
-        from src.external.kronos.serving import build_ledger, log_prediction
+        from src.external.kronos.vol_serving import build_ledger, log_prediction
         log_prediction(result, base_dir=BASE_DIR)
         ledger = build_ledger(base_dir=BASE_DIR)
         settled = int((ledger['model_version'] == result['model_version']).sum()) if len(ledger) else 0
@@ -315,17 +320,79 @@ def kronos_direction_endpoint():
     return result
 
 
-@app.get("/kronos-direction", response_class=HTMLResponse)
-def kronos_direction_page():
-    """Forward ledger for the external Kronos model, grouped by model_version and
-    leading with CALIBRATION rather than hit rate — the clean-window evaluation
-    showed the model is sharp, so whether p_up means anything is the open
-    question worth watching."""
-    from src.external.kronos.serving import build_and_save, read_log, render_html
+@app.get("/kronos-volatility", response_class=HTMLResponse)
+def kronos_volatility_page():
+    """Forward record for the Kronos volatility channel, grouped by
+    model_version and leading with CALIBRATION — the clean window showed the raw
+    probability discriminates but is badly calibrated, so whether our frozen
+    correction holds forward is the open question worth watching."""
+    from src.external.kronos.vol_serving import build_and_save, read_log, render_html
 
     ledger = build_and_save(base_dir=BASE_DIR)
     return HTMLResponse(content=render_html(ledger, read_log(base_dir=BASE_DIR),
                                             base_dir=BASE_DIR))
+
+
+@app.get("/api/kronos-direction")
+def kronos_direction_endpoint():
+    """
+    RETIRED. Kept responding for one release so nothing that calls it breaks
+    silently; it never returns a direction.
+
+    Direction was measured dead three separate ways: next-bar AUC 0.509 (an
+    out-of-sample isotonic recalibration fails to beat a constant), 24-bar AUC
+    0.517 with Brier skill −0.62, and cross-sectionally a RankIC of +0.0199
+    entirely attributable to a one-line reversal ranking (orthogonalised CI
+    [−0.00127, +0.01768] at a powered MDE of 0.0133).
+
+    A served number with no information is worse than no number, because it
+    looks like information.
+    """
+    from src.external.kronos.loader import DIRECTION_RETIRED_REASON
+    return {
+        "available": False,
+        "retired": True,
+        "reason": DIRECTION_RETIRED_REASON,
+        "replacement": "/api/kronos-volatility",
+        "disclaimer": ("External foundation model, zero-shot. Observational, "
+                       "simulated only, not a trading instruction."),
+    }
+
+
+@app.get("/kronos-direction", response_class=HTMLResponse)
+def kronos_direction_page():
+    """RETIRED view. Reachable, but its content is the retirement note and a
+    link — the historical ledger stays on disk and is not deleted."""
+    from src.external.kronos.loader import DIRECTION_RETIRED_REASON
+    return HTMLResponse(content=(
+        '<!doctype html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Kronos direction — retired</title>'
+        '<style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;'
+        'margin:2rem auto;max-width:46rem;padding:0 1rem;color:#1a1a1a;background:#fafafa}'
+        '.warn{background:#fff8e1;border-left:4px solid #ffa000;padding:.75rem 1rem}'
+        '.nav{font-size:.9rem;color:#555}'
+        '@media (prefers-color-scheme:dark){body{background:#161616;color:#e8e8e8}'
+        '.warn{background:#2b2410}.nav{color:#aaa}}</style></head><body>'
+        '<h1>Kronos direction — retired</h1>'
+        '<div class="warn"><strong>%s</strong></div>'
+        '<p>Direction was measured to carry no information three separate ways:</p>'
+        '<ul><li>next-bar, AUC 0.509 — an out-of-sample isotonic recalibration '
+        'fails to beat a constant forecast</li>'
+        '<li>24-bar, AUC 0.517, and Brier skill got <em>worse</em> (−0.62): the model '
+        'became confident without becoming informative</li>'
+        '<li>cross-sectionally, RankIC +0.0199 entirely attributable to a one-line '
+        'reversal ranking; orthogonalised CI [−0.00127, +0.01768] at a powered '
+        'minimum detectable effect of 0.0133</li></ul>'
+        '<p>The historical direction ledger is retained on disk and was not deleted. '
+        'The replacement is <a href="/kronos-volatility">the Kronos volatility '
+        'forward record</a>.</p>'
+        '<p class="nav">Also: <a href="/">dashboard</a> &middot; '
+        '<a href="/history">history</a> &middot; '
+        '<a href="/paper-trading">paper trading</a> &middot; '
+        '<a href="/h1-direction">H1 direction</a> &middot; '
+        '<a href="/kronos-volatility">Kronos volatility</a></p>'
+        '</body></html>' % DIRECTION_RETIRED_REASON))
 
 
 if __name__ == "__main__":

@@ -85,18 +85,21 @@
         </div>
 
         <!-- KRONOS (external foundation model). Same on-demand discipline as the
-             H1 card above: not fetched on page load, because every call runs a
-             102M-parameter model and writes a row to its own forward log.
-             p_up is printed as a NUMBER, never drawn as a gauge -- the model is
-             sharp but its probabilities are coarse (~6 distinct sampled closes
-             out of 30), and a gauge would make 0.53 read as a strong call. -->
+             H1 card above: not fetched on page load, because every call runs the
+             model and writes a row to its own forward log.
+             This card serves VOLATILITY only. The direction channel was retired
+             after being measured to carry no information three separate ways.
+             Every number is printed, never drawn as a gauge -- the raw
+             amplification probability is poorly calibrated (ECE 0.364) and the
+             run-to-run spread is ~8pp, so a gauge would imply a precision these
+             numbers do not have. -->
         <div id="kronosCard" class="card" style="background:#f6f4f9; border-left-color:#7d6e9e; border-left-width:6px; margin-top:1.5rem;">
-            <div class="label">KRONOS NEXT-BAR FORECAST <span style="font-weight:400; color:#7f8c8d;">— external, zero-shot, observational</span></div>
+            <div class="label">KRONOS 24-HOUR VOLATILITY <span style="font-weight:400; color:#7f8c8d;">— external, zero-shot, observational</span></div>
             <div id="kronosBody" class="meta" style="margin-top:.5rem;">
-                Not fetched yet. External 102M-parameter foundation model (MIT). Its headline output is <b>p_up</b>, the share of 30 sampled price paths closing above the last actual close — not a direction.
+                Not fetched yet. External 4.1M-parameter foundation model (Kronos-mini, MIT) at the authors’ own demo configuration. It forecasts <b>volatility over the next 24 bars</b>, not direction — the direction channel was <a href="/kronos-direction" target="_blank">retired</a> after being measured to carry no information.
             </div>
             <div style="margin-top:.75rem;">
-                <button id="kronosBtn" class="secondary" onclick="fetchKronos()" style="margin:0;">🜂 Get Kronos forecast</button>
+                <button id="kronosBtn" class="secondary" onclick="fetchKronos()" style="margin:0;">🜂 Get Kronos volatility forecast</button>
                 <span style="margin-left:1rem; font-size:.85rem; color:#7f8c8d;">first call loads ~400&nbsp;MB of weights</span>
             </div>
         </div>
@@ -105,7 +108,7 @@
             <a href="/history" target="_blank">📊 Prediction-vs-actual history →</a> &nbsp;·&nbsp;
             <a href="/paper-trading" target="_blank">📒 Paper-trading ledgers (baseline vs macro) →</a> &nbsp;·&nbsp;
             <a href="/h1-direction" target="_blank">⏱ H1 direction forward ledger →</a>
-            &nbsp;·&nbsp; <a href="/kronos-direction" target="_blank">🜂 Kronos forward ledger →</a>
+            &nbsp;·&nbsp; <a href="/kronos-volatility" target="_blank">🜂 Kronos volatility record →</a>
         </div>
     </div>
 
@@ -560,7 +563,7 @@
             btn.disabled = true;
             btn.textContent = 'Fetching… (first call loads weights)';
             try {
-                const r = await fetch('/api/kronos-direction');
+                const r = await fetch('/api/kronos-volatility');
                 const d = await r.json();
                 const fetchedAt = new Date().toTimeString().slice(0, 8);
 
@@ -572,7 +575,7 @@
                 }
 
                 const degraded = H1_DEGRADED[d.forecast_bar_status];
-                const bar = `${h1dirHHMM(d.forecast_bar_start)}–${h1dirHHMM(d.forecast_bar_end)} (feed clock)`;
+                const bar = `${h1dirHHMM(d.forecast_window_start)}–${h1dirHHMM(d.forecast_window_end)} (feed clock)`;
                 const provenance = `${d.model_version || '—'} · cutoff ${d.training_cutoff || '—'} · validated by us: no`;
 
                 if (degraded) {
@@ -584,23 +587,27 @@
                 }
 
                 kronosRemaining = Number(d.minutes_remaining) || 0;
-                // p_up is PRINTED, never drawn. The sampled closes take only ~6
-                // distinct values out of 30 and the run-to-run spread is ~8pp,
-                // so a gauge would imply a precision this number does not have.
+                // Volatility numbers are PRINTED, never drawn. The raw
+                // amplification probability is poorly calibrated (ECE 0.364) and
+                // the run-to-run Monte-Carlo spread is ~8pp, so a gauge would
+                // imply a precision these numbers do not have. Nothing here is a
+                // direction call — that channel was retired as uninformative.
                 const mc = (Number(d.mc_noise_estimate) * 100).toFixed(1);
+                const amp = Number(d.p_vol_amp_calibrated);
                 body.innerHTML = `
-                    <div id="kronosPup" style="font-size:2.1rem; font-weight:700; letter-spacing:.02em;">p_up ${Number(d.p_up).toFixed(3)}</div>
-                    <div class="meta">from ${d.n_paths} sampled paths (${d.gen_distinct_closes} distinct closes) · direction ${d.direction} is a lossy reduction of this number</div>
-                    <div class="meta">run-to-run Monte-Carlo spread ±${mc} pp — differences smaller than that are noise</div>
+                    <div id="kronosPup" style="font-size:2.1rem; font-weight:700; letter-spacing:.02em;">vol ${Number(d.pred_vol_pct_24h_scaled).toFixed(3)}% <span style="font-size:1rem;font-weight:400;">next 24h</span></div>
+                    <div class="meta">our scale-corrected forecast (÷${Number(d.pred_vol_scale_constant).toFixed(3)}); model's raw output ${Number(d.pred_vol_pct_24h).toFixed(3)}% · trailing 24h ${Number(d.trailing_rv_24h_pct).toFixed(3)}%</div>
+                    <div class="meta">P(volatility amplifies) ${amp.toFixed(3)} calibrated · ${Number(d.p_vol_amp_raw).toFixed(3)} raw from the model — the calibrated value applies OUR frozen correction</div>
+                    <div class="meta">from ${d.n_paths} sampled 24-bar paths (${d.gen_distinct_endpoints} distinct endpoints) · run-to-run spread ±${mc} pp</div>
                     <div id="kronosLive" style="margin-top:.5rem; font-size:1.15rem;">
-                        <b><span id="kronosMinutes">${kronosRemaining}</span> minutes remaining</b> in this forecast bar
+                        <b><span id="kronosMinutes">${kronosRemaining}</span> minutes remaining</b> in this forecast window
                     </div>
-                    <div class="meta" style="margin-top:.4rem;">Forecast bar ${bar} · context ${d.context_bars} bars · spans weekend gap: ${d.spans_weekend_gap ? 'yes' : 'no'}</div>
+                    <div class="meta" style="margin-top:.4rem;">Window ${bar} · ${d.horizon_bars} bars · context ${d.context_bars} bars · spans weekend gap: ${d.spans_weekend_gap ? 'yes' : 'no'}</div>
                     <div class="meta">${provenance} · device ${d.device || '—'}</div>
                     <div class="meta">settled forward observations: ${d.forward_observations ?? 0}</div>
                     <div class="meta">fetched at ${fetchedAt}</div>
                     <div class="meta" style="margin-top:.5rem; font-style:italic;">${d.disclaimer || ''}</div>
-                    <div class="meta" style="margin-top:.3rem;"><a href="/kronos-direction" target="_blank">forward ledger &amp; calibration →</a></div>`;
+                    <div class="meta" style="margin-top:.3rem;"><a href="/kronos-volatility" target="_blank">forward record &amp; calibration →</a></div>`;
 
                 if (kronosRemaining <= 0) { kronosRenderClosed(); }
                 else { kronosTimer = setInterval(kronosTick, 60000); }
@@ -608,7 +615,7 @@
                 body.innerHTML = `<b>Request failed.</b> ${err.message}`;
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🜂 Get Kronos forecast';
+                btn.textContent = '🜂 Get Kronos volatility forecast';
             }
         }
 

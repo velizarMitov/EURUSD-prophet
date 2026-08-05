@@ -1,0 +1,348 @@
+"""
+Tests for the Kronos VOLATILITY serving channel.
+
+The direction channel was retired here after being measured to carry no
+information three separate ways. These tests exist to stop it coming back by
+accident, and to stop the served configuration drifting away from the one the
+reported performance was measured at -- with a sampler, quietly changing a
+parameter is easy and would silently invalidate every number in the response.
+"""
+
+import hashlib
+import importlib
+import json
+import os
+import sys
+
+import numpy as np
+import pandas as pd
+import pytest
+from fastapi.testclient import TestClient
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CAL_PATH = os.path.join(REPO, 'models', 'external_kronos', 'vol_calibration.json')
+
+
+# ---------------------------------------------------------------------------
+# 1. Serving constants == evaluation constants
+# ---------------------------------------------------------------------------
+
+def test_serving_constants_match_the_evaluation():
+    """If any of these drifts, the reported performance describes something the
+    endpoint no longer does. The values are the ones the clean-window run used."""
+    from src.external.kronos import loader as kl
+    assert kl.DEFAULT_MODEL == 'mini'
+    assert kl.PRED_LEN == 24
+    assert kl.SAMPLE_COUNT == 30
+    assert kl.T == 1.0
+    assert kl.TOP_P == 0.9
+    assert kl.CONTEXT_BARS == 512
+    assert kl.TRAILING_BARS == 24
+    assert 'base' in kl.MODELS, 'base must stay loadable for comparison'
+
+
+def test_calibration_was_fitted_at_the_serving_configuration():
+    from src.external.kronos import loader as kl
+    cal = json.load(open(CAL_PATH))
+    assert cal['model'] == 'kronos-mini'
+    assert cal['pred_len'] == kl.PRED_LEN
+    assert cal['sample_count'] == kl.SAMPLE_COUNT
+    assert cal['T'] == kl.T and cal['top_p'] == kl.TOP_P
+    assert cal['context_bars'] == kl.CONTEXT_BARS
+
+
+def test_calibration_from_a_different_configuration_is_refused(tmp_path):
+    """A mapping fitted at another horizon must not be applied silently."""
+    from src.external.kronos import loader as kl
+    from src.external.kronos.vendor import KronosUnavailable
+    bad = json.load(open(CAL_PATH))
+    bad['pred_len'] = 1
+    p = tmp_path / 'bad.json'
+    p.write_text(json.dumps(bad))
+    kl.reset_cache()
+    with pytest.raises(KronosUnavailable, match='different configuration'):
+        kl.load_calibration(str(p))
+
+
+# ---------------------------------------------------------------------------
+# 2. The calibration is LOADED, never refitted at request time
+# ---------------------------------------------------------------------------
+
+def test_calibration_is_loaded_not_refitted():
+    from src.external.kronos import loader as kl
+    from src.external.kronos.predict import apply_isotonic
+    kl.reset_cache()
+    cal = kl.load_calibration(CAL_PATH)
+    disk = json.load(open(CAL_PATH))
+    assert cal['isotonic']['x'] == disk['isotonic']['x']
+    assert cal['isotonic']['y'] == disk['isotonic']['y']
+    assert cal['scale']['constant'] == disk['scale']['constant']
+    # The served mapping must equal the persisted one at every knot.
+    for x, y in zip(disk['isotonic']['x'], disk['isotonic']['y']):
+        assert apply_isotonic(x, cal) == pytest.approx(y, abs=1e-12)
+
+
+def test_serving_path_never_imports_a_fitter():
+    """Refitting at request time would re-tune the served numbers against
+    whatever happened to be in the log. Neither serving module may reach for
+    IsotonicRegression at all."""
+    for rel in ('src/external/kronos/predict.py', 'src/external/kronos/vol_serving.py',
+                'src/external/kronos/loader.py'):
+        src = open(os.path.join(REPO, rel), encoding='utf-8').read()
+        assert 'IsotonicRegression' not in src, f'{rel} can refit at request time'
+        assert 'sklearn' not in src, f'{rel} imports sklearn'
+
+
+def test_calibration_is_versioned_and_records_its_fit_window():
+    cal = json.load(open(CAL_PATH))
+    assert cal['fit_window']['n'] == 519
+    for k in ('start', 'end', 'source', 'sampling'):
+        assert cal['fit_window'][k]
+    assert cal['fitted_utc'].endswith('Z')
+    # Our corrections must be labelled as ours wherever they are described.
+    assert 'OUR correction' in cal['scale']['meaning']
+    assert 'OUR correction' in cal['isotonic']['meaning']
+
+
+# ---------------------------------------------------------------------------
+# 3 & 4. The direction channel is retired and nothing serves a direction
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope='module')
+def client():
+    sys.path.insert(0, REPO)
+    import api
+    return TestClient(api.app)
+
+
+def test_direction_endpoint_returns_the_retirement_notice(client):
+    r = client.get('/api/kronos-direction')
+    assert r.status_code == 200
+    d = r.json()
+    assert d['available'] is False
+    assert d['retired'] is True
+    assert 'no information' in d['reason'] or 'retired' in d['reason']
+    assert d['replacement'] == '/api/kronos-volatility'
+    for banned in ('direction', 'p_up'):
+        assert banned not in d or banned == 'direction'
+    assert d.get('direction') is None, 'retired endpoint must not return a call'
+
+
+def test_direction_view_is_reachable_and_carries_the_note(client):
+    r = client.get('/kronos-direction')
+    assert r.status_code == 200
+    body = r.text
+    assert 'retired' in body.lower()
+    assert '/kronos-volatility' in body
+
+
+def test_no_served_field_presents_a_kronos_direction_call(client):
+    """The whole point of the retirement: no direction number anywhere."""
+    r = client.get('/api/kronos-volatility')
+    d = r.json()
+    banned = {'direction', 'p_up', 'p_up_24', 'predicted_direction', 'signal'}
+    assert not (banned & set(d)), f'direction leaked into the response: {banned & set(d)}'
+    if d.get('available'):
+        for k in d:
+            assert 'direction' not in k.lower() or k == 'clean_window_result'
+
+
+def test_dashboard_shows_volatility_not_direction():
+    html = open(os.path.join(REPO, 'static', 'index.html'), encoding='utf-8').read()
+    body = '\n'.join(l for l in html.splitlines()
+                     if not l.strip().startswith(('//', '<!--')))
+    fn = body.split('async function fetchKronos')[1].split('\n        }')[0]
+    assert "'/api/kronos-volatility'" in fn
+    assert "'/api/kronos-direction'" not in fn
+    assert 'd.p_up' not in fn, 'dashboard still renders a Kronos direction probability'
+    assert 'p_vol_amp_calibrated' in fn and 'pred_vol_pct_24h_scaled' in fn
+    # Printed, never drawn -- the numbers are too coarse for a gauge.
+    assert 'gauge' not in fn.lower()
+
+
+def test_volatility_view_is_linked_from_every_other_view(client):
+    for path in ('/', '/history', '/paper-trading', '/h1-direction'):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert '/kronos-volatility' in r.text, f'{path} does not link the volatility view'
+    r = client.get('/kronos-volatility')
+    assert r.status_code == 200
+    for back in ('/', '/history', '/paper-trading', '/h1-direction'):
+        assert 'href="%s"' % back in r.text, f'volatility view does not link back to {back}'
+
+
+# ---------------------------------------------------------------------------
+# 5. Graceful degradation
+# ---------------------------------------------------------------------------
+
+def test_degrades_when_the_calibration_is_missing(monkeypatch):
+    from src.external.kronos import loader as kl
+    kl.reset_cache()
+    monkeypatch.setattr(kl, '_CAL_PATH', 'models/external_kronos/__absent__.json')
+    ready, reason = kl.probe()
+    assert ready is False
+    assert 'calibration missing' in reason
+    kl.reset_cache()
+
+
+def test_degrades_when_the_package_is_uninstalled(client, monkeypatch):
+    """Checkpoint removed AND package uninstalled: a clear unavailable, never a
+    500, and never any effect on the other endpoints."""
+    import api
+    monkeypatch.setattr(api.service, 'kronos_ready', False, raising=False)
+    monkeypatch.setattr(api.service, 'kronos_error', 'torch not installed', raising=False)
+    r = client.get('/api/kronos-volatility')
+    assert r.status_code == 200
+    d = r.json()
+    assert d['available'] is False and 'torch' in d['reason']
+    # /api/predict is POST-only; the rest are views.
+    assert client.post('/api/predict').status_code == 200, 'predict affected by Kronos being down'
+    for path in ('/history', '/paper-trading', '/h1-direction'):
+        assert client.get(path).status_code == 200, f'{path} affected by Kronos being down'
+
+
+def test_prediction_failure_never_500s(client, monkeypatch):
+    import api
+
+    def boom(*a, **k):
+        raise RuntimeError('checkpoint unavailable')
+    monkeypatch.setattr(api.service, 'kronos_ready', True, raising=False)
+    monkeypatch.setattr(api.service, 'predict_kronos_volatility', boom, raising=False)
+    r = client.get('/api/kronos-volatility')
+    assert r.status_code == 200
+    assert r.json()['available'] is False
+    assert 'checkpoint unavailable' in r.json()['reason']
+
+
+# ---------------------------------------------------------------------------
+# 6. Completed-bar rule
+# ---------------------------------------------------------------------------
+
+def _synthetic_h1(n=700, end='2025-03-14 12:00'):
+    idx = pd.date_range(end=pd.Timestamp(end), periods=n * 2, freq='h', tz='UTC')
+    keep = ~((idx.dayofweek == 5) | ((idx.dayofweek == 6) & (idx.hour < 22)))
+    idx = idx[keep][-n:]
+    rng = np.random.default_rng(0)
+    close = 1.10 + np.cumsum(rng.normal(0, 2e-4, len(idx)))
+    return pd.DataFrame({'open': close, 'high': close + 1e-4,
+                         'low': close - 1e-4, 'close': close,
+                         'tick_volume': 100.0}, index=idx)
+
+
+def test_completed_bar_rule_excludes_the_forming_hour():
+    """The last context bar must never be the hour still forming."""
+    from src.live_data import drop_incomplete_h1_bars
+    frame = _synthetic_h1()
+    now = pd.Timestamp('2025-03-14 12:37')          # 12:00 bar is still forming
+    closed = drop_incomplete_h1_bars(frame.tz_localize(None) if frame.index.tz is None
+                                     else frame.tz_convert('UTC').tz_localize(None), now=now)
+    assert pd.Timestamp(closed.index[-1]) == pd.Timestamp('2025-03-14 11:00')
+
+
+def test_forward_window_skips_non_trading_hours():
+    """A 24-bar horizon spans a full trading day, so the window must be built on
+    real bars -- date_range(freq='h') would hand the model 48 weekend hours."""
+    from src.external.kronos.predict import forward_bar_index
+    w = forward_bar_index(pd.Timestamp('2025-03-14 12:00'), 24)   # Friday
+    assert len(w) == 24
+    assert not any(t.dayofweek == 5 for t in w), 'Saturday bar in the forecast window'
+    assert not any(t.dayofweek == 6 and t.hour < 22 for t in w)
+    assert w[0] == pd.Timestamp('2025-03-14 12:00')
+
+
+def test_volatility_object_labels_our_corrections_and_counts_24_returns():
+    from src.external.kronos.predict import realised_vol, volatility_from_paths
+    cal = json.load(open(CAL_PATH))
+    rng = np.random.default_rng(1)
+    last = 1.10
+    paths = last * (1 + np.cumsum(rng.normal(0, 3e-4, (30, 24)), axis=1))
+    trailing = last * (1 + np.cumsum(rng.normal(0, 3e-4, 25)))
+    trailing[-1] = last
+    out = volatility_from_paths(paths, last, trailing, cal)
+    assert 0.0 <= out['p_vol_amp_raw'] <= 1.0
+    assert 0.0 <= out['p_vol_amp_calibrated'] <= 1.0
+    assert out['pred_vol_pct_24h'] > 0 and out['trailing_rv_24h_pct'] > 0
+    # The scaled field is the raw one divided by the frozen constant.
+    assert out['pred_vol_pct_24h_scaled'] == pytest.approx(
+        out['pred_vol_pct_24h'] / cal['scale']['constant'], rel=1e-9)
+    assert 'OUR correction' in out['pred_vol_scale_note']
+    # eq.12 anchoring: 25 closes -> 24 returns on every side.
+    assert realised_vol(np.arange(1.0, 1.25, 0.01)) > 0
+    with pytest.raises(RuntimeError, match='trailing closes'):
+        volatility_from_paths(paths, last, trailing[:5], cal)
+
+
+# ---------------------------------------------------------------------------
+# 7. Protected set
+# ---------------------------------------------------------------------------
+
+def test_protected_set_sha256_identical():
+    for name in ('h_dir_final_protected_sha256.json', 'macro_tier_a_protected_sha256.json',
+                 'h1_production_protected_sha256.json', 'kronos_protected_sha256.json'):
+        p = os.path.join(REPO, 'tests', 'fixtures', name)
+        if not os.path.exists(p):
+            continue
+        for rel, digest in json.load(open(p)).items():
+            fp = os.path.join(REPO, rel)
+            assert os.path.isfile(fp), f'{name}: protected file vanished: {rel}'
+            got = hashlib.sha256(open(fp, 'rb').read()).hexdigest()
+            assert got == digest, f'{name}: PROTECTED FILE MODIFIED: {rel}'
+
+
+def test_forbidden_files_were_not_touched():
+    """The boundary list for this program, asserted by name."""
+    import subprocess
+    forbidden = ['_train_pipeline.py', 'src/features.py', 'src/volatility.py',
+                 'src/paper_trading.py', 'config.json']
+    out = subprocess.run(['git', '-C', REPO, 'status', '--porcelain', '--'] + forbidden,
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip('git unavailable')
+    assert out.stdout.strip() == '', f'forbidden files modified:\n{out.stdout}'
+
+
+# ---------------------------------------------------------------------------
+# ledger settlement
+# ---------------------------------------------------------------------------
+
+def test_ledger_settles_only_fully_closed_windows(tmp_path):
+    from src.external.kronos import vol_serving as vs
+    frame = _synthetic_h1(n=200, end='2025-03-14 12:00')
+    closes = frame['close']
+    closes.index = closes.index.tz_localize(None)
+    anchor = closes.index[100]
+    full_end = closes.index[124] + pd.Timedelta(hours=1)
+    partial_end = closes.index[-1] + pd.Timedelta(hours=48)   # not yet closed
+
+    rows = []
+    for end, status in ((full_end, 'open'), (partial_end, 'open'),
+                        (full_end, 'clock_unconfirmed')):
+        r = {c: 0 for c in vs.LOG_COLUMNS}
+        r.update({'as_of_bar_close': anchor.isoformat(),
+                  'forecast_window_end': pd.Timestamp(end).isoformat(),
+                  'forecast_bar_status': status, 'trailing_rv_24h_pct': 0.30,
+                  'pred_vol_pct_24h': 0.25, 'pred_vol_pct_24h_scaled': 0.38,
+                  'p_vol_amp_raw': 0.10, 'p_vol_amp_calibrated': 0.40,
+                  'model_version': 'kronos-mini@test' + status[:4]})
+        rows.append(r)
+    log = tmp_path / 'log.csv'
+    pd.DataFrame(rows, columns=vs.LOG_COLUMNS).to_csv(log, index=False)
+
+    led = vs.build_ledger(log_path=str(log), base_dir='', closes=closes)
+    assert len(led) == 1, 'only the fully-closed, clock-confirmed window may settle'
+    row = led.iloc[0]
+    assert row['settled_bars'] >= 24
+    assert row['amplified'] in (0, 1)
+    assert row['brier_raw'] == pytest.approx((0.10 - row['amplified']) ** 2)
+    assert row['brier_calibrated'] == pytest.approx((0.40 - row['amplified']) ** 2)
+    assert row['persistence_abs_err_pct'] == pytest.approx(abs(0.30 - row['realised_rv_24h_pct']))
+
+
+def test_view_states_the_gate_and_never_shows_a_direction():
+    from src.external.kronos import vol_serving as vs
+    html = vs.render_html(pd.DataFrame(columns=vs.LEDGER_COLUMNS),
+                          pd.DataFrame(columns=vs.LOG_COLUMNS))
+    assert 'OBSERVATIONAL' in html
+    assert 'volatility ensemble' in html and 'never been made' in html
+    assert 'post-hoc' in html.lower()
+    assert 'p_up' not in html

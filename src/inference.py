@@ -871,6 +871,131 @@ class PredictionService:
             "disclaimer": kloader.DISCLAIMER,
         }
 
+    def predict_kronos_volatility(self, now=None, frame=None, which=None) -> dict:
+        """
+        Kronos next-24-hour VOLATILITY forecast. EXTERNAL foundation model,
+        zero-shot, Kronos-mini (4.1M) at the authors' own demo configuration.
+
+        WHY THIS REPLACED THE DIRECTION CHANNEL. Direction was measured dead
+        three separate ways -- next-bar (AUC 0.509), 24-bar (AUC 0.517, Brier
+        skill -0.62), and cross-sectionally (RankIC fully attributable to a
+        one-line reversal ranking). Volatility is the channel with measured
+        signal: amplification AUC 0.689 [0.645, 0.731] and a continuous forecast
+        that adds information a trailing window does not contain.
+
+        WHAT IS THE MODEL'S AND WHAT IS OURS. `p_vol_amp_raw` and
+        `pred_vol_pct_24h` are the model's. `p_vol_amp_calibrated` and
+        `pred_vol_pct_24h_scaled` apply OUR frozen corrections, loaded from
+        models/external_kronos/vol_calibration.json and never refitted at
+        request time. Both are labelled as ours in the response.
+
+        THE COMPLETED-BAR RULE, identical to predict_h1_direction: the last bar
+        of the 512-bar context must be FULLY CLOSED. Reuses
+        drop_incomplete_h1_bars and the inferred feed clock rather than
+        introducing new clock logic -- that logic already cost this project two
+        real bugs.
+
+        OBSERVATIONAL. This has NOT been tested against this project's own
+        volatility ensemble; that comparison has never been made on any row and
+        is what would decide whether this is more than observational. Simulated
+        only, no order placement, no sizing, no stop-loss.
+        """
+        from .external.kronos import loader as kloader
+        from .external.kronos.predict import (context_has_weekend_gap, forward_bar_index,
+                                              sample_paths, volatility_from_paths)
+        from .live_data import (drop_incomplete_h1_bars, fetch_h1_market_data,
+                                h1_feed_now_with_status)
+
+        which = which or kloader.DEFAULT_MODEL
+        calibration = kloader.load_calibration()
+
+        # `frame` is a test seam, as in predict_h1_direction. Production leaves
+        # it None. cache_path=None: never rewrite results/eurusd_h1.csv as a
+        # serving side effect -- it belongs to the daily auxiliary predictor.
+        source = 'injected'
+        if frame is None:
+            frame, source = fetch_h1_market_data(bars=2000, cache_path=None)
+        if frame is None or len(frame) == 0:
+            fallback = os.path.join(self.base_dir, 'results/pooled_h1/EURUSD_h1.csv')
+            if not os.path.exists(fallback):
+                raise RuntimeError('No H1 data reachable (live chain failed, no cache).')
+            frame = pd.read_csv(fallback, index_col=0, parse_dates=True)
+            frame.index = (frame.index.tz_localize('UTC') if frame.index.tz is None
+                           else frame.index.tz_convert('UTC'))
+            source = 'cache'
+
+        frame = frame.sort_index()
+        clock_confirmed = True
+        if now is None:
+            now_ts, clock_confirmed = h1_feed_now_with_status(frame.index)
+        else:
+            now_ts = pd.Timestamp(now)
+        if now_ts.tzinfo is not None:
+            now_ts = now_ts.tz_localize(None)
+
+        closed = drop_incomplete_h1_bars(frame, now=now_ts)
+        need = kloader.CONTEXT_BARS + kloader.TRAILING_BARS + 1
+        if closed is None or len(closed) < need:
+            raise RuntimeError(
+                f'Kronos volatility needs {need} closed H1 bars '
+                f'({kloader.CONTEXT_BARS} context + {kloader.TRAILING_BARS + 1} '
+                f'trailing reference), got {0 if closed is None else len(closed)}.')
+
+        base_label = pd.Timestamp(closed.index[-1])
+        if base_label.tzinfo is not None:
+            base_label = base_label.tz_localize(None)
+        bar_close = base_label + pd.Timedelta(hours=1)   # the instant it closed
+        # The 24-bar horizon spans a full trading day, so the window end is the
+        # close of the 24th REAL bar, not 24 wall-clock hours.
+        window = forward_bar_index(bar_close, kloader.PRED_LEN)
+        forecast_end = pd.Timestamp(window[-1]) + pd.Timedelta(hours=1)
+        status = self._h1_forecast_status(bar_close, forecast_end, now_ts)
+        if not clock_confirmed:
+            status = 'clock_unconfirmed'
+        remaining = (0 if status != 'open'
+                     else int(max(0, (forecast_end - now_ts).total_seconds() // 60)))
+
+        predictor, meta = kloader.load(which=which)
+        context = closed.iloc[-kloader.CONTEXT_BARS:]
+        last_close = float(context['close'].iloc[-1])
+        trailing = closed['close'].to_numpy(float)[-(kloader.TRAILING_BARS + 1):]
+        paths = sample_paths(predictor, context, forecast_start=bar_close,
+                             pred_len=kloader.PRED_LEN)
+        vol = volatility_from_paths(paths, last_close, trailing, calibration)
+
+        out = {
+            "as_of_bar_close": bar_close.isoformat(),
+            "as_of_close": last_close,
+            "forecast_window_start": pd.Timestamp(window[0]).isoformat(),
+            "forecast_window_end": forecast_end.isoformat(),
+            "minutes_remaining": remaining,
+            "forecast_bar_status": status,
+            "spans_weekend_gap": context_has_weekend_gap(context.index)
+                                 or bool(pd.Series(window).diff().dropna()
+                                         .dt.total_seconds().gt(2 * 3600).any()),
+            "context_bars": kloader.CONTEXT_BARS,
+            "trailing_bars": kloader.TRAILING_BARS,
+            "horizon_bars": kloader.PRED_LEN,
+            "sample_count": kloader.SAMPLE_COUNT,
+            "temperature": kloader.T,
+            "top_p": kloader.TOP_P,
+            "data_source": source,
+            "device": meta.get('device'),
+            "model": which,
+            "model_version": kloader.model_version(which),
+            "training_cutoff": kloader.TRAINING_CUTOFF,
+            "weights_uploaded": kloader.KRONOS_WEIGHTS_UPLOADED,
+            "mc_noise_estimate": kloader.MC_NOISE_ESTIMATE,
+            "clean_window_result": kloader.CLEAN_WINDOW_RESULT,
+            "validated_by_us": False,
+            "contamination_note": kloader.CONTAMINATION_NOTE,
+            "tokenizer_note": kloader.TOKENIZER_NOTE,
+            "weekend_note": kloader.WEEKEND_NOTE,
+            "disclaimer": kloader.DISCLAIMER,
+        }
+        out.update(vol)
+        return out
+
     @staticmethod
     def compute_h1_consensus(per_model: dict) -> dict:
         """Aggregate the four return-only H1 regressors into one call, using the

@@ -1,0 +1,73 @@
+{
+ "schema": 1,
+ "fitted_utc": "2026-08-04T16:17:15Z",
+ "model": "kronos-mini",
+ "pred_len": 24,
+ "sample_count": 30,
+ "T": 1.0,
+ "top_p": 0.9,
+ "context_bars": 512,
+ "fit_window": {
+  "start": "2024-07-30 07:00:00",
+  "end": "2026-07-31 08:00:00",
+  "n": 519,
+  "source": "results/external_kronos/pred24/kronos_mini_h24.csv",
+  "sampling": "non-overlapping, stride 24"
+ },
+ "scale": {
+  "constant": 0.6548702636409777,
+  "meaning": "mean(predicted 24-bar RV) / mean(realised 24-bar RV) over the fit window. Divide the raw forecast by this to remove the measured under-dispersion. OUR correction, not the model output.",
+  "pred_mean": 0.002708290466784115,
+  "act_mean": 0.0041356137500066625
+ },
+ "isotonic": {
+  "x": [
+   0.0,
+   0.0333333333333333,
+   0.0666666666666666,
+   0.1,
+   0.2666666666666666,
+   0.3,
+   0.4666666666666667,
+   0.5333333333333333,
+   0.5666666666666667,
+   0.6666666666666666,
+   0.7,
+   0.8333333333333334,
+   0.8666666666666667,
+   0.9666666666666668
+  ],
+  "y": [
+   0.32142857142857145,
+   0.5,
+   0.5,
+   0.6597938144329897,
+   0.6597938144329897,
+   0.6923076923076923,
+   0.6923076923076923,
+   0.7142857142857143,
+   0.7894736842105263,
+   0.7894736842105263,
+   0.8333333333333334,
+   0.8333333333333334,
+   1.0,
+   1.0
+  ],
+  "interp": "numpy.interp, clipped at the end knots",
+  "target": "realised 24-bar RV > trailing 24-bar RV",
+  "meaning": "monotone recalibration of p_vol_amp. OUR correction, not the model output. Fitted once on the fit_window rows above."
+ },
+ "fit_window_diagnostics": {
+  "note": "IN-SAMPLE for the calibration; the out-of-sample check is below.",
+  "raw_brier": 0.36294155427103403,
+  "calibrated_brier": 0.21765008601625205,
+  "constant_brier": 0.24999907187751755,
+  "base_rate": 0.5009633911368016
+ },
+ "out_of_sample_check": {
+  "protocol": "isotonic fitted on the first half of the fit window, scored on the second",
+  "n": 260,
+  "calibrated_brier": 0.23041927138518045,
+  "constant_brier": 0.24998520710059177
+ }
+}

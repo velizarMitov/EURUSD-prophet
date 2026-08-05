@@ -371,9 +371,12 @@ def _fetch_from_mt5(symbol: str, bars: int):
     except ImportError:
         return None
 
+    from .mt5_coverage import assert_coverage, sync_symbol
+
     try:
         if not mt5.initialize():
             return None
+        sync_symbol(mt5, symbol)          # see _fetch_h1_from_mt5 for why
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_D1, 0, bars)
         mt5.shutdown()
     except Exception:
@@ -386,7 +389,9 @@ def _fetch_from_mt5(symbol: str, bars: int):
     df['time'] = pd.to_datetime(df['time'], unit='s')
     df.set_index('time', inplace=True)
     df.sort_index(inplace=True)
-    return df[['open', 'high', 'low', 'close', 'tick_volume']]
+    df = df[['open', 'high', 'low', 'close', 'tick_volume']]
+    # The daily path shares the same failure mode, so it gets the same guard.
+    return assert_coverage(df, 'D1', label='MT5 %s D1' % symbol)
 
 
 def _fetch_from_yfinance(symbol: str, bars: int):
@@ -425,9 +430,16 @@ def _fetch_h1_from_mt5(symbol: str, bars: int):
     except ImportError:
         return None
 
+    from .mt5_coverage import assert_coverage, sync_symbol
+
     try:
         if not mt5.initialize():
             return None
+        # PREVENTION: an unselected symbol yields a partially synced history
+        # block, and copy_rates_from_pos then reaches further back to satisfy
+        # `bars` -- so the count looks right and months are missing from the
+        # middle. Select and force the pull BEFORE requesting bars.
+        sync_symbol(mt5, symbol)
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_H1, 0, bars)
         mt5.shutdown()
     except Exception:
@@ -442,7 +454,12 @@ def _fetch_h1_from_mt5(symbol: str, bars: int):
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
     df.set_index('time', inplace=True)
     df.sort_index(inplace=True)
-    return df[['open', 'high', 'low', 'close', 'tick_volume']]
+    df = df[['open', 'high', 'low', 'close', 'tick_volume']]
+    # DETECTION: raises rather than returning a holed frame. Deliberately NOT
+    # caught by fetch_h1_market_data -- a holed frame must not overwrite the
+    # good cache, and must not be silently replaced by the yfinance leg, which
+    # would mix providers inside the production H1 history.
+    return assert_coverage(df, 'H1', label='MT5 %s H1' % symbol)
 
 
 def _fetch_h1_from_yfinance(symbol: str, days: int = 730):
@@ -481,9 +498,12 @@ def _fetch_m15_from_mt5(symbol: str, bars: int):
     except ImportError:
         return None
 
+    from .mt5_coverage import assert_coverage, sync_symbol
+
     try:
         if not mt5.initialize():
             return None
+        sync_symbol(mt5, symbol)          # see _fetch_h1_from_mt5 for why
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, bars)
         mt5.shutdown()
     except Exception:
@@ -496,7 +516,8 @@ def _fetch_m15_from_mt5(symbol: str, bars: int):
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
     df.set_index('time', inplace=True)
     df.sort_index(inplace=True)
-    return df[['open', 'high', 'low', 'close', 'tick_volume']]
+    df = df[['open', 'high', 'low', 'close', 'tick_volume']]
+    return assert_coverage(df, 'M15', label='MT5 %s M15' % symbol)
 
 
 def fetch_m15_market_data(mt5_symbol: str = "EURUSD", bars: int = 350000,

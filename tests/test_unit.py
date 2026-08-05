@@ -4809,7 +4809,8 @@ def test_movement_run_never_touches_protected_files(tmp_path):
                  'src/paper_trading.py', 'config.json', 'results/eurusd_h1.csv',
                  'src/h1_newyork_time.py', 'src/h1_direction_model.py',
                  'src/h1_direction_diagnostics.py']
-    protected += glob.glob('results/pooled_h1/*')       # the ENTIRE input dir
+    protected += [p for p in glob.glob('results/pooled_h1/**/*', recursive=True)
+                  if os.path.isfile(p)]   # files only: retired/ is a subdir   # the ENTIRE input dir
     protected += glob.glob('results/*hypothesis_log.csv')
     for root, _dirs, files in os.walk('models'):
         for fname in files:
@@ -5076,7 +5077,8 @@ def test_divergence_run_never_touches_protected_files(tmp_path):
                  'results/eurusd_m15.csv', 'src/zigzag_swings.py',
                  'src/h1_newyork_time.py', 'src/pooled_h1_model.py',
                  'src/h1_direction_model.py']
-    protected += [p for p in glob.glob('results/pooled_h1/*') if 'm15_newyork' not in p]
+    protected += [p for p in glob.glob('results/pooled_h1/**/*', recursive=True)
+                  if os.path.isfile(p) and 'm15_newyork' not in p]  # retired/ is a subdir
     protected += glob.glob('results/*hypothesis_log.csv')
     for root, _dirs, files in os.walk('models'):
         for fname in files:
@@ -5673,7 +5675,8 @@ def test_macro_run_never_touches_protected_files(tmp_path):
     protected = ['_train_pipeline.py', 'src/inference.py', 'src/features.py',
                  'src/macro_data.py', 'src/paper_trading.py', 'config.json',
                  'results/eurusd_h1.csv', 'results/eurusd_m15.csv']
-    protected += glob.glob('results/pooled_h1/*')
+    protected += [p for p in glob.glob('results/pooled_h1/**/*', recursive=True)
+                  if os.path.isfile(p)]   # files only: retired/ is a subdir
     protected += [p for p in glob.glob('results/*hypothesis_log.csv')
                   if 'macro_panel' not in p]
     for root, _dirs, files in os.walk('models'):
@@ -6009,7 +6012,8 @@ def test_md_run_never_touches_protected_files(tmp_path):
                  'src/pooled_h1_data.py', 'src/h1_direction_model.py',
                  'src/h1_direction_diagnostics.py', 'src/h1_newyork_time.py',
                  'src/h1_horizon_feasibility.py']
-    protected += glob.glob('results/pooled_h1/*')
+    protected += [p for p in glob.glob('results/pooled_h1/**/*', recursive=True)
+                  if os.path.isfile(p)]   # files only: retired/ is a subdir
     protected += [p for p in glob.glob('results/*hypothesis_log.csv')
                   if 'h1_multiday' not in p]
     for root, _dirs, files in os.walk('models'):

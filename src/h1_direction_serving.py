@@ -301,7 +301,8 @@ def render_html(ledger: pd.DataFrame, log: pd.DataFrame,
              'Simulated only — no orders, no sizing, no stops.</div>',
              '<div class="nav"><a href="/">← dashboard</a> · '
              '<a href="/history">prediction-vs-actual history</a> · '
-             '<a href="/paper-trading">paper-trading ledgers</a></div>']
+             '<a href="/paper-trading">paper-trading ledgers</a> · '
+             '<a href="/kronos-volatility">Kronos volatility record</a></div>']
 
     # WHICH VERSION IS LIVE, and how far its evidence has actually got. These two
     # lines are the first thing on the page because they are the two questions a
