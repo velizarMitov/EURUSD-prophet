@@ -77,9 +77,31 @@ def test_calibration_is_loaded_not_refitted():
     assert cal['isotonic']['x'] == disk['isotonic']['x']
     assert cal['isotonic']['y'] == disk['isotonic']['y']
     assert cal['scale']['constant'] == disk['scale']['constant']
-    # The served mapping must equal the persisted one at every knot.
+    # The served mapping must equal the persisted one at every knot, up to the
+    # persisted support clip.
+    lo, hi = cal['output_clip']['lo'], cal['output_clip']['hi']
     for x, y in zip(disk['isotonic']['x'], disk['isotonic']['y']):
-        assert apply_isotonic(x, cal) == pytest.approx(y, abs=1e-12)
+        assert apply_isotonic(x, cal) == pytest.approx(min(max(y, lo), hi), abs=1e-12)
+
+
+def test_calibrated_probability_never_claims_certainty():
+    """The top isotonic knot maps to exactly 1.0 on the strength of ONE
+    fit-window row. Serving that verbatim would claim certainty from n=1."""
+    from src.external.kronos import loader as kl
+    from src.external.kronos.predict import apply_isotonic
+    kl.reset_cache()
+    cal = kl.load_calibration(CAL_PATH)
+    n = cal['fit_window']['n']
+    assert cal['output_clip']['lo'] == pytest.approx(1.0 / (n + 1))
+    assert cal['output_clip']['hi'] == pytest.approx(1.0 - 1.0 / (n + 1))
+    assert cal['output_clip']['knots_unchanged'] is True
+    for p in (0.0, 0.5, 0.9667, 1.0):
+        q = apply_isotonic(p, cal)
+        assert 0.0 < q < 1.0, f'p_raw={p} produced a degenerate probability {q}'
+    # Monotone, so the ranking the AUC was measured on is untouched.
+    grid = np.linspace(0, 1, 101)
+    vals = [apply_isotonic(p, cal) for p in grid]
+    assert all(b >= a - 1e-12 for a, b in zip(vals, vals[1:]))
 
 
 def test_serving_path_never_imports_a_fitter():

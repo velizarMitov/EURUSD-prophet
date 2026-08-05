@@ -76,9 +76,21 @@ def realised_vol(closes_with_anchor) -> np.ndarray:
 
 def apply_isotonic(p, calibration: dict) -> float:
     """The FROZEN monotone map, evaluated by interpolation over persisted knots.
-    Never refits, and cannot execute code from the calibration file."""
+    Never refits, and cannot execute code from the calibration file.
+
+    The result is clipped to the persisted support bound. Without it the top
+    knot -- which maps to exactly 1.0 on the strength of a SINGLE fit-window row
+    -- would let the endpoint serve a probability of 1.000, a claim of certainty
+    from one observation. The clip is monotone, so it cannot change the ranking
+    or the AUC; it only stops the levels claiming more resolution than n
+    supports. See calibration['output_clip'].
+    """
     iso = calibration['isotonic']
-    return float(np.interp(float(p), iso['x'], iso['y']))
+    q = float(np.interp(float(p), iso['x'], iso['y']))
+    clip = calibration.get('output_clip')
+    if clip:
+        q = min(max(q, float(clip['lo'])), float(clip['hi']))
+    return q
 
 
 def volatility_from_paths(paths: np.ndarray, last_close: float,

@@ -13,8 +13,8 @@
   ],
   "hypothesis_log": "results/ti_lstm_h1_hypothesis_log.csv",
   "architecture": "2x64",
-  "epochs_trained": 12,
+  "epochs_trained": 13,
   "trained_backend": "keras3-torch-cuda",
   "n_days": 2500,
-  "trained_through": "2023-08-30"
+  "trained_through": "2023-09-08"
 }

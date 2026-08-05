@@ -1,5 +1,5 @@
 {
- "schema": 1,
+ "schema": 2,
  "fitted_utc": "2026-08-04T16:17:15Z",
  "model": "kronos-mini",
  "pred_len": 24,
@@ -69,5 +69,12 @@
   "n": 260,
   "calibrated_brier": 0.23041927138518045,
   "constant_brier": 0.24998520710059177
+ },
+ "output_clip": {
+  "lo": 0.0019230769230769232,
+  "hi": 0.9980769230769231,
+  "reason": "The top isotonic knot maps to exactly 1.0 but is supported by a SINGLE fit-window row (p_raw>=0.9667: n=1, 1/1 amplified), so the frozen map could serve a probability of 1.000 -- a claim of certainty from one observation. The output is clipped to [1/(n+1), 1-1/(n+1)] with n=519, the finest resolution a sample of that size can justify. This is a SUPPORT bound, not a tuning knob: it is monotone, so it cannot change the ranking or the AUC, only the extremity of the levels. Added 2026-08-04 after a live call emitted 1.000; the isotonic knots themselves are UNCHANGED.",
+  "added_utc": "2026-08-04",
+  "knots_unchanged": true
  }
 }
