@@ -1,0 +1,13 @@
+{
+ "model": "mini",
+ "model_version": "kronos-mini@f4e68697d9+tok@26966d0035+src@67b630e67f",
+ "pred_len": 24,
+ "sample_count": 30,
+ "T": 1.0,
+ "top_p": 0.9,
+ "context_bars": 512,
+ "trailing_bars": 24,
+ "seed": 20260806,
+ "n_windows": 403,
+ "device": "cuda:0"
+}

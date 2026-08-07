@@ -83,7 +83,16 @@ def build_ledger(log_path: str = LOG_PATH, base_dir: str = '.',
     """Settle each prediction once its forecast bar has closed.
 
     Multiple calls inside one forecast bar are all LOGGED; only the FIRST
-    settles, so refreshing the page cannot inflate the sample."""
+    settles, so refreshing the page cannot inflate the sample.
+
+    CHECKED FOR THE vol_serving.py OFF-BY-ONE, DOES NOT SHARE IT. This channel
+    settles a single bar (pred_len=1) by exact index membership --
+    `start not in closes.index` below -- not by counting bars inside an
+    (anchor, end) interval, so there is no endpoint to exclude by mistake.
+    The bug fixed in vol_serving.py::_realised only exists where a multi-bar
+    window is built and its right edge filtered; recorded here so the pattern
+    doesn't need rediscovering.
+    """
     from ...h1_direction_serving import realised_h1_closes
 
     log = read_log(log_path, base_dir)

@@ -332,20 +332,35 @@ def test_ledger_settles_only_fully_closed_windows(tmp_path):
     frame = _synthetic_h1(n=200, end='2025-03-14 12:00')
     closes = frame['close']
     closes.index = closes.index.tz_localize(None)
-    anchor = closes.index[100]
-    full_end = closes.index[124] + pd.Timedelta(hours=1)
-    partial_end = closes.index[-1] + pd.Timedelta(hours=48)   # not yet closed
 
+    # anchor_full has 99 real bars of runway behind it in this series, plenty
+    # for a 24-bar window to close. anchor_full + 24 real ticks == the CLOSE
+    # of the 24th forecast bar -- the window is (anchor, end], inclusive of
+    # end, matching forward_bar_index / forecast_window_end in
+    # src/inference.py, so this is exactly what a real served response would
+    # log as forecast_window_end for a 24-bar horizon.
+    anchor_full = closes.index[100]
+    full_end = closes.index[124]
+    # anchor_partial sits 9 bars from the end of the series, so a 24-bar
+    # window from it genuinely has not printed yet -- distinct from anchor_full
+    # so it cannot collide with it under any dedup key.
+    anchor_partial = closes.index[190]
+    partial_end = anchor_partial + pd.Timedelta(hours=24)
+
+    scenarios = [
+        (anchor_full, full_end, 'open', 'full-open'),
+        (anchor_partial, partial_end, 'open', 'partial-open'),
+        (anchor_full, full_end, 'clock_unconfirmed', 'full-unconfirmed'),
+    ]
     rows = []
-    for end, status in ((full_end, 'open'), (partial_end, 'open'),
-                        (full_end, 'clock_unconfirmed')):
+    for anchor, end, status, tag in scenarios:
         r = {c: 0 for c in vs.LOG_COLUMNS}
         r.update({'as_of_bar_close': anchor.isoformat(),
                   'forecast_window_end': pd.Timestamp(end).isoformat(),
                   'forecast_bar_status': status, 'trailing_rv_24h_pct': 0.30,
                   'pred_vol_pct_24h': 0.25, 'pred_vol_pct_24h_scaled': 0.38,
                   'p_vol_amp_raw': 0.10, 'p_vol_amp_calibrated': 0.40,
-                  'model_version': 'kronos-mini@test' + status[:4]})
+                  'model_version': 'kronos-mini@test-' + tag})
         rows.append(r)
     log = tmp_path / 'log.csv'
     pd.DataFrame(rows, columns=vs.LOG_COLUMNS).to_csv(log, index=False)
@@ -353,11 +368,186 @@ def test_ledger_settles_only_fully_closed_windows(tmp_path):
     led = vs.build_ledger(log_path=str(log), base_dir='', closes=closes)
     assert len(led) == 1, 'only the fully-closed, clock-confirmed window may settle'
     row = led.iloc[0]
-    assert row['settled_bars'] >= 24
+    assert row['model_version'] == 'kronos-mini@test-full-open'
+    assert row['settled_bars'] == 24
     assert row['amplified'] in (0, 1)
     assert row['brier_raw'] == pytest.approx((0.10 - row['amplified']) ** 2)
     assert row['brier_calibrated'] == pytest.approx((0.40 - row['amplified']) ** 2)
     assert row['persistence_abs_err_pct'] == pytest.approx(abs(0.30 - row['realised_rv_24h_pct']))
+
+
+def _vol_log_row(anchor, end, status='open', model_version='kronos-mini@test'):
+    """One synthetic LOG_COLUMNS-shaped row, matching the style build_ledger
+    actually receives (real fields we score against, zero-filled elsewhere)."""
+    from src.external.kronos import vol_serving as vs
+    r = {c: 0 for c in vs.LOG_COLUMNS}
+    r.update({'as_of_bar_close': pd.Timestamp(anchor).isoformat(),
+              'forecast_window_end': pd.Timestamp(end).isoformat(),
+              'forecast_bar_status': status, 'trailing_rv_24h_pct': 0.30,
+              'pred_vol_pct_24h': 0.25, 'pred_vol_pct_24h_scaled': 0.38,
+              'p_vol_amp_raw': 0.10, 'p_vol_amp_calibrated': 0.40,
+              'model_version': model_version})
+    return r
+
+
+def _hourly_closes(n=40, start='2025-06-02 00:00'):
+    """Monday 00:00 UTC, n contiguous real hourly bars -- no weekend inside a
+    40h span, so every position is exactly 1 real tick from its neighbour."""
+    idx = pd.date_range(start=start, periods=n, freq='h')
+    return pd.Series(1.10 + np.arange(n) * 1e-4, index=idx)
+
+
+def test_fully_closed_window_settles_with_exactly_horizon_bars(tmp_path):
+    """A hand-built row whose 24-bar window has fully closed settles, and the
+    settled bar count equals horizon_bars=24 under the (anchor, end] convention
+    -- forecast_window_end is the CLOSE of the 24th forecast bar (established
+    by src/inference.py::predict_kronos_volatility, which sets it to
+    forward_bar_index(anchor, horizon_bars)[-1] + 1h), so end itself is one of
+    the 24 bars the forecast covers, not one bar past it."""
+    from src.external.kronos import vol_serving as vs
+    closes = _hourly_closes()
+    anchor = pd.Timestamp('2025-06-02 05:00')
+    end = anchor + pd.Timedelta(hours=24)
+
+    log = tmp_path / 'log.csv'
+    pd.DataFrame([_vol_log_row(anchor, end)], columns=vs.LOG_COLUMNS).to_csv(log, index=False)
+
+    led = vs.build_ledger(log_path=str(log), base_dir='', closes=closes)
+    assert len(led) == 1
+    assert led.iloc[0]['settled_bars'] == 24
+    assert led.iloc[0]['realised_rv_24h_pct'] > 0
+
+
+def test_still_open_window_does_not_settle(tmp_path):
+    """A window whose end has not yet printed in the closes series must not
+    settle -- there is no realised volatility for a horizon still in the
+    future, whatever `forecast_bar_status` claims."""
+    from src.external.kronos import vol_serving as vs
+    closes = _hourly_closes(n=20)                   # only 19 real ticks after 00:00
+    anchor = pd.Timestamp('2025-06-02 05:00')
+    end = anchor + pd.Timedelta(hours=24)            # far beyond the last close
+
+    log = tmp_path / 'log.csv'
+    pd.DataFrame([_vol_log_row(anchor, end)], columns=vs.LOG_COLUMNS).to_csv(log, index=False)
+
+    led = vs.build_ledger(log_path=str(log), base_dir='', closes=closes)
+    assert len(led) == 0
+
+
+def test_closed_window_with_missing_bar_does_not_settle(tmp_path):
+    """A window whose end has printed but whose price series has a hole inside
+    it must not settle -- a partial window would understate realised
+    volatility and flatter the forecast, which is worse than not settling."""
+    from src.external.kronos import vol_serving as vs
+    closes = _hourly_closes()
+    anchor = pd.Timestamp('2025-06-02 05:00')
+    end = anchor + pd.Timedelta(hours=24)
+    gap_closes = closes.drop(pd.Timestamp('2025-06-02 15:00'))   # inside the window
+
+    log = tmp_path / 'log.csv'
+    pd.DataFrame([_vol_log_row(anchor, end)], columns=vs.LOG_COLUMNS).to_csv(log, index=False)
+
+    led = vs.build_ledger(log_path=str(log), base_dir='', closes=gap_closes)
+    assert len(led) == 0
+
+
+def test_multiple_calls_inside_one_window_settle_once(tmp_path):
+    """Refreshing the page during a still-open window logs several rows with
+    the same anchor; once the window closes they must collapse to exactly one
+    settled observation, not one per call."""
+    from src.external.kronos import vol_serving as vs
+    closes = _hourly_closes()
+    anchor = pd.Timestamp('2025-06-02 05:00')
+    end = anchor + pd.Timedelta(hours=24)
+
+    rows = [_vol_log_row(anchor, end) for _ in range(4)]
+    log = tmp_path / 'log.csv'
+    pd.DataFrame(rows, columns=vs.LOG_COLUMNS).to_csv(log, index=False)
+
+    led = vs.build_ledger(log_path=str(log), base_dir='', closes=closes)
+    assert len(led) == 1
+
+
+def test_regression_pins_the_settlement_off_by_one(tmp_path):
+    """Pins the exact reported bug: a 24-hour window anchored on the hour must
+    settle under the fixed (inclusive) convention, and the same window would
+    NOT have settled under the strict-exclusive interval this project shipped
+    with -- (anchor, end) instead of (anchor, end], which undercounts every
+    window by exactly one bar and can never reach horizon_bars=24."""
+    from src.external.kronos import vol_serving as vs
+    closes = _hourly_closes()
+    anchor = pd.Timestamp('2025-06-02 03:00')
+    end = anchor + pd.Timedelta(hours=24)
+
+    rv, n = vs._realised(closes, anchor, end)
+    assert n == 24, 'fixed convention must settle the full 24-bar window'
+    assert rv is not None
+
+    from src.external.kronos import loader as kloader
+    didx = pd.DatetimeIndex(closes.index)
+    a = didx[didx <= anchor][-1]
+    strict_exclusive_window = closes[(didx > a) & (didx < end)]
+    assert len(strict_exclusive_window) == 23, (
+        'sanity check on the bug as reported: the old exclusive bound gives 23')
+    assert len(strict_exclusive_window) < kloader.PRED_LEN, (
+        'the strict interval must never reach horizon_bars, which is exactly why '
+        'the ledger never settled anything before this fix')
+
+
+def test_target_settled_is_sized_to_this_channels_effect():
+    """500 was carried over from the DIRECTION channel, whose effect was ~20x
+    smaller. The target must be sized to the AUC this channel actually measured,
+    and se_above_half must reproduce the derivation recorded beside it."""
+    from src.external.kronos import vol_serving as vs
+    assert vs.TARGET_SETTLED == 100
+    assert vs.se_above_half(50) == pytest.approx(2.04, abs=0.05)
+    assert vs.se_above_half(100) == pytest.approx(2.89, abs=0.05)
+    assert vs.se_above_half(150) == pytest.approx(3.53, abs=0.05)
+    # Undefined, never a crash or a fake zero, below n=2.
+    assert vs.se_above_half(0) is None and vs.se_above_half(1) is None
+    # Monotone in n: more evidence never reads as weaker.
+    vals = [vs.se_above_half(n) for n in range(2, 200)]
+    assert all(b >= a for a, b in zip(vals, vals[1:]))
+
+
+def test_page_reports_se_for_the_current_n_not_only_the_fraction():
+    from src.external.kronos import vol_serving as vs
+    anchor = pd.Timestamp('2025-06-02 05:00')
+    # >= 2 rows: below that se_above_half is undefined and the page says so
+    # instead, which is a different branch (covered by the None assertions above).
+    rows = [_vol_log_row(anchor, anchor + pd.Timedelta(hours=24)) for _ in range(4)]
+    led = pd.DataFrame(rows)
+    led['amplified'] = [1, 0, 1, 0]
+    led['realised_rv_24h_pct'] = 0.4
+    led = led.reindex(columns=vs.LEDGER_COLUMNS)
+    html = vs.render_html(led, pd.DataFrame(rows, columns=vs.LOG_COLUMNS))
+    assert 'SE</strong> above' in html, 'page does not show SE above 0.5 for the current n'
+    assert 'about POWER, not a forward result' in html, 'SE line must not read as a result'
+    assert '~%d needed' % vs.TARGET_SETTLED in html
+
+
+def test_constant_brier_caution_shows_only_while_outcomes_are_uniform():
+    """A constant forecast is trivially perfect on a one-outcome sample, so
+    'Brier const. 0.0000' must carry a caution until both outcomes appear."""
+    from src.external.kronos import vol_serving as vs
+    base = _vol_log_row(pd.Timestamp('2025-06-02 05:00'), pd.Timestamp('2025-06-03 05:00'))
+
+    def _led(amps):
+        d = pd.DataFrame([dict(base) for _ in amps])
+        d['amplified'] = amps
+        d['realised_rv_24h_pct'] = 0.4
+        return d.reindex(columns=vs.LEDGER_COLUMNS)
+
+    uniform = vs.render_html(_led([1, 1, 1, 1]), pd.DataFrame([base], columns=vs.LOG_COLUMNS))
+    assert 'by construction' in uniform
+    assert '4 of 4 amplified' in uniform
+
+    mixed = vs.render_html(_led([1, 0, 1, 1]), pd.DataFrame([base], columns=vs.LOG_COLUMNS))
+    assert 'by construction' not in mixed, 'caution must disappear once outcomes vary'
+
+    empty = vs.render_html(pd.DataFrame(columns=vs.LEDGER_COLUMNS),
+                           pd.DataFrame(columns=vs.LOG_COLUMNS))
+    assert 'by construction' not in empty
 
 
 def test_view_states_the_gate_and_never_shows_a_direction():

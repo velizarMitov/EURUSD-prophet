@@ -56,7 +56,7 @@
  "results/macro_tier_a_hypothesis_log.csv": "0cab50615a22522c1b26197cbc4b27cc717c3892b4859764d655a2146a867a3b",
  "results/pooled_h1_hypothesis_log.csv": "7c73f80eb70f96aacfafb9a1fa31cd185033c3a392306862fad3534fdcea9dbf",
  "results/ti_lstm_h1_hypothesis_log.csv": "c77a816168869d2e46d1c24029eb1be3af5eb4cd32b07675922afaf8d1245c6b",
- "results/volatility_hypothesis_log.csv": "3a4383a873bd987e0b44ee191efd6c23a7d872c3f5ed948444afd5ce42b4b5c6",
+ "results/volatility_hypothesis_log.csv": "3e3c1d777d589efd70a538e40121d3530334c7317639db26abf33af737465100",
  "src/features.py": "a730f0b282382b355cc08010b0e38935c5141f46434a841fecf1becada891fc0",
  "src/h1_direction_model.py": "386433059fe4c136701c2d310b1e330ffdf30d20b92401a96837a913b9688121",
  "src/paper_trading.py": "67307e15dfddc7d681affc91ab7243c831a23d9f9804eeeb3af9a6965146adf1",

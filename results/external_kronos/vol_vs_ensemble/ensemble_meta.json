@@ -1,0 +1,10 @@
+{
+ "train_end_idx": 5992,
+ "val_end_idx": 6848,
+ "n": 8560,
+ "train_block_end_date": "2020-12-18",
+ "fit_boundary_70pct_date": "2018-03-27",
+ "matrix_first": "1999-01-04",
+ "matrix_last": "2026-06-17",
+ "n_seed_models": 5
+}
