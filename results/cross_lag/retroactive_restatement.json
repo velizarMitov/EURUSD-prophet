@@ -1,0 +1,40 @@
+{
+ "alpha_old": 0.008333333333333333,
+ "alpha_new": 0.0071428571428571435,
+ "rows": [
+  {
+   "hypothesis": "H_dir.1_GBM_vs_train_majority",
+   "recomputed": true,
+   "ci_low": 0.0055326514880379195,
+   "ci_high": 0.042204663711697836,
+   "mcnemar_p": 0.001690207646341239,
+   "cleared_new": true,
+   "ci_low_old": 0.005781,
+   "cleared_old": true
+  },
+  {
+   "hypothesis": "H_dir.4_replication_AUDUSD",
+   "recomputed": true,
+   "ci_low": 0.003574178203665283,
+   "ci_high": 0.038497257241843934,
+   "mcnemar_p": 0.003403367531169827,
+   "cleared_new": true,
+   "ci_low_old": 0.003942,
+   "cleared_old": true
+  }
+ ],
+ "not_recomputable": [
+  {
+   "hypothesis": "H_dir.1_..._TESTBLOCK_CONFIRMATION",
+   "reason": "spent test block",
+   "stored_ci_low": 0.011404,
+   "stored_p": 1.7e-05
+  },
+  {
+   "hypothesis": "H_dir.5_replication_CHFUSD",
+   "reason": "CHFUSD data absent",
+   "stored_ci_low": 0.014085,
+   "stored_p": 6e-06
+  }
+ ]
+}

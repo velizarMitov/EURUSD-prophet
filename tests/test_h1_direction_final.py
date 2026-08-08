@@ -195,17 +195,35 @@ def test_protected_set_is_sha256_identical():
 
 # ── the family resize and the no-trading-frame rule ───────────────────────────
 
-def test_family_is_size_six_and_alpha_restated_on_every_row():
+def test_family_alpha_restated_on_every_row():
+    """The family may GROW -- the standing rule is that a genuinely new
+    hypothesis resizes it and the tightened alpha applies retroactively. What
+    must hold is that EVERY row carries the CURRENT family bar, derived from the
+    log's own distinct-hypothesis count, and that n is gap-free.
+
+    F.ALPHA_FINAL is deliberately NOT asserted against the log here: it is a
+    HISTORICAL constant recording the 5 -> 6 resize that the spent-test-block
+    program performed, not the living family size. Pinning the log to it froze
+    the family at 6 and would fail the moment the documented growth rule was
+    exercised (it did, when H_dir.7 was registered 2026-08-07).
+    """
     if not os.path.exists(LOG_CSV):
         pytest.skip('log missing')
     log = pd.read_csv(LOG_CSV)
-    assert F.ALPHA_FINAL == pytest.approx(0.05 / 6)
-    assert np.allclose(log['alpha'].astype(float).to_numpy(), F.ALPHA_FINAL), \
-        'every row must carry the retroactive alpha'
-    assert set(log['n'].astype(int)) == {1, 2, 3, 4, 5, 6}
+    assert F.ALPHA_FINAL == pytest.approx(0.05 / 6), \
+        'the historical 5->6 resize constant must not be rewritten'
+
+    ns = sorted(set(log['n'].astype(int)))
+    assert ns == list(range(1, len(ns) + 1)), f'family numbering has a gap: {ns}'
+    family_size = len(ns)
+    expected_alpha = 0.05 / family_size
+    assert np.allclose(log['alpha'].astype(float).to_numpy(), expected_alpha, atol=1e-6), \
+        f'every row must carry the retroactive alpha 0.05/{family_size}'
     assert log['hypothesis'].str.startswith('H_dir.6').any()
     # A tightened alpha can only remove clears, never create them.
     assert not (log['hypothesis'] == 'H_dir.2_LSTM_vs_GBM').pipe(
+        lambda m: log.loc[m, 'cleared_bar'].astype(str).eq('True').any())
+    assert not (log['hypothesis'] == 'H_dir.3_replication_GBPUSD').pipe(
         lambda m: log.loc[m, 'cleared_bar'].astype(str).eq('True').any())
 
 

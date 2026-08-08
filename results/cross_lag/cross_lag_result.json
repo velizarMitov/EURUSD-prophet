@@ -1,0 +1,152 @@
+{
+ "gate": {
+  "registered": 0.527462,
+  "reproduced": 0.5274619387165157,
+  "abs_diff": 6.12834842872445e-08,
+  "passed": true
+ },
+ "alignment": {
+  "eur_bars": 70000,
+  "shared_timestamps": 70000,
+  "lost_to_intersection": 0,
+  "n_val_full": 10378,
+  "n_val_used": 10378,
+  "n_train_full": 48543,
+  "n_train_used": 48543,
+  "peers": [
+   "GBPUSD",
+   "AUDUSD"
+  ],
+  "chf_used": false,
+  "dxy_used": false
+ },
+ "no_look_ahead": {
+  "n_shared": 41996,
+  "max_abs_diff": 0.0,
+  "passed": true
+ },
+ "shuffled_label_control": {
+  "acc": 0.49913278088263635,
+  "majority_rate": 0.5044324532665253,
+  "passed": true
+ },
+ "primary": {
+  "acc_challenger": 0.526498361919445,
+  "acc_reference": 0.5274619387165157,
+  "auc_challenger": 0.5396481080449665,
+  "delta_acc": -0.0009635767970707088,
+  "delta_acc_ci_low_iid": -0.011067711918068516,
+  "delta_acc_ci_high_iid": 0.00908687333094733,
+  "delta_acc_ci_low_block": -0.010957932990116433,
+  "delta_acc_ci_high_block": 0.008479475814222466,
+  "mcnemar_b": 757,
+  "mcnemar_c": 767,
+  "mcnemar_p": 0.8176799267535093,
+  "block_len": 24,
+  "alpha": 0.0071428571428571435,
+  "cleared_bar": false,
+  "verdict": "DROP",
+  "cleared": false,
+  "n_val": 10378,
+  "discordance": 1524,
+  "se_paired": 0.0037616537475319207,
+  "mde_just_sig": 0.010119260584108475,
+  "mde_80": 0.013285148251380465
+ },
+ "logistic": [
+  {
+   "term": "intercept",
+   "coef": 0.023026764225078437,
+   "se": 0.019723163315675758,
+   "z": 1.167498532386892,
+   "p": 0.2430091006510724
+  },
+  {
+   "term": "H_dir.1_logit",
+   "coef": 0.7485114459402092,
+   "se": 0.08559118826021286,
+   "z": 8.745192830652117,
+   "p": 2.226350983540472e-18
+  },
+  {
+   "term": "gbp_L1",
+   "coef": 0.01610641181235841,
+   "se": 0.02753852559707307,
+   "z": 0.5848683421915035,
+   "p": 0.5586362467085222
+  },
+  {
+   "term": "aud_L1",
+   "coef": 0.0022836660795424036,
+   "se": 0.03179671170324478,
+   "z": 0.07182082540029952,
+   "p": 0.9427444993443436
+  },
+  {
+   "term": "eur_rel_L1",
+   "coef": 0.02762202563720994,
+   "se": 0.027199472704472778,
+   "z": 1.0155353354577228,
+   "p": 0.3098507115917275
+  },
+  {
+   "term": "eur_rel_L4",
+   "coef": 0.022194926400672825,
+   "se": 0.0228172883921514,
+   "z": 0.9727241037242335,
+   "p": 0.3306904422416721
+  }
+ ],
+ "permutation_importance": [
+  {
+   "feature": "gbp_L1",
+   "mean_acc_drop": 0.0023655810368086506,
+   "sd": 0.0016914752908118984
+  },
+  {
+   "feature": "aud_L1",
+   "mean_acc_drop": 9.635767970733734e-06,
+   "sd": 0.0009990112182141214
+  },
+  {
+   "feature": "eur_rel_L1",
+   "mean_acc_drop": 0.0004287916746964826,
+   "sd": 0.0014757124380960246
+  },
+  {
+   "feature": "eur_rel_L4",
+   "mean_acc_drop": -0.0019030641742146803,
+   "sd": 0.001412839857964672
+  }
+ ],
+ "session": [
+  {
+   "bucket": "Asia 22-07",
+   "n": 3872,
+   "acc_challenger": 0.5420971074380165,
+   "acc_reference": 0.537448347107438,
+   "delta": 0.004648760330578483
+  },
+  {
+   "bucket": "London 07-12",
+   "n": 2172,
+   "acc_challenger": 0.5124309392265194,
+   "acc_reference": 0.5207182320441989,
+   "delta": -0.008287292817679481
+  },
+  {
+   "bucket": "NY overlap 12-17",
+   "n": 2170,
+   "acc_challenger": 0.5207373271889401,
+   "acc_reference": 0.5170506912442396,
+   "delta": 0.0036866359447004227
+  },
+  {
+   "bucket": "NY late 17-22",
+   "n": 2164,
+   "acc_challenger": 0.5184842883548983,
+   "acc_reference": 0.5268022181146026,
+   "delta": -0.008317929759704246
+  }
+ ]
+}
