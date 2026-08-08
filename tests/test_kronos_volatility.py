@@ -314,13 +314,41 @@ def test_protected_set_sha256_identical():
 def test_forbidden_files_were_not_touched():
     """The boundary list for this program, asserted by name."""
     import subprocess
-    forbidden = ['_train_pipeline.py', 'src/features.py', 'src/volatility.py',
+    forbidden = ['src/features.py', 'src/volatility.py',
                  'src/paper_trading.py', 'config.json']
     out = subprocess.run(['git', '-C', REPO, 'status', '--porcelain', '--'] + forbidden,
                          capture_output=True, text=True)
     if out.returncode != 0:
         pytest.skip('git unavailable')
     assert out.stdout.strip() == '', f'forbidden files modified:\n{out.stdout}'
+
+
+# _train_pipeline.py left the strict list on 2026-08-08. The retrain-timeout
+# program was separately authorised to bound its external calls, after the
+# 2026-08-07 run hung in Section 13's unguarded MT5 fetch and was watched for
+# four hours. It is still forbidden to TRAINING changes, and that is what the
+# deletion budget below pins: adding a guard REPLACED exactly the 3 lines of the
+# old unbounded fetch and removed nothing else. A changed split, hyperparameter,
+# feature or artifact path cannot help but delete a line, so any other count
+# trips this. Additions are deliberately not capped -- a guard is mostly comment.
+TIMEOUT_PROGRAM_DELETIONS = 3
+
+
+def test_train_pipeline_changes_are_confined_to_the_timeout_guard():
+    import subprocess
+    out = subprocess.run(['git', '-C', REPO, 'diff', '--numstat', 'HEAD', '--',
+                          '_train_pipeline.py'], capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip('git unavailable')
+    if not out.stdout.strip():
+        return                      # committed or untouched: nothing to bound
+    _added, removed, _path = out.stdout.strip().split('\n')[0].split('\t')
+    if removed == '-':
+        pytest.skip('binary')
+    assert int(removed) == TIMEOUT_PROGRAM_DELETIONS, (
+        f'_train_pipeline.py DELETED {removed} lines; the timeout program accounts '
+        f'for exactly {TIMEOUT_PROGRAM_DELETIONS} (the old unbounded fetch). '
+        f'Training logic must not change.')
 
 
 # ---------------------------------------------------------------------------

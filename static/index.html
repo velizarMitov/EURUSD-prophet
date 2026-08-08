@@ -403,6 +403,19 @@
                 if (s.state === 'running') {
                     box.className = 'retrain-status active';
                     box.innerHTML = `⏳ Training… (${mins} min elapsed). This takes ~15–30 min; you can keep predicting meanwhile.${tail}`;
+                    // "Elapsed" climbing on its own once let a wedged run look
+                    // healthy for four hours. Log age is what separates working
+                    // from stuck, so a quiet log overrides the message above.
+                    if (s.stalled) {
+                        box.className = 'retrain-status active failed';
+                        box.innerHTML = `⚠️ Training has written nothing for ${(s.log_age_seconds / 60).toFixed(1)} min (${mins} min elapsed). The process is alive but may be wedged — check the log tail below.${tail}`;
+                    } else if (s.log_age_seconds != null) {
+                        box.innerHTML = `⏳ Training… (${mins} min elapsed). Last log write ${(s.log_age_seconds / 60).toFixed(1)} min ago.${tail}`;
+                    }
+                } else if (s.state === 'interrupted') {
+                    box.className = 'retrain-status active failed';
+                    box.innerHTML = `⚠️ Retrain ended without a completion marker after ${mins} min. ${s.detail || ''}${tail}`;
+                    stopRetrainPolling();
                 } else if (s.state === 'completed') {
                     box.className = 'retrain-status active done';
                     box.innerHTML = `✅ Retraining complete in ${mins} min. New models loaded (models_ready=${s.models_ready}).${tail}`;

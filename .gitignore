@@ -27,6 +27,10 @@ env/
 mlruns/
 mlflow.db
 mlartifacts/
+
+# Retrain supervisor state (host-local pid + wall-clock timestamps, not source).
+# results/retrain.log itself stays tracked -- it is the run's readable record.
+results/retrain_state.json
 .gstack/
 
 # Commit-pinned external Kronos checkout (see requirements-kronos.txt); not vendored.

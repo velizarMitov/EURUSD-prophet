@@ -64,7 +64,17 @@ ADDITIVE_FILES = ['src/inference.py', 'api.py', 'static/index.html',
 # assign-then-`assert_coverage(...)` -- 3 deletions, in three functions. Those
 # are the ONLY deletions permitted here, and the count is asserted exactly so
 # the exemption cannot quietly widen.
-LATER_PROGRAM_FILES = {'src/live_data.py': 3}
+#
+# api.py joined for the same reason on 2026-08-08: the retrain-observability
+# program was separately authorised to modify its logging and status paths after
+# the 2026-08-07 run went silent for the last half of its work and was watched
+# for four hours (child stdout was block-buffered and never flushed; nothing
+# guaranteed a final log line; the run's identity lived only in an in-memory
+# Popen handle). Rewriting start_retrain/retrain_status bodies is not expressible
+# additively -- leaving the old bodies in place would mean two handlers on one
+# route. 22 deletions: the old _retrain dict line and those two function bodies.
+# Everything else in that program is additive, and the count is asserted exactly.
+LATER_PROGRAM_FILES = {'src/live_data.py': 3, 'api.py': 22}
 
 
 def test_only_additive_changes_outside_the_new_package():

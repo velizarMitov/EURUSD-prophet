@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import subprocess
+import threading
 import warnings
 
 from dotenv import load_dotenv
@@ -64,8 +65,32 @@ def read_root():
 # _train_pipeline.py takes ~15-30 min (GridSearch + 3 LSTM fits), so it must run
 # as a detached subprocess rather than blocking an HTTP request. The frontend
 # fires POST /api/retrain once, then polls GET /api/retrain/status.
-_retrain = {"proc": None, "started_at": None, "reloaded": False}
+#
+# The log is the ONLY thing the owner can see while a run is in flight, so three
+# properties are load-bearing (all three failed together on 2026-08-07, costing
+# four hours of waiting on a run that had stopped making progress after 21 min):
+#
+#   1. The child runs UNBUFFERED. CPython block-buffers stdout at 8 KB when it is
+#      a file rather than a TTY, while stderr stays line-buffered. That asymmetry
+#      let library warnings (stderr) through while swallowing every print() from
+#      the volatility stage onward; because the run then hung instead of exiting,
+#      the buffer was never flushed and that output was lost outright, not merely
+#      delayed. `-u` plus PYTHONUNBUFFERED (which also reaches the nested 12C
+#      subprocess) removes the buffer entirely.
+#   2. The log ALWAYS ends with _MARKER. "Is it done?" must be answerable by
+#      reading the last line -- never by comparing artifact mtimes.
+#   3. A run is judged by evidence that survives a server restart. The in-memory
+#      Popen handle used to be the only record, so restarting the server reported
+#      "idle" for a finished run and silently skipped the hot-reload, leaving the
+#      API serving stale models with fresh ones already on disk.
+_retrain = {"proc": None, "started_at": None, "reloaded": False,
+            "returncode": None, "finished_at": None, "pid": None}
 RETRAIN_LOG = os.path.join(BASE_DIR, "results", "retrain.log")
+RETRAIN_STATE = os.path.join(BASE_DIR, "results", "retrain_state.json")
+_MARKER = "=== RETRAIN EXIT"
+# A log that has not grown in this long, with no marker, is not "working" --
+# it is stalled or orphaned, and the status must say so rather than "running".
+_STALL_SECONDS = 300
 
 
 def _tail(path, n=15):
@@ -77,21 +102,135 @@ def _tail(path, n=15):
         return ""
 
 
+def _log_age():
+    """Seconds since the log was last written, or None if there is no log."""
+    try:
+        return max(0.0, time.time() - os.path.getmtime(RETRAIN_LOG))
+    except OSError:
+        return None
+
+
+def _marker_returncode():
+    """Exit code parsed from the log's completion marker, or None if the run
+    never reached one (killed, hung, or still going)."""
+    try:
+        with open(RETRAIN_LOG, encoding="utf-8", errors="replace") as f:
+            for line in reversed(f.readlines()):
+                if line.startswith(_MARKER):
+                    for tok in line.split():
+                        if tok.startswith("rc="):
+                            return int(tok[3:])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _write_marker(returncode, elapsed):
+    """Append the single line that terminates EVERY run, whatever its fate."""
+    try:
+        with open(RETRAIN_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{_MARKER} rc={returncode} elapsed={elapsed:.1f}s "
+                    f"at={time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+    except OSError:
+        pass
+
+
+def _save_state():
+    try:
+        with open(RETRAIN_STATE, "w", encoding="utf-8") as f:
+            json.dump({k: _retrain[k] for k in
+                       ("pid", "started_at", "returncode", "finished_at")}, f)
+    except OSError:
+        pass
+
+
+def _watch_retrain(proc, started_at):
+    """Reap the child and stamp the log. Runs on a daemon thread so the marker
+    is written even when the run fails or is killed -- the cases where the owner
+    most needs the log to say so."""
+    returncode = proc.wait()
+    # started_at is re-stamped (not merely read) so the persisted state is
+    # complete on its own -- a restart needs it to report elapsed time.
+    _retrain.update(returncode=returncode, finished_at=time.time(),
+                    started_at=started_at)
+    _write_marker(returncode, time.time() - started_at)
+    _save_state()
+
+
+def _recover_retrain_state():
+    """Rebuild what is knowable about a run this process did not launch."""
+    try:
+        with open(RETRAIN_STATE, encoding="utf-8") as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not saved.get("started_at"):
+        return
+    _retrain.update(pid=saved.get("pid"), started_at=saved.get("started_at"),
+                    returncode=saved.get("returncode"),
+                    finished_at=saved.get("finished_at"))
+    if _retrain["returncode"] is None:
+        # The marker outlives the process that wrote it; trust it over our memory.
+        _retrain["returncode"] = _marker_returncode()
+
+
+_recover_retrain_state()
+
+
+def _resolve_state():
+    """(state, returncode) for the current or most recent run.
+
+    Uses the live Popen handle when we own the child, and falls back to durable
+    on-disk evidence (exit marker + log freshness) when we do not."""
+    proc = _retrain["proc"]
+    if proc is not None:
+        returncode = proc.poll()
+        if returncode is None:
+            return "running", None
+        return ("completed" if returncode == 0 else "failed"), returncode
+
+    if _retrain["started_at"] is None:
+        return "idle", None
+
+    returncode = _retrain["returncode"]
+    if returncode is not None:
+        return ("completed" if returncode == 0 else "failed"), returncode
+
+    # No marker: the child outlived (or was killed with) the server that spawned
+    # it. A log still growing proves it is alive; a cold one proves nothing good.
+    age = _log_age()
+    if age is not None and age < _STALL_SECONDS:
+        return "running", None
+    return "interrupted", None
+
+
 @app.post("/api/retrain")
 def start_retrain():
     """Launch _train_pipeline.py in the background (non-blocking). 409 if a run
-    is already in progress so concurrent clicks can't spawn parallel trainings."""
-    proc = _retrain["proc"]
-    if proc is not None and proc.poll() is None:
+    is already in progress so concurrent clicks can't spawn parallel trainings
+    -- two pipelines interleaving writes into models/ is how the artifact set
+    got torn once before."""
+    if _resolve_state()[0] == "running":
         raise HTTPException(status_code=409, detail="A retraining run is already in progress.")
 
     os.makedirs(os.path.dirname(RETRAIN_LOG), exist_ok=True)
+    started_at = time.time()
     logf = open(RETRAIN_LOG, "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        [sys.executable, "_train_pipeline.py"],
-        cwd=BASE_DIR, stdout=logf, stderr=subprocess.STDOUT,
-    )
-    _retrain.update(proc=proc, started_at=time.time(), reloaded=False)
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "_train_pipeline.py"],
+            cwd=BASE_DIR, stdout=logf, stderr=subprocess.STDOUT,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+    finally:
+        # Popen duplicates the handle for the child, so the parent's copy is dead
+        # weight -- and leaking one per run eventually exhausts the handle table.
+        logf.close()
+
+    _retrain.update(proc=proc, started_at=started_at, reloaded=False,
+                    returncode=None, finished_at=None, pid=proc.pid)
+    _save_state()
+    threading.Thread(target=_watch_retrain, args=(proc, started_at), daemon=True).start()
     return {"state": "started", "pid": proc.pid}
 
 
@@ -101,25 +240,43 @@ def retrain_status():
     artifacts ONCE so subsequent predictions use the new models without a server
     restart."""
     global service
-    proc = _retrain["proc"]
-    if proc is None:
+    state, returncode = _resolve_state()
+    if state == "idle":
         return {"state": "idle"}
 
-    returncode = proc.poll()
-    elapsed = int(time.time() - _retrain["started_at"]) if _retrain["started_at"] else 0
+    elapsed = int((_retrain["finished_at"] or time.time()) - _retrain["started_at"]) \
+        if _retrain["started_at"] else 0
+    age = _log_age()
+    payload = {"state": state, "elapsed_seconds": elapsed,
+               "log_age_seconds": None if age is None else int(age),
+               "log_tail": _tail(RETRAIN_LOG)}
 
-    if returncode is None:
-        return {"state": "running", "elapsed_seconds": elapsed, "log_tail": _tail(RETRAIN_LOG)}
+    if state == "running":
+        # Surfaced so a silent run reads as silent. The 2026-08-07 hang showed a
+        # climbing elapsed time and nothing else; log_age_seconds is the number
+        # that distinguishes "working" from "wedged".
+        payload["supervised"] = _retrain["proc"] is not None
+        payload["stalled"] = age is not None and age >= _STALL_SECONDS
+        return payload
 
-    if returncode == 0:
+    if state == "completed":
         if not _retrain["reloaded"]:
             service = PredictionService(BASE_DIR, CONFIG)   # reload new artifacts in-place
             _retrain["reloaded"] = True
-        return {"state": "completed", "elapsed_seconds": elapsed,
-                "models_ready": service.models_ready, "log_tail": _tail(RETRAIN_LOG)}
+        payload["models_ready"] = service.models_ready
+        return payload
 
-    return {"state": "failed", "returncode": returncode,
-            "elapsed_seconds": elapsed, "log_tail": _tail(RETRAIN_LOG)}
+    if state == "failed":
+        payload["returncode"] = returncode
+        return payload
+
+    # interrupted: no exit marker and a cold log -- the run died without ever
+    # reporting. Artifacts on disk may be a partial set; say so instead of
+    # guessing "completed" and hot-reloading a torn model directory.
+    payload["detail"] = ("The retrain stopped without writing a completion marker "
+                         "(server restarted, or the process was killed/hung). "
+                         "Artifacts may be from a partial run -- verify before trusting them.")
+    return payload
 
 
 @app.get("/history", response_class=HTMLResponse)

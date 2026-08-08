@@ -34,6 +34,31 @@ Unified-pipeline invariants (unchanged from the single-variant design):
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+import socket
+import subprocess
+import sys
+
+# TIMEOUT GUARD (added 2026-08-08, after the 2026-08-07 wedge -- see Section 13).
+# Neither fredapi nor yfinance accepts a timeout from here, and neither sets one
+# by default: a socket that connects but never answers blocks forever, and the
+# fallback chains in src/macro_data.py and src/live_data.py cannot help because
+# `except Exception` does not catch a hang. This bounds every Python-level socket
+# operation in the process, so those libraries raise instead of hanging and their
+# documented degradation (FRED API -> public CSV -> on-disk cache -> None) runs
+# as designed. It does NOT cover MetaTrader5, which is a C extension talking to
+# the terminal over its own IPC -- that one is bounded at its call site instead.
+NETWORK_SOCKET_TIMEOUT_S = 60
+socket.setdefaulttimeout(NETWORK_SOCKET_TIMEOUT_S)
+
+
+class H1FetchTimeout(RuntimeError):
+    """Raised when the Section 13 H1 fetch is killed on its timeout.
+
+    Its own type exists so Section 13's broad `except Exception` -- which is
+    there so an offline retrain degrades gracefully rather than aborting -- can
+    re-raise THIS while continuing to absorb every other H1 failure unchanged.
+    A wedge must not be reportable as a completed run."""
+
 import json
 import numpy as np
 import pandas as pd
@@ -567,10 +592,54 @@ try:
     # itself; if every live source is unreachable it falls back to the existing
     # cache, so an offline retrain degrades to the last-known data rather than
     # aborting the whole H1 section.
+    # TIMEOUT (added 2026-08-08). THIS CALL is where the 2026-08-07 retrain
+    # wedged: MLflow recorded H1_to_Daily_Ensemble as RUNNING with end_time NULL,
+    # the last artifact had been written 11s earlier by 12C, and there was no
+    # traceback anywhere -- the signature of a hang, which `except Exception`
+    # below cannot catch. The run was watched for four hours.
+    #
+    # It runs in a subprocess for the same reason 12C does (above): MetaTrader5
+    # is a C extension, and subprocess.run(timeout=) can actually kill a wedged
+    # one, where an in-process guard depends on the extension yielding control.
+    # fetch_h1_market_data writes the cache CSV itself and build_h1_datasets
+    # re-reads it from disk below, so nothing needs to cross the process
+    # boundary except the source label.
+    #
+    # THE BOUND: a healthy MT5 fetch of 60,000 H1 bars measures 1.2s (2026-08-08,
+    # this machine). 180s is ~150x that -- ample for the slower yfinance fallback
+    # (~730 days of hourly bars) on a bad connection, while still firing before
+    # the dashboard's 300s stall warning, so the pipeline names its own failure
+    # instead of leaving the owner to infer it.
+    H1_FETCH_TIMEOUT_S = 180
     try:
-        from src.live_data import fetch_h1_market_data
-        _df, _src = fetch_h1_market_data(cache_path=h1_cache)
-        print(f"H1 cache refreshed from {_src}: {0 if _df is None else len(_df)} bars.")
+        _fetch = subprocess.run(
+            [sys.executable, '-c',
+             'import sys; from src.live_data import fetch_h1_market_data; '
+             'df, src = fetch_h1_market_data(cache_path=sys.argv[1]); '
+             'print("H1FETCH|%s|%d" % (src, 0 if df is None else len(df)))',
+             h1_cache],
+            cwd=os.path.dirname(os.path.abspath(__file__)) or '.',
+            capture_output=True, text=True, timeout=H1_FETCH_TIMEOUT_S,
+        )
+        if _fetch.returncode != 0:
+            raise RuntimeError(f"rc={_fetch.returncode}; stderr tail: {_fetch.stderr[-400:]}")
+        _line = next((ln for ln in reversed(_fetch.stdout.splitlines())
+                      if ln.startswith("H1FETCH|")), "H1FETCH|unknown|0")
+        _, _src, _n = _line.split("|", 2)
+        print(f"H1 cache refreshed from {_src}: {_n} bars.")
+    except subprocess.TimeoutExpired:
+        # Deliberately NOT folded into the graceful fallback below. An
+        # unreachable source is a normal offline retrain; a call that neither
+        # returns nor fails is a broken environment, and training on stale bars
+        # while reporting success is precisely the failure this guard exists to
+        # end. Raising puts the reason in the log immediately before the exit
+        # marker, so the last lines say where it stopped and how it ended.
+        raise H1FetchTimeout(
+            f"Section 13: H1 cache refresh (src.live_data.fetch_h1_market_data) "
+            f"exceeded {H1_FETCH_TIMEOUT_S}s and was killed. A healthy MT5 fetch of "
+            f"60,000 bars takes ~1.2s, so this is a wedge, not slowness -- check "
+            f"that exactly one MetaTrader 5 terminal is running and responding. "
+            f"This is the hang that stalled the 2026-08-07 retrain.")
     except Exception as e:
         print(f"H1 cache refresh skipped ({e}); training on existing cache.")
 
@@ -707,6 +776,12 @@ try:
     h1_lstm.save('models/h1_lstm.keras')
     print("Saved H1 artifacts: h1_xgb_regressor.pkl, h1_rf_regressor.pkl, h1_svm_regressor.pkl, "
           "h1_feature_scaler.pkl, h1_lstm_scaler.pkl, h1_lstm.keras, h1_feature_columns.pkl, h1_lstm_config.pkl")
+except H1FetchTimeout:
+    # Timeout guard only: every other H1 failure still degrades to the warning
+    # below. A wedged fetch is a broken environment, not an offline retrain, and
+    # must surface as a non-zero exit so /api/retrain/status reports "failed"
+    # rather than "completed" over a silently stale H1 family.
+    raise
 except Exception as _h1_err:
     import traceback
     print(f"WARNING: H1 -> Daily predictor section skipped ({_h1_err}). "
