@@ -1,0 +1,101 @@
+
+==================================================================================
+A. Simultaneity + quote-convention check
+==================================================================================
+consistent levels   : max |curl| = 1.388e-15
+inconsistent levels : max |curl| = 3.055e-03 (30.5 bp, CONSTANT)
+
+Lesson for the real feed: a static level/convention mismatch shows up as a curl
+with a large NON-ZERO MEAN and near-zero variance. Always run convention_check()
+and de-mean per triangle before interpreting anything.
+
+==================================================================================
+B. Asynchronous sampling of an arbitrage-free world (M15, 900s bars)
+==================================================================================
+numerical cycle rank of the 4 triangle curls (must be 3 for K4) = 3
+   triangle  mean_curl_bp  rms_curl_bp  theory_rms_bp  realised/theory  slope_on_P  corr(c2,P)  OOS_mean_X
+EUR_USD_JPY       -0.0048       0.7176         0.7691           0.8707      0.4554      0.3025      0.8753
+EUR_USD_GBP       -0.0013       0.8346         0.8771           0.9054      0.5529      0.2947      0.9724
+EUR_JPY_GBP        0.0370       1.0724         1.0931           0.9625      0.5962      0.2803      1.1125
+USD_JPY_GBP        0.0336       0.9755         0.9847           0.9815      0.7571      0.2406      1.3193
+
+Theory says realised/theory ~ 1.0 (closed form is exact up to the exponential
+approximation of the backward recurrence time), the BINNED slope of c^2 on the
+feed-only proxy P ~ 0.5, and out-of-sample mean excess X ~ 1.0.
+Note corr(c2,P) ~ 0.1 EVEN THOUGH THE NULL IS EXACTLY TRUE: conditional on P,
+c^2 is P*chi^2_1, and that multiplicative noise attenuates the correlation to
+about CV(P)/sqrt(2). Never judge the null by the raw per-bar correlation.
+
+==================================================================================
+B2. Binned calibration table (EUR_USD_JPY) — the honest way to read the null
+==================================================================================
+ bin   n    mean_P   mean_c2  ratio
+   0 420 1.764e-09  7.11e-10 0.4031
+   1 420 3.083e-09 1.815e-09 0.5888
+   2 420 4.091e-09 2.127e-09 0.5199
+   3 420 5.021e-09 2.459e-09 0.4897
+   4 420 6.036e-09 3.201e-09 0.5303
+   5 420 7.234e-09 4.036e-09 0.5579
+   6 420 8.992e-09 4.553e-09 0.5064
+   7 420 1.207e-08 7.204e-09 0.5968
+   8 420 1.654e-08 9.399e-09 0.5684
+   9 420 2.946e-08 1.357e-08 0.4608
+
+mean_c2 should rise monotonically with mean_P; 'ratio' should be roughly flat.
+
+==================================================================================
+B3. Convention check — must be run FIRST on real data
+==================================================================================
+   triangle  mean_curl_bp  rms_curl_bp  t_stat
+EUR_USD_JPY       -0.0048       0.7176 -0.5136
+EUR_USD_GBP       -0.0013       0.8346 -0.1217
+EUR_JPY_GBP        0.0370       1.0724  2.6756
+USD_JPY_GBP        0.0336       0.9755  2.6676
+
+==================================================================================
+C. Frequency scaling — the day-one discriminator
+==================================================================================
+timeframe  n_bars  rms_curl_bp  rms_return_bp  ratio
+       M1   20000       0.9415         3.3904 0.2777
+       M5    6000       0.8615         8.0624 0.1069
+      M15    6000       0.9101        14.1113 0.0645
+       H1    1200       0.8124        19.2485 0.0422
+
+RMS curl FLAT in bar size, RMS return ~ sqrt(D). On the real feed:
+  flat            -> curl is timing noise (the expected, boring, correct result)
+  rising with D   -> real persistent dislocation OR a stale feed; separate the
+                     two with the autocorrelation check.
+
+==================================================================================
+C2. Curl autocorrelation (M15) — stale-feed detector
+==================================================================================
+     EUR_USD_JPY  EUR_USD_GBP  EUR_JPY_GBP  USD_JPY_GBP
+lag                                                    
+1         0.0456      -0.0296      -0.0107       0.0288
+2         0.0183      -0.0140       0.0090      -0.0086
+3         0.0136      -0.0231      -0.0447       0.0006
+4         0.0055       0.0099      -0.0221      -0.0171
+5        -0.0067      -0.0102       0.0274       0.0263
+
+==================================================================================
+C3. Shift placebo — how much misalignment would explain the curl?
+==================================================================================
+  shifting EURUSD by 1 bar inflates RMS curl x9.2
+  shifting GBPJPY by 1 bar inflates RMS curl x12.3
+
+One bar of misalignment is enormous relative to a few seconds of staleness.
+If your observed curl is anywhere near this scale, you have an alignment bug,
+not a discovery.
+
+==================================================================================
+D. Injected GENUINE dislocation vs pure asynchronicity
+==================================================================================
+    size  stress quiet  stress episode     AUC  infeas episode  infeas base
+   2.0bp        -0.118           1.572   0.995            0.0%         0.0%
+   5.0bp        -0.093           3.119   0.996            0.0%         0.0%
+  15.0bp        -0.057           5.230   0.996           28.5%         0.0%
+  50.0bp        -0.016           7.621   0.996          100.0%         0.0%
+
+AUC = separability of stress episode from baseline using the stress index alone.
+The High/Low certificate is deliberately conservative -- at M15 the bar range is
+much wider than a few bp, so it only fires for large events. It is an M1 tool.
