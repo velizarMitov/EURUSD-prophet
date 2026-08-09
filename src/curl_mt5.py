@@ -843,22 +843,29 @@ def tick_level_breaks(base: pd.DataFrame, *, freq: str = "MS") -> pd.DataFrame:
     return out
 
 
-def confound_design(base: pd.DataFrame, *, detrend_window: int | None = 20_000) -> pd.DataFrame:
+def confound_design(
+    base: pd.DataFrame,
+    *,
+    detrend_window: int | None = None,
+    n_tick_bins: int = 12,
+    bin_mask: np.ndarray | None = None,
+) -> pd.DataFrame:
     """The things the stress index is most likely to secretly be.
 
     Total tick count, summed H/L range (volatility), summed relative spread (when
     available), plus hour-of-day and day-of-week dummies.
 
-    ``detrend_window`` expresses each continuous confound RELATIVE to its own trailing
-    median rather than in absolute level. This matters on multi-year histories: a broker's
-    tick level can move 3-4x across years, and a single global coefficient on absolute
-    ``log_ticks`` fitted over ``[0:70%]`` is then mis-specified, leaving residual
-    confounding in the validation slice. What should matter is whether THIS bar is busy
-    relative to the prevailing regime, not whether it is 2019 or 2026 -- so the relative
-    form is both drift-immune and the more meaningful variable. Set to ``None`` to recover
-    the absolute form.
+    ``detrend_window`` optionally expresses each continuous confound relative to its own
+    causal trailing median. **Default OFF, because it was measured and it did not work.**
+    The reasoning was that a broker's tick level drifts 3-4x across years, so a global
+    coefficient on absolute ``log_ticks`` would be mis-specified. On a synthetic feed with
+    exactly that drift imposed, residual corr(stress, log ticks) on the validation slice
+    was +0.233 with the absolute form, +0.244 relative, +0.240 with both, and +0.301 when
+    the detrended series was also binned. The hypothesis was wrong; the option is retained
+    only so the finding stays reproducible.
 
-    The trailing median is causal (shifted by one bar), so this introduces no look-ahead.
+    What DID help: quantile dummies on absolute log tick count (+0.233 -> +0.126). The
+    relationship is nonlinear in log space, not drifting.
     """
     cols: dict[str, np.ndarray] = {}
 
@@ -919,7 +926,7 @@ def residualise_against_confounds(
     base: pd.DataFrame,
     *,
     train_mask: np.ndarray,
-    detrend_window: int | None = 20_000,
+    detrend_window: int | None = None,
 ) -> pd.Series:
     """Regress the stress index on the confounds (TRAIN rows only) and return the residual.
 
@@ -933,7 +940,7 @@ def residualise_against_confounds(
     Coefficients are fitted on train rows only, so applying this to the validation slice
     introduces no look-ahead.
     """
-    x = confound_design(base, detrend_window=detrend_window)
+    x = confound_design(base, detrend_window=detrend_window, bin_mask=train_mask)
     y = stress.to_numpy(dtype=float)
     xv = x.to_numpy(dtype=float)
     design = np.column_stack([np.ones(len(x)), xv])
