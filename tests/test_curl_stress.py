@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 
 from src import curl_stress as cs
+from src import curl_mt5_fetch as fetch
 from src import curl_null_simulation as sim
 
 
@@ -201,3 +202,156 @@ def test_stress_index_separates_injected_dislocation() -> None:
     st = cs.stress_index(df, train_mask=train, smooth=32)["stress_smooth"].to_numpy()
     fin = np.isfinite(st)
     assert np.nanmean(st[fin & mask]) > np.nanmean(st[fin & ~mask]) + 1.0
+
+
+# ======================================================================================
+# src/curl_mt5_fetch.py — the MT5 ingestion layer
+# ======================================================================================
+
+
+class _FakeSymbol:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeMT5:
+    """Just enough of the MT5 module surface for symbol resolution."""
+
+    def __init__(self, names: list[str]) -> None:
+        self._names = [_FakeSymbol(n) for n in names]
+
+    def symbols_get(self):  # noqa: ANN201
+        return self._names
+
+
+def _server_week(sunday_open: str) -> pd.DataFrame:
+    """One FX week on the CET/CEST server clock, shaped like the real ActivTrades feed:
+    opens Sunday 23:00, closes Friday 22:59, no Saturday bars. tz-naive, as MT5 serves it.
+    """
+    start = pd.Timestamp(sunday_open)
+    idx = pd.date_range(start, start + pd.Timedelta(days=5) - pd.Timedelta(minutes=1),
+                        freq="1min")
+    idx = idx[idx.dayofweek != 5]  # no Saturday
+    return pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "tick_volume": 5.0,
+         "spread_points": 5.0, "point": 1e-5},
+        index=idx,
+    )
+
+
+def test_resolve_symbols_handles_broker_suffixes() -> None:
+    """Hard-coding 'EURUSD' fetches nothing on a broker that ships 'EURUSD.a'."""
+    names = [f"{s}.a" for s in fetch.CANONICAL] + ["XAUUSD", "EURUSD.pro"]
+    assert fetch.resolve_symbols(_FakeMT5(names))["EURUSD"] == "EURUSD.a"
+
+
+def test_resolve_symbols_prefers_the_bare_symbol() -> None:
+    """With both 'EURUSD' and 'EURUSD.pro' present, the retail default is the one whose
+    history the terminal actually syncs."""
+    names = list(fetch.CANONICAL) + ["EURUSD.pro", "EURUSD.raw"]
+    assert fetch.resolve_symbols(_FakeMT5(names))["EURUSD"] == "EURUSD"
+
+
+def test_resolve_symbols_raises_on_a_missing_edge() -> None:
+    """A missing pair silently deletes a triangle; an incomplete K4 is not a cycle space."""
+    with pytest.raises(RuntimeError, match="could not resolve"):
+        fetch.resolve_symbols(_FakeMT5([s for s in fetch.CANONICAL if s != "GBPJPY"]))
+
+
+def test_to_utc_applies_the_real_dst_rule_not_a_constant_offset() -> None:
+    """CET is +1 in winter and +2 in summer. A fixed offset misplaces half the year by an
+    hour, which is a whole hour-of-day bucket in the calendar residualisation -- and
+    hour-of-day is what the STOP GATE interrogates.
+
+    Anchored on the FX week open, which is 22:00 UTC in winter and 21:00 UTC in summer.
+    """
+    winter = fetch.to_utc(_server_week("2026-01-04 23:00"))
+    summer = fetch.to_utc(_server_week("2026-07-05 23:00"))
+    assert winter.index[0] == pd.Timestamp("2026-01-04 22:00", tz="UTC")   # +1
+    assert summer.index[0] == pd.Timestamp("2026-07-05 21:00", tz="UTC")   # +2
+
+
+def test_to_utc_is_idempotent_on_tz_aware_input() -> None:
+    once = fetch.to_utc(_server_week("2026-01-04 23:00"))
+    assert fetch.to_utc(once).index.equals(once.index)
+
+
+def test_spread_is_converted_from_points_to_price_units() -> None:
+    """THE units bug this module was written to stop.
+
+    MT5 serves ``spread`` as an integer count of points. ``curl_mt5.convention_report``
+    divides it by ``2*close`` expecting PRICE units, so feeding it raw points inflates
+    ``pred_bid_bp`` by 1/point -- 100,000x on a 5-digit major. Every triangle would then
+    read "UNEXPLAINED CONSTANT" and the study would halt at step 2 on a unit label.
+    """
+    frame = fetch.with_price_spread(_server_week("2026-01-04 23:00"))
+    assert frame["spread"].iloc[0] == pytest.approx(5e-5)      # 5 points on a 5-digit pair
+    assert frame["spread_points"].iloc[0] == 5.0               # raw broker integer kept
+    # a realistic EURUSD half-spread is a fraction of a bp, not thousands
+    assert (frame["spread"] / frame["close"] * 1e4).iloc[0] < 1.0
+
+
+def test_weekly_boundary_evidence_distinguishes_server_clock_from_utc() -> None:
+    """THE receipt for the conversion. On the raw CET server clock the FX week pins to a
+    constant 23 open / 22 close; in real UTC it is 22/21 in winter. A constant after
+    conversion means the frame is still on the server clock."""
+    server = pd.concat([_server_week("2026-01-04 23:00"), _server_week("2026-01-11 23:00")])
+    ev_server = fetch.weekly_boundary_evidence(server.index)
+    ev_utc = fetch.weekly_boundary_evidence(fetch.to_utc(server).index)
+    assert ev_server["week_open_hour_mode"].iloc[0] == 23
+    assert ev_server["week_close_hour_mode"].iloc[0] == 22
+    assert ev_utc["week_open_hour_mode"].iloc[0] == 22    # winter: 23:00 CET = 22:00 UTC
+    assert ev_utc["week_close_hour_mode"].iloc[0] == 21
+
+
+def test_march_dst_mismatch_identifies_the_server_timezone() -> None:
+    """The fingerprint that corrected an initially-wrong EET guess.
+
+    The FX week is anchored to New York. A server on the EU DST rule therefore slips one
+    hour for the ~3 weeks in March when the US has switched and the EU has not, so the
+    server-clock week open reads 22 in March against 23 the rest of the year. A fixed-
+    offset server would show no such excursion; this is the only check that separates
+    them, and a whole-year mode hides it.
+    """
+    march = pd.concat([_server_week("2026-03-15 22:00"), _server_week("2026-03-22 22:00")])
+    january = pd.concat([_server_week("2026-01-04 23:00"), _server_week("2026-01-11 23:00")])
+    ev = fetch.weekly_boundary_evidence(pd.concat([january, march]).index, by="month")
+    by_month = ev.set_index("month")["week_open_hour_mode"]
+    assert by_month.loc[1] == 23
+    assert by_month.loc[3] == 22
+
+
+def test_a_global_clock_shift_cannot_manufacture_curl() -> None:
+    """WHY a timezone error is a reporting bug and not a fabricated-signal bug: all six
+    pairs share one server clock, so a uniform shift cancels inside
+    log(A/B)+log(B/C)+log(C/A). This is what licenses reading the curl before the offset
+    is settled -- and it is NOT true of a per-pair shift, which shift_placebo covers."""
+    df, _ = sim.simulate_bars(400, 900, rng=np.random.default_rng(5))
+    shifted = df.copy()
+    shifted.index = shifted.index + pd.Timedelta(hours=3)
+    np.testing.assert_allclose(
+        cs.curl_frame(df).to_numpy(), cs.curl_frame(shifted).to_numpy(), atol=0.0
+    )
+
+
+def test_coverage_report_separates_weekend_seams_from_real_holes() -> None:
+    """A 5-day market has ~52 legitimate weekend gaps a year; counting them alongside true
+    feed holes makes the gap census unreadable."""
+    frame = pd.concat([_server_week("2026-01-04 23:00"), _server_week("2026-01-11 23:00")])
+    frame = frame.drop(frame.index[100:130])          # a 30-minute intraday hole
+    cov = fetch.coverage_report({"EURUSD": frame}).iloc[0]
+    assert cov["weekend_gaps"] == 1
+    assert cov["intraday_gaps"] == 1
+    assert cov["largest_intraday_gap_min"] == pytest.approx(31.0)
+    assert cov["gaps_gt_1bar"] == 2
+
+
+def test_common_span_reports_the_strict_intersection() -> None:
+    """The usable history is bounded by the intersection, not by the deepest symbol --
+    align_bars drops any timestamp where one pair is missing and never ffills."""
+    full = _server_week("2026-01-04 23:00")
+    short = full.iloc[500:]
+    frames = {s: (short if s == "GBPJPY" else full) for s in fetch.CANONICAL}
+    out = fetch.common_span(frames)
+    assert out["common_bars"] == len(short)
+    assert out["retention_vs_shallowest_pct"] == pytest.approx(100.0)

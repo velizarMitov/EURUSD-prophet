@@ -77,6 +77,7 @@ def simulate_bars(
     dislocated_pair: tuple[str, str] | None = None,
     dislocation_log: float = 0.0,
     dislocation_mask: np.ndarray | None = None,
+    activity_trend: np.ndarray | None = None,
     chunk: int = 400,
 ) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
     """Simulate an EXACTLY arbitrage-free world, then observe it asynchronously.
@@ -103,6 +104,9 @@ def simulate_bars(
     log_act = -0.6 * log_vol + ar1(0.995, 0.05)
     vol_fac = np.exp(log_vol - log_vol.mean())
     act_fac = np.exp(log_act - log_act.mean())
+    if activity_trend is not None:
+        # multi-year drift in the broker's tick level, holding the price process fixed
+        act_fac = act_fac * np.asarray(activity_trend, dtype=float)
 
     cols: dict[str, list[np.ndarray]] = {
         f"{cs.symbol(b, q)}_{f}": [] for b, q in cs.PAIRS for f in cs.FIELDS

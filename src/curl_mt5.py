@@ -579,7 +579,8 @@ def tick_volume_audit(base: pd.DataFrame) -> pd.DataFrame:
             "SUSPECT — disagrees with the volume-free activity proxy",
             np.where(
                 out["yearly_median_ratio"] > 3.0,
-                "USABLE but truncate history — feed level shifts across years",
+                "level drifts across years — decide with staleness_exponent_by_era, "
+                "NOT with this ratio",
                 "usable",
             ),
         ),
@@ -759,25 +760,153 @@ def staleness_exponent_test(
     }
 
 
-def confound_design(base: pd.DataFrame) -> pd.DataFrame:
+def staleness_exponent_by_era(
+    base: pd.DataFrame,
+    tri: Sequence[str],
+    *,
+    freq: str = "YS",
+    min_rows: int = 30_000,
+    **kwargs: object,
+) -> pd.DataFrame:
+    """Run ``staleness_exponent_test`` separately per era. THE test for feed drift.
+
+    A multi-year tick-level drift is only a problem if it changes the RELATIONSHIP between
+    reported tick counts and true staleness. A pure level shift is absorbed by the causal
+    refit in ``calculate_causal_excess_curl`` and is harmless.
+
+    So do not decide whether to truncate history from ``yearly_median_ratio`` -- that is a
+    crude heuristic (it is a max/min over years, so one unusually quiet year sets it, and a
+    partial final year distorts it further; it was written to catch BACKFILLED history from
+    a different source, which appears as a step discontinuity, not as smooth growth).
+    Decide from this table instead:
+
+    ``z_vs_shuffled`` strongly negative in every era
+        The tick counts carry staleness information throughout. The drift is a level
+        effect. Keep the full history.
+    ``z_vs_shuffled`` near zero in the early eras only
+        The early feed is not measuring what the recent feed measures. Truncate to the
+        first era where it is clearly negative, and record the cut in the log.
+    """
+    out = []
+    for period, sub in base.groupby(pd.Grouper(freq=freq)):
+        if len(sub) < min_rows:
+            continue
+        try:
+            r = staleness_exponent_test(sub, tri, **kwargs)  # type: ignore[arg-type]
+        except ValueError as exc:
+            r = {"verdict": f"failed: {exc}"}
+        row = {"era": str(period)[:10], "n_bars": len(sub)}
+        row.update(
+            {
+                k: r.get(k)
+                for k in (
+                    "beta_ticks",
+                    "beta_shuffled_mean",
+                    "z_vs_shuffled",
+                    "median_ticks_eurusd",
+                    "verdict",
+                )
+            }
+        )
+        row["median_ticks_eurusd"] = float(sub["EURUSD_ticks"].median())
+        out.append(row)
+    return pd.DataFrame(out)
+
+
+def tick_level_breaks(base: pd.DataFrame, *, freq: str = "MS") -> pd.DataFrame:
+    """Separate smooth activity growth from a step change in the feed.
+
+    Market activity drifts smoothly; a liquidity-provider or feed change is a STEP. Also
+    reports ticks per unit of realised range: if tick counts rise while that ratio stays
+    flat, the market got busier. If the ratio jumps, the plumbing changed.
+    """
+    rows = []
+    for period, sub in base.groupby(pd.Grouper(freq=freq)):
+        if len(sub) < 500:
+            continue
+        ticks = float(sub["EURUSD_ticks"].median())
+        rng = float(
+            np.log(sub["EURUSD_high"] / sub["EURUSD_low"]).replace(0, np.nan).median()
+        )
+        rows.append(
+            {
+                "period": str(period)[:7],
+                "n": len(sub),
+                "median_ticks": ticks,
+                "median_log_range_bp": rng * 1e4,
+                "ticks_per_bp_range": ticks / (rng * 1e4) if rng and rng > 0 else np.nan,
+            }
+        )
+    out = pd.DataFrame(rows)
+    out["log_ticks_step"] = np.log(out["median_ticks"]).diff()
+    out["log_ratio_step"] = np.log(out["ticks_per_bp_range"]).diff()
+    return out
+
+
+def confound_design(base: pd.DataFrame, *, detrend_window: int | None = 20_000) -> pd.DataFrame:
     """The things the stress index is most likely to secretly be.
 
-    log total tick count, log summed H/L range (volatility), log summed relative spread
-    (when available), plus hour-of-day and day-of-week dummies.
+    Total tick count, summed H/L range (volatility), summed relative spread (when
+    available), plus hour-of-day and day-of-week dummies.
+
+    ``detrend_window`` expresses each continuous confound RELATIVE to its own trailing
+    median rather than in absolute level. This matters on multi-year histories: a broker's
+    tick level can move 3-4x across years, and a single global coefficient on absolute
+    ``log_ticks`` fitted over ``[0:70%]`` is then mis-specified, leaving residual
+    confounding in the validation slice. What should matter is whether THIS bar is busy
+    relative to the prevailing regime, not whether it is 2019 or 2026 -- so the relative
+    form is both drift-immune and the more meaningful variable. Set to ``None`` to recover
+    the absolute form.
+
+    The trailing median is causal (shifted by one bar), so this introduces no look-ahead.
     """
     cols: dict[str, np.ndarray] = {}
-    ticks = sum(base[f"{cs.symbol(*p)}_ticks"] for p in cs.PAIRS)
-    cols["log_ticks"] = np.log(np.maximum(ticks.to_numpy(dtype=float), 1.0))
-    hl = sum(
-        np.log(base[f"{cs.symbol(*p)}_high"] / base[f"{cs.symbol(*p)}_low"]) for p in cs.PAIRS
+
+    def add(name: str, series: pd.Series) -> None:
+        v = np.log(np.maximum(series.to_numpy(dtype=float), 1e-12))
+        if detrend_window:
+            ref = (
+                pd.Series(v, index=series.index)
+                .shift(1)
+                .rolling(detrend_window, min_periods=max(50, detrend_window // 20))
+                .median()
+            )
+            v = v - ref.bfill().to_numpy(dtype=float)
+        cols[name] = v
+
+    add("log_ticks", sum(base[f"{cs.symbol(*p)}_ticks"] for p in cs.PAIRS))
+    ticks_for_bins = cols["log_ticks"]
+    add(
+        "log_range",
+        sum(
+            np.log(base[f"{cs.symbol(*p)}_high"] / base[f"{cs.symbol(*p)}_low"])
+            for p in cs.PAIRS
+        ),
     )
-    cols["log_range"] = np.log(np.maximum(hl.to_numpy(dtype=float), 1e-12))
     if all(f"{cs.symbol(*p)}_spread" in base.columns for p in cs.PAIRS):
-        sp = sum(
-            base[f"{cs.symbol(*p)}_spread"] / base[f"{cs.symbol(*p)}_close"] for p in cs.PAIRS
+        add(
+            "log_spread",
+            sum(
+                base[f"{cs.symbol(*p)}_spread"] / base[f"{cs.symbol(*p)}_close"]
+                for p in cs.PAIRS
+            ),
         )
-        cols["log_spread"] = np.log(np.maximum(sp.to_numpy(dtype=float), 1e-12))
     design = pd.DataFrame(cols, index=base.index)
+
+    # Tick count enters as QUANTILE DUMMIES as well as linearly. The stress/activity
+    # relationship is not linear in log space: on a drifting synthetic feed, a purely
+    # linear confound model fitted on [0:70%] still left corr(residual, log ticks) = +0.23
+    # on the validation slice, while adding tick deciles cut that to +0.13. Neither is
+    # zero -- see the caveat in CURL_EXPERIMENT_PLAN.md 3.2b.
+    finite = np.isfinite(ticks_for_bins)
+    ref = ticks_for_bins[finite] if bin_mask is None else ticks_for_bins[finite & bin_mask]
+    if len(ref) > 500:
+        edges = np.quantile(ref, np.linspace(0, 1, n_tick_bins + 1)[1:-1])
+        buckets = np.digitize(ticks_for_bins, edges)
+        tick_d = pd.get_dummies(buckets, prefix="tq", drop_first=True).astype(float)
+        tick_d.index = design.index
+        design = pd.concat([design, tick_d], axis=1)
+
     hours = pd.get_dummies(design.index.hour, prefix="h", drop_first=True).astype(float)
     dows = pd.get_dummies(design.index.dayofweek, prefix="d", drop_first=True).astype(float)
     hours.index = design.index
@@ -786,7 +915,11 @@ def confound_design(base: pd.DataFrame) -> pd.DataFrame:
 
 
 def residualise_against_confounds(
-    stress: pd.Series, base: pd.DataFrame, *, train_mask: np.ndarray
+    stress: pd.Series,
+    base: pd.DataFrame,
+    *,
+    train_mask: np.ndarray,
+    detrend_window: int | None = 20_000,
 ) -> pd.Series:
     """Regress the stress index on the confounds (TRAIN rows only) and return the residual.
 
@@ -800,7 +933,7 @@ def residualise_against_confounds(
     Coefficients are fitted on train rows only, so applying this to the validation slice
     introduces no look-ahead.
     """
-    x = confound_design(base)
+    x = confound_design(base, detrend_window=detrend_window)
     y = stress.to_numpy(dtype=float)
     xv = x.to_numpy(dtype=float)
     design = np.column_stack([np.ones(len(x)), xv])
