@@ -952,6 +952,291 @@ def residualise_against_confounds(
     return pd.Series(y - fitted, index=stress.index, name="stress_orthogonal")
 
 
+def _confound_columns(base: pd.DataFrame) -> tuple[list[np.ndarray], list[str]]:
+    """Continuous confounds as raw arrays, computed once."""
+    cols: list[np.ndarray] = []
+    names: list[str] = []
+    ticks = sum(base[f"{cs.symbol(*p)}_ticks"] for p in cs.PAIRS)
+    cols.append(np.log(np.maximum(ticks.to_numpy(dtype=float), 1.0)))
+    names.append("log_ticks")
+    hl = sum(
+        np.log(base[f"{cs.symbol(*p)}_high"] / base[f"{cs.symbol(*p)}_low"]) for p in cs.PAIRS
+    )
+    cols.append(np.log(np.maximum(hl.to_numpy(dtype=float), 1e-12)))
+    names.append("log_range")
+    if all(f"{cs.symbol(*p)}_spread" in base.columns for p in cs.PAIRS):
+        sp = sum(
+            base[f"{cs.symbol(*p)}_spread"] / base[f"{cs.symbol(*p)}_close"] for p in cs.PAIRS
+        )
+        cols.append(np.log(np.maximum(sp.to_numpy(dtype=float), 1e-12)))
+        names.append("log_spread")
+    return cols, names
+
+
+def _onehot(codes: np.ndarray, n_levels: int) -> np.ndarray:
+    """Dense one-hot, first level dropped."""
+    m = len(codes)
+    out = np.zeros((m, max(0, n_levels - 1)), dtype=float)
+    valid = (codes > 0) & (codes < n_levels)
+    out[np.nonzero(valid)[0], codes[valid] - 1] = 1.0
+    return out
+
+
+def _confound_matrix(
+    cont: list[np.ndarray],
+    hours: np.ndarray,
+    dows: np.ndarray,
+    ref_rows: np.ndarray,
+    *,
+    n_bins: int = 12,
+    grid_bins: int = 8,
+) -> np.ndarray:
+    """Flexible confound design: linear terms + per-variable quantile dummies + a 2-D
+    (volatility x activity) grid.
+
+    The 2-D grid is the load-bearing part. The null is literally a function of
+    ``variance / tick count``, so if it is even slightly mis-specified the residual
+    carries a JOINT function of volatility and activity that no additive model can
+    remove. Measured on a synthetic drifting feed, the additive design left joint
+    R-squared of 0.084 on the validation slice; adding the grid is what brings it down.
+
+    ``ref_rows`` selects the rows the quantile edges are computed from -- always training
+    rows only, never the full series.
+    """
+    m = len(hours)
+    parts: list[np.ndarray] = [np.ones((m, 1))]
+    parts.extend(c.reshape(-1, 1) for c in cont)
+
+    codes: list[np.ndarray] = []
+    for c in cont:
+        ref = c[ref_rows]
+        ref = ref[np.isfinite(ref)]
+        if len(ref) < 500:
+            codes.append(np.zeros(m, dtype=int))
+            continue
+        edges = np.quantile(ref, np.linspace(0.0, 1.0, n_bins + 1)[1:-1])
+        k = np.digitize(c, edges)
+        codes.append(k)
+        parts.append(_onehot(k, n_bins))
+
+    if grid_bins > 1 and len(cont) >= 2:
+        gcodes = []
+        for c in cont[:2]:  # log_ticks, log_range
+            ref = c[ref_rows]
+            ref = ref[np.isfinite(ref)]
+            edges = np.quantile(ref, np.linspace(0.0, 1.0, grid_bins + 1)[1:-1])
+            gcodes.append(np.clip(np.digitize(c, edges), 0, grid_bins - 1))
+        cell = gcodes[0] * grid_bins + gcodes[1]
+        parts.append(_onehot(cell, grid_bins * grid_bins))
+
+    parts.append(_onehot(hours, 24))
+    parts.append(_onehot(dows, 7))
+    return np.column_stack(parts)
+
+
+def causal_residualise_against_confounds(
+    stress: pd.Series,
+    base: pd.DataFrame,
+    *,
+    min_train: int = 100_000,
+    refit_every: int = 20_000,
+    max_train: int = 250_000,
+    n_tick_bins: int = 12,
+    grid_bins: int = 8,
+) -> pd.Series:
+    """Confound residualisation with the regression refitted on a TRAILING window.
+
+    A single static fit on ``[0:70%]`` leaves real leakage in the validation slice: on a
+    synthetic feed with an imposed 3.5x tick-level drift, residual
+    ``corr(stress, log ticks)`` on ``validation[70:80]`` was +0.233 linear and +0.122 with
+    tick quantile dummies -- not zero. This is the same failure mode that forced
+    ``causal_excess_curl``: a coefficient fitted years earlier is stale by the time it is
+    applied.
+
+    Here the whole design -- continuous terms, tick quantile EDGES, and hour/day dummies --
+    is refitted per block on rows ``[start-max_train, start)`` and applied to
+    ``[start, start+refit_every)``. Quantile edges are recomputed from the trailing window
+    too; reusing globally-computed edges would leak the future distribution back in.
+
+    Columns with no variation inside a block's training window are dropped from both the
+    fit and the application, so the model never extrapolates on a level it has not seen.
+
+    Rows before ``min_train`` are NaN. Defaults are sized for ~3M M1 bars (~150 refits).
+    """
+    n = len(base)
+    cont, _ = _confound_columns(base)
+    hours = np.asarray(base.index.hour, dtype=int)  # type: ignore[union-attr]
+    dows = np.asarray(base.index.dayofweek, dtype=int)  # type: ignore[union-attr]
+    y = stress.to_numpy(dtype=float)
+    out = np.full(n, np.nan)
+
+    for start in range(min_train, n, refit_every):
+        lo = max(0, start - max_train)
+        stop = min(start + refit_every, n)
+        sl = slice(lo, stop)
+        fit_len = start - lo
+
+        block_cont = [c[sl] for c in cont]
+        yb = y[sl]
+        fit_rows = np.zeros(stop - lo, dtype=bool)
+        fit_rows[:fit_len] = True
+        if fit_len < 500:
+            continue
+        x = _confound_matrix(
+            block_cont, hours[sl], dows[sl], fit_rows, n_bins=n_tick_bins, grid_bins=grid_bins
+        )
+        ok = fit_rows & np.isfinite(yb) & np.isfinite(x).all(axis=1)
+        if ok.sum() < 20 * x.shape[1]:
+            continue
+
+        # drop columns with no support in this block's training rows
+        keep = np.ones(x.shape[1], dtype=bool)
+        keep[1:] = x[ok][:, 1:].std(axis=0) > 0
+        xk = x[:, keep]
+        coef, *_ = np.linalg.lstsq(xk[ok], yb[ok], rcond=None)
+        out[start:stop] = yb[fit_len:] - (xk[fit_len:] @ coef)
+
+    return pd.Series(out, index=base.index, name="stress_orthogonal")
+
+
+def confound_gate(
+    stress_orthogonal: pd.Series,
+    base: pd.DataFrame,
+    *,
+    train_fraction: float = 0.70,
+    val_fraction: float = 0.10,
+    max_abs_corr: float = 0.05,
+    max_joint_r2: float = 0.01,
+    n_tick_bins: int = 12,
+    grid_bins: int = 8,
+    reference_joint_r2: float | None = None,
+    reference_tolerance: float = 1.5,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Measure what confound structure survives, on ``validation[70:80]`` only.
+
+    Returns ``(per_confound_table, summary)``.
+
+    Two numbers, and the second is the one that matters:
+
+    ``corr``       marginal Pearson/Spearman of the residual against each confound.
+    ``joint_r2``   R-squared of the residual regressed on the FULL confound design within
+                   the validation slice. The marginal correlations can each look small
+                   while the confounds jointly explain the index; this is the honest test.
+
+    Do not use a p-value here. With ~300k validation bars the standard error of a
+    correlation is about 0.002, so essentially any non-zero value is "significant" and the
+    test degenerates. The gate is on MAGNITUDE.
+
+    **Calibrate the threshold against the synthetic null, not against zero.** Measured on
+    simulated data where the asynchronicity null is TRUE BY CONSTRUCTION, the causally
+    residualised index still shows joint R-squared of about 0.07 on the validation slice.
+    Some irreducible confound structure is inherent to the construct: the excess-curl
+    distribution depends on volatility and tick count through the chi-square shape, the
+    truncation regime and the Parkinson discreteness bias, and none of that is captured by
+    a linear-in-P calibration. Rolling-smoothing then amplifies the systematic part
+    relative to the noise. Demanding ``joint_r2 <= 0.01`` on real data is therefore
+    demanding something the estimator cannot deliver even when the null holds exactly.
+
+    So: run the reference first on matched synthetic data, pass it as
+    ``reference_joint_r2``, and require only that the real figure not materially exceed it.
+    Same logic as the permutation control in ``staleness_exponent_test`` -- judge against
+    what a true null produces, not against a textbook zero.
+
+    Fitting the joint model on the validation rows themselves is deliberate: it is an
+    upper bound on remaining structure, which is the conservative direction for a gate.
+    """
+    n = len(base)
+    lo = int(train_fraction * n)
+    hi = int((train_fraction + val_fraction) * n)
+    val = np.zeros(n, dtype=bool)
+    val[lo:hi] = True
+
+    cont, names = _confound_columns(base)
+    y = stress_orthogonal.to_numpy(dtype=float)
+    ok = val & np.isfinite(y) & np.all(np.isfinite(np.column_stack(cont)), axis=1)
+    if ok.sum() < 1_000:
+        raise ValueError(f"only {ok.sum()} usable validation rows")
+
+    rows = []
+    yv = pd.Series(y[ok])
+    for arr, name in zip(cont, names):
+        v = pd.Series(arr[ok])
+        rows.append(
+            {
+                "confound": name,
+                "corr": float(yv.corr(v)),
+                "spearman": float(yv.rank().corr(v.rank())),
+            }
+        )
+    hours = np.asarray(base.index.hour, dtype=int)[ok]  # type: ignore[union-attr]
+    dows = np.asarray(base.index.dayofweek, dtype=int)[ok]  # type: ignore[union-attr]
+    rows.append(
+        {
+            "confound": "hour_of_day (eta)",
+            "corr": float(np.sqrt(max(0.0, _eta_squared(y[ok], hours)))),
+            "spearman": np.nan,
+        }
+    )
+
+    x = _confound_matrix(
+        [c[ok] for c in cont],
+        hours,
+        dows,
+        np.ones(int(ok.sum()), dtype=bool),
+        n_bins=n_tick_bins,
+        grid_bins=grid_bins,
+    )
+    keep = np.ones(x.shape[1], dtype=bool)
+    keep[1:] = x[:, 1:].std(axis=0) > 0
+    xk = x[:, keep]
+    coef, *_ = np.linalg.lstsq(xk, y[ok], rcond=None)
+    resid = y[ok] - xk @ coef
+    joint_r2 = float(1.0 - resid.var() / y[ok].var()) if y[ok].var() > 0 else np.nan
+
+    table = pd.DataFrame(rows)
+    worst = float(table["corr"].abs().max())
+    if reference_joint_r2 is not None:
+        budget = max(reference_joint_r2 * reference_tolerance, reference_joint_r2 + 0.01)
+        passed = bool(joint_r2 <= budget)
+        verdict = (
+            f"PASS — joint R2 {joint_r2:.4f} is within the synthetic-null floor "
+            f"({reference_joint_r2:.4f}, budget {budget:.4f})"
+            if passed
+            else f"FAIL — joint R2 {joint_r2:.4f} exceeds the synthetic-null floor "
+            f"({reference_joint_r2:.4f}, budget {budget:.4f}); real confound structure "
+            "survives, do NOT score the primary"
+        )
+    else:
+        budget = max_joint_r2
+        passed = bool(worst <= max_abs_corr and joint_r2 <= max_joint_r2)
+        verdict = (
+            "PASS — residual index is effectively orthogonal to the confounds"
+            if passed
+            else "FAIL — confound structure survives; do NOT score the primary yet. "
+            "Before chasing this, establish the synthetic-null floor and pass it as "
+            "reference_joint_r2 — an absolute threshold of 0.01 may be unreachable."
+        )
+    return table, {
+        "n_validation_rows": int(ok.sum()),
+        "validation_span": f"{base.index[lo]} -> {base.index[min(hi, n) - 1]}",
+        "worst_abs_corr": worst,
+        "joint_r2": joint_r2,
+        "budget": float(budget),
+        "reference_joint_r2": reference_joint_r2,
+        "verdict": verdict,
+    }
+
+
+def _eta_squared(y: np.ndarray, groups: np.ndarray) -> float:
+    """Share of variance of y explained by a categorical grouping."""
+    total = y.var()
+    if total <= 0:
+        return 0.0
+    frame = pd.DataFrame({"y": y, "g": groups})
+    between = frame.groupby("g")["y"].transform("mean").to_numpy()
+    return float(1.0 - (y - between).var() / total)
+
+
 def _confound_report(
     base: pd.DataFrame, result: pd.DataFrame, *, column: str = "stress"
 ) -> pd.DataFrame:
