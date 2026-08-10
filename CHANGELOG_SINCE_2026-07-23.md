@@ -1,25 +1,27 @@
 # Changes since the first exam submission (23 July 2026)
 
 **Baseline commit:** `64f6285` (21 July 2026) — the state submitted on 23 July 2026.
-**Current head:** 9 August 2026. **33 commits**, 360 files changed.
+**Current head:** 10 August 2026.
 
 This document is the auditable detail behind **Section 22** of
 `notebooks/01_data_preparation.ipynb`. The headline is not that more models were added.
 It is that a **pre-registered, Bonferroni-corrected hypothesis registry** was applied to
-34 new research claims, and **27 of them were rejected and recorded as rejected**.
+41 new research claims, and **most of them were rejected and recorded as rejected** — and
+that the one model which finally beat the incumbent has ten parameters and no neural
+network in it (section 8 below).
 
 ---
 
 ## 1. Summary table
 
-| Metric | 23 Jul 2026 | 9 Aug 2026 | Δ |
+| Metric | 23 Jul 2026 | 10 Aug 2026 | Δ |
 |---|---:|---:|---|
-| Hypothesis families (registry files) | 4 | 12 | +8 |
-| Registered hypotheses (all-time) | 15 | 50 | +35 |
-| …of which recorded as DROP | — | 34 | — |
-| Python modules in `src/` | 14 | 53 | +39 |
+| Hypothesis families (registry files) | 4 | 15 | +11 |
+| Registered hypotheses (all-time) | 15 | 56 | +41 |
+| …of which recorded as DROP | — | 37 | — |
+| Python modules in `src/` | 14 | 52 | +38 |
 | Test files | 4 | 13 | +9 |
-| Test functions | 73 | 424 | +351 |
+| Test functions | 73 | 452 | +379 |
 | `IMPROVEMENT_LOG.md` (lines) | 799 | 2,025 | +1,226 |
 | `ARCHITECTURE_DOCS.md` (lines) | 1,150 | 1,892 | +742 |
 
@@ -28,7 +30,7 @@ measuring anything; this one records every claim it ever spent.
 
 ---
 
-## 2. Eight new hypothesis families
+## 2. Eleven new hypothesis families
 
 Each family carries its own registry CSV and its own Bonferroni α-ladder, so a new claim
 in one family does not silently loosen the bar in another. Verdicts as recorded.
@@ -38,11 +40,14 @@ in one family does not silently loosen the bar in another. Verdicts as recorded.
 | H1 next-bar direction | `h1_direction_hypothesis_log.csv` | 8 | 4 | 4 |
 | RSI/price divergence | `divergence_hypothesis_log.csv` | 6 | 0 | 6 |
 | Harmonic patterns (H1 + M15) | `harmonic_pattern_hypothesis_log.csv` | 6 | 0 | 6 |
-| G10 macro panel | `macro_panel_hypothesis_log.csv` | 2 | 2 | 0 |
+| G10 macro panel | `macro_panel_hypothesis_log.csv` | 2 | 0 | 0 (REGISTERED-UNSPENT: stopped before fitting on a power calculation) |
 | Tier-A macro / carry | `macro_tier_a_hypothesis_log.csv` | 2 | 0 | 2 |
 | Pooled multi-instrument H1 | `pooled_h1_hypothesis_log.csv` | 2 | 0 | 2 |
 | H1 multi-day reversion | `h1_multiday_hypothesis_log.csv` | 2 | 0 | 2 |
 | Fractal-breakout drift | `fractal_breakout_driftcheck_hypothesis_log.csv` | 1 | 0 | 1 |
+| Liquid time-constant + spiking | `ltc_hypothesis_log.csv` | 2 | 1 | 1 |
+| Spiking readout on a stable substrate | `spiking_readout_hypothesis_log.csv` | 1 | 0 | 1 |
+| **Calendar seasonality volatility** | `calendar_hypothesis_log.csv` | 1 | see §8 | — |
 
 Plus 3 new ADD-tests in the existing direction family (`fibonacci_retracement_block`,
 `vix_regime_block`, `volatility_forecast_block` — all DROP, tightening the family bar to
@@ -166,3 +171,88 @@ validation, not as a result.
 2026-07-24  Update prediction history and logs; adjust yield differentials
 ```
 (plus 6 refactor/maintenance commits)
+
+
+---
+
+## 8. The main result — calendar seasonality beats the production ensemble
+
+`src/calendar_volatility.py`, registered in `results/calendar_hypothesis_log.csv`.
+
+Three times a plain calendar table appeared as a *benchmark* that embarrassed a trained
+network — against the volatility ensemble, against the liquid-time-constant spiking
+forecaster on EURUSD H1, and against a GRU+LIF model on AUDUSD H1. Each time it was filed
+as a caveat. It had never been built as a model; `src/` contained no seasonality module.
+
+**GARCH(1,1) × MAE-optimal scale × six weekday multipliers.** numpy and pandas only. Ten
+seconds to fit on a CPU. Scored on the identical row set as the volatility family
+(euro-era daily, n = 8,559; validation n = 856; test n = 1,712):
+
+| model | val MAE | val R² | test MAE | test R² |
+|---|---:|---:|---:|---:|
+| **Calendar** | **0.16209** | **0.1602** | **0.19279** | **0.1348** |
+| 5-seed MT LSTM ensemble | 0.18594 | 0.1444 | 0.21897 | 0.1098 |
+| GARCH(1,1) | 0.20379 | 0.0094 | 0.23257 | 0.0356 |
+| Persistence | 0.26133 | −0.8396 | 0.29214 | — |
+
+Wins on both blocks with higher R² on both. Calendar component alone: dMAE +0.02039 on
+test, CI95 [+0.01685, +0.02409].
+
+```
+GARCH  α = 0.0284   β = 0.9685   scale = 0.5495
+Mon 1.291   Tue 1.232   Wed 1.271   Thu 1.354   Fri 0.275   Sun 1.058
+```
+
+Honest decomposition: an MAE-optimal scale on plain GARCH alone already reaches 0.18405 on
+validation, level with the ensemble; the weekday factors add the rest. Two cheap wins,
+neither neural.
+
+Outstanding, and stated in the registry row: no paired bootstrap against the ensemble (needs
+its per-row predictions, i.e. TensorFlow); GARCH here is a numpy variance-targeting fit, not
+the `arch` MLE; and the model was built and scored in one pass with no pre-registration
+preceding measurement. The row reads `PENDING-PAIRED-CI`, not CLEARED.
+
+## 9. Production calibration audit — the live confidence guard is inert
+
+`src/calibration_audit.py`. The only finding in this period that concerns the serving path
+rather than research code.
+
+The production LSTM has no uncertainty head — two outputs, a linear return and a sigmoid
+direction. `CONFIDENCE_THRESHOLD = 0.52` gates that sigmoid.
+
+| | validation[70:80] | test[80:100] |
+|---|---:|---:|
+| Accuracy lift from the guard (baseline) | +10.5 pp | −0.005 |
+| Accuracy lift from the guard (with_macro) | +7.5 pp | +0.008 |
+| ROC-AUC on the ≥0.52 subset | 0.638 / 0.664 | 0.501 / 0.528 |
+
+The validation panel is contaminated — that slice sits inside the GBM's `[0:80%]` training
+range — and is retained in the report precisely because it shows what an in-sample
+calibration audit of this system looks like: convincing, monotone, and spurious. Out of
+sample the guard is inert, not harmful; its real function is display honesty.
+
+Two further recorded findings: `with_macro` clears the guard on 40.8% of test days versus
+`baseline`'s 22.7% because its heads are more *correlated*, not more skilful — twice the
+exposure at the same zero edge; and `compute_consensus` applies the threshold only on the
+unanimous branch, emitting an ungated direction whenever the heads disagree.
+
+## 10. Idea 3 — three exotic architectures, three honest negatives
+
+| Hypothesis | Verdict |
+|---|---|
+| `H_ltc.1` selective CfC+LIF vs GARCH×DoW | CLEARED — marginal, fragile, mechanism unsupported |
+| `H_ltc.2` learned clock tracks tick rate | DROP |
+| `H_spk.1` trained LIF beats a fixed σ threshold | DROP |
+
+`H_ltc.1` cleared arithmetically and was not promoted: the model that passed had a collapsed
+time warp (weekend state retention 2.8e-09), so the mechanism the family exists to test was
+absent from the model that passed its test.
+
+`H_ltc.2` as originally specified was not a valid test — untrained networks already scored
+partial ρ of −0.42 to −0.71 because `log_tick_rate` was an input. Re-specifying the model to
+be tick-blind moved the untrained null to +0.007 ± 0.038 and the trained model scored
+z = +0.38 against a bar of z < −3. The raw correlation was −0.759 in the predicted direction;
+the partial was +0.02. The raw number was entirely a volatility confound.
+
+Unit economics closed the line: 0.29 bp of gain against a 0.92 bp round-trip spread. The
+Stage-4 gate was left closed.

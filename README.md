@@ -19,10 +19,10 @@ since; this is the **second submission**.
 | [`CHANGELOG_SINCE_2026-07-23.md`](CHANGELOG_SINCE_2026-07-23.md) | Commit-level record of everything added since the first submission |
 | `notebooks/01_data_preparation.ipynb` **Section 22** | Then-vs-now comparison, the volatility re-verification, external-model comparison, references |
 
-Headline changes since 23 July: **4 → 12** hypothesis families, **15 → 50** registered
-hypotheses (34 recorded as DROP), **73 → 424** test functions, **14 → 53** modules in
-`src/`, plus a re-verification that reduced our own previous headline claim to a calendar
-effect (Section 22.4).
+Headline changes since 23 July: **4 → 15** hypothesis families, **15 → 56** registered
+hypotheses (37 recorded as DROP), **73 → 452** test functions, and **a ten-number calendar
+model that beats the production 5-seed neural ensemble on both the validation and test
+blocks** (Section 22.6) — the clearest statement of the project's thesis it has produced.
 
 
 ## Project Structure

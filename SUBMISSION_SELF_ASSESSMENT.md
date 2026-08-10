@@ -17,12 +17,12 @@ risk, and one with a well-known negative prior (Meese & Rogoff, 1983). Stated in
 `README.md`, notebook Section 0, and formalised mathematically in Section 1.
 
 The project answers the *correct* problem, which turned out not to be the one it started
-with: after 50 registered hypotheses the honest answer on direction is ROC-AUC ≈ 0.50, and
-the project reports that rather than manufacturing an edge (Section 21, Section 22.8).
+with: after 56 registered hypotheses the honest answer on direction is ROC-AUC ≈ 0.50, and
+the project reports that rather than manufacturing an edge (Section 21, Section 22.11).
 
 ### Layout (0–20)
 
-22 numbered sections with a navigation table in cell 0, LaTeX for every mathematical
+22 numbered sections (Section 22 in eleven subsections) with a navigation table in cell 0, LaTeX for every mathematical
 formulation, and a consistent structure per section (theory → code → empirical
 interpretation). Supporting documents are separated by purpose:
 
@@ -36,7 +36,7 @@ interpretation). Supporting documents are separated by purpose:
 
 ### Code quality (0–20)
 
-53 modules in `src/`, each with a single responsibility and a module docstring stating
+52 modules in `src/`, each with a single responsibility and a module docstring stating
 scope and constraints. The single-source-of-truth contract is the central design decision:
 training and serving both import `src/features.py`, so the feature matrix is byte-identical
 on both sides and research-to-production drift is structurally impossible.
@@ -47,12 +47,12 @@ in `config.json`. Four invariants that previously caused real bugs are documente
 
 ### Previous research (0–10)
 
-**Ten cited sources**, notebook Section 22.7 — Fama (1970), Meese & Rogoff (1983), Harvey,
+**Eleven cited sources**, notebook Section 22.10 — Fama (1970), Meese & Rogoff (1983), Harvey,
 Liu & Zhu (2016), Bollerslev (1986), Hochreiter & Schmidhuber (1997), Diebold & Mariano
 (1995), Parkinson (1980), Zhang, Mykland & Aït-Sahalia (2005), Clark (1973), López de Prado
-(2018).
+(2018), Murphy (1973).
 
-**Three distinct kinds of comparison**, which is where this criterion is genuinely met:
+**Four distinct kinds of comparison**, which is where this criterion is genuinely met:
 
 1. *Against our own previous submission* — Section 22.1–22.3, quantified.
 2. *Against our own previous headline claim* — Section 22.4. The volatility ensemble was
@@ -61,6 +61,8 @@ Liu & Zhu (2016), Bollerslev (1986), Hochreiter & Schmidhuber (1997), Diebold & 
 3. *Against an external implementation* — Section 22.5. Kronos, a third-party pre-trained
    foundation model, carries incremental information (+0.1667, CI excludes zero) that does
    not convert into a distinguishable forecast gain.
+4. *Against the incumbent production model, and winning* — Section 22.6. A ten-parameter
+   calendar model beats the 5-seed neural ensemble on both blocks.
 
 ### Gathering / cleaning / formatting data (0–10)
 
@@ -75,14 +77,26 @@ guard each of these. Documented in `ARCHITECTURE_DOCS.md` §2.
 
 ### Testing (0–10)
 
-**424 test functions across 13 files** (up from 73 across 4 at the first submission),
+**452 test functions** (up from 73 at the first submission),
 covering smoke, unit, integration, no-look-ahead, and artifact-checksum tests that prevent
 a retrain from silently altering production models.
 
-Hypothesis testing is the project's organising principle: 12 families, 50 registered
+Hypothesis testing is the project's organising principle: 15 families, 56 registered
 hypotheses, Bonferroni-corrected bars (`α = 0.05 / family_size`), moving-block bootstrap
-confidence intervals, McNemar tests for paired classification, and mandatory replication
-on other currency pairs when a claim clears. **34 of 50 hypotheses are recorded as DROP.**
+confidence intervals, McNemar tests for paired classification, mandatory replication on
+other currency pairs when a claim clears, and power analysis before spending α (the G10
+macro panel was stopped before fitting). **37 of 56 hypotheses are recorded as DROP.**
+
+### The headline result
+
+`src/calendar_volatility.py` — a GARCH(1,1) × six-weekday-multiplier model, ten parameters,
+numpy only — beats the production 5-seed multi-task LSTM ensemble on **both** blocks of the
+identical row set: validation MAE 0.16209 vs 0.18594, test 0.19279 vs 0.21897, higher R² on
+both. Section 22.6. Its outstanding gaps are stated in the registry row rather than hidden.
+
+`src/calibration_audit.py` shows the live `CONFIDENCE_THRESHOLD = 0.52` guard lifts accuracy
+by +10.5 points on validation and by −0.005 on the test block — a textbook contamination
+demonstration performed on our own production system. Section 22.7.
 
 ### Visualization (0–10)
 
@@ -98,7 +112,7 @@ specifically as evidence of *no data leakage* (Section 21.1) rather than as deco
 
 The narrative arc is deliberate and, for a forecasting project, unusual: it argues its way
 to a negative result on the first moment and defends that as the correct answer rather than
-a failure. Section 22.8 states the position plainly.
+a failure. Section 22.11 states the position plainly.
 
 Audience separation is explicit — `README.md` for a newcomer, the notebook for the grader,
 `ARCHITECTURE_DOCS.md` for an engineer, `IMPROVEMENT_LOG.md` for anyone auditing how a
@@ -117,7 +131,12 @@ conclusion was reached.
   beside it, not quietly.
 - **The four macro features are KEEP-provisional.** None cleared the corrected bar; they
   are retained pending forward evidence and labelled as such everywhere.
-- **The curl / discrete-Hodge work (Section 22.6) is unfinished.** It is validated on
+- **The curl / discrete-Hodge work (Section 22.9) is unfinished.** It is validated on
   synthetic data only, no hypothesis is registered, and it touches no production code.
+- **The calendar model (Section 22.6) is not fully registered.** Its row reads
+  `PENDING-PAIRED-CI`: the paired bootstrap against the ensemble needs that model's per-row
+  predictions, its GARCH is a numpy variance-targeting fit rather than the `arch` MLE used
+  elsewhere, and it was built and scored in one pass with no pre-registration preceding
+  measurement. All three are stated in the registry row.
 - **`mit-deep-learning-book-pdf-master/`** is a third-party reference text included in the
   repository. It is not project code and is not used by any module.
