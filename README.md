@@ -8,6 +8,23 @@ The pipeline formally implements, evaluates, and contrasts:
 2. **Deep Learning (LSTM):** Sliding-window sequential topologies exploring implicitly unconstrained modeling.
 3. **Gradient Boosting Machine (GBM):** Tree-based iterative residual optimizers capturing feature importance mathematically.
 
+## Exam submission notes (second submission)
+
+This project was first submitted on **23 July 2026**. It has been developed continuously
+since; this is the **second submission**.
+
+| Document | What it covers |
+|---|---|
+| [`SUBMISSION_SELF_ASSESSMENT.md`](SUBMISSION_SELF_ASSESSMENT.md) | Criterion-by-criterion mapping to evidence, plus known limitations |
+| [`CHANGELOG_SINCE_2026-07-23.md`](CHANGELOG_SINCE_2026-07-23.md) | Commit-level record of everything added since the first submission |
+| `notebooks/01_data_preparation.ipynb` **Section 22** | Then-vs-now comparison, the volatility re-verification, external-model comparison, references |
+
+Headline changes since 23 July: **4 → 12** hypothesis families, **15 → 50** registered
+hypotheses (34 recorded as DROP), **73 → 424** test functions, **14 → 53** modules in
+`src/`, plus a re-verification that reduced our own previous headline claim to a calendar
+effect (Section 22.4).
+
+
 ## Project Structure
 * **`notebooks/01_data_preparation.ipynb`**: The primary research environment. Contains mathematical formulations in LaTeX, rigorous exploratory data analysis (EDA / ADF / ACF), PCA dimensionality reduction, explicit Multi-Task model construction logic (GBM dual pipeline + Functional API LSTM), hyperparameter tuning, and evaluation plotting.
 * **`api.py`**: The FastAPI web server — the application's single entry point. Serves the interactive dashboard (`static/index.html`), the `/api/predict` endpoint, the `/history` prediction-vs-actual page, and the background `/api/retrain` controls.

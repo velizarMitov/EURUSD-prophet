@@ -1,0 +1,22 @@
+{
+  "H_ltc.1": {
+    "hypothesis": "H_ltc.1_selective_cfc_lif_vs_garch_dow",
+    "model_aurc": 0.05364267002673884,
+    "benchmark_aurc": 0.030439606858104488,
+    "coverage": 0.9953333333333333,
+    "delta_aurc": -0.02320306316863435,
+    "ci_low": -0.025863550041219343,
+    "ci_high": -0.02070026019814658,
+    "excludes_zero": true,
+    "alpha_bonferroni": 0.025,
+    "cleared_bar": false
+  },
+  "H_ltc.2": {
+    "hypothesis": "H_ltc.2_learned_clock_tracks_tick_rate",
+    "partial_spearman": 0.9436782054602737,
+    "raw_spearman": 0.9756937279056618,
+    "alpha_bonferroni": 0.025,
+    "cleared_bar": false,
+    "note": "sign pre-declared NEGATIVE; positive of any size is a DROP"
+  }
+}

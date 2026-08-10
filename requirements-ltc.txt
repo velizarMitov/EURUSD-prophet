@@ -1,0 +1,24 @@
+# OPTIONAL dependencies for the Idea-3 LTC + spiking research track
+# (src/ltc_spiking_arch.py). RESEARCH ONLY.
+#
+# The core app MUST install and run without any of this. Nothing in
+# requirements.txt depends on it, nothing in src/ imports src/ltc_spiking_arch.py,
+# and tests/test_ltc_spiking_arch.py skips itself cleanly when JAX is absent, so
+# `python -m pytest -q` stays green on a core-only install.
+#
+#   pip install -r requirements-ltc.txt
+#
+# PLATFORM NOTE, and it is a real constraint rather than a footnote: there is no
+# CUDA JAX wheel for Windows. `pip install jax` here gets a CPU-only build, which
+# is what this repo's machine is running (verified: jax.devices() -> [CpuDevice]).
+# The models in this module are small enough that CPU is not the binding cost at
+# daily/H1 sequence lengths, but anyone porting this to M1-scale data should
+# expect to move to WSL2 or Linux for jax[cuda] first. The rest of the project's
+# neural work (Keras/TF, and torch for Kronos) does have working CUDA on Windows,
+# so this constraint is specific to the JAX track.
+
+jax>=0.4.30
+jaxlib>=0.4.30
+equinox>=0.11.0
+diffrax>=0.5.0
+optax>=0.2.0
