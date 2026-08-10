@@ -103,8 +103,18 @@ def build_model(*, input_size: int, hidden: int, seed: int):
     )
 
 
+#: Model B is TICK-BLIND. tick_volume is the held-out observable for H_ltc.2, so neither
+#: the covariates nor the warp warm start may see it -- a Clark tick warm start would leak
+#: the answer back into the model that is supposed to discover it.
+TICK_BLIND_COVARIATES: tuple[str, ...] = (
+    "log_return_pct",
+    "abs_return_pct",
+    "parkinson_pct",
+)
+
+
 def initialise_warp_as_clark_clock(
-    model, x: np.ndarray, log_tick_rate: np.ndarray, *, train_mask: np.ndarray
+    model, x: np.ndarray, log_rate_proxy: np.ndarray, *, train_mask: np.ndarray
 ):
     """Warm-start ``BusinessTimeWarp`` so business time counts TICKS, not hours.
 
@@ -149,9 +159,9 @@ def initialise_warp_as_clark_clock(
     net = warp.net
     tr = np.asarray(train_mask, dtype=bool)
 
-    # target rate = tick_rate / median(tick_rate) on train rows, in log space
-    centre = float(np.median(np.asarray(log_tick_rate, dtype=float)[tr]))
-    target_log_rate = np.asarray(log_tick_rate, dtype=float) - centre
+    # target rate = proxy / median(proxy) on train rows, in log space
+    centre = float(np.median(np.asarray(log_rate_proxy, dtype=float)[tr]))
+    target_log_rate = np.asarray(log_rate_proxy, dtype=float) - centre
     # rate = exp(max_log_rate * tanh(raw)) -> invert, keeping tanh's argument finite
     ratio = np.clip(target_log_rate / warp.max_log_rate, -0.995, 0.995)
     raw_target = np.arctanh(ratio)
@@ -171,11 +181,28 @@ def initialise_warp_as_clark_clock(
     weight = jnp.asarray(coef[:-1].reshape(1, -1), dtype=jnp.float32)
     bias = jnp.asarray(coef[-1:], dtype=jnp.float32)
 
-    return eqx.tree_at(
+    model = eqx.tree_at(
         lambda m: [m.warp.net.layers[-1].weight, m.warp.net.layers[-1].bias],
         model,
         [weight, bias],
     )
+    # pin the gauge immediately, so the warm start's median rate is 1 by construction
+    from src.ltc_spiking_arch import recentre_warp  # noqa: PLC0415
+
+    return recentre_warp(model, jnp.asarray(x[tr]))
+
+
+def price_only_log_rate_proxy(data: pd.DataFrame) -> np.ndarray:
+    """Information-rate proxy for MODEL B that never touches ``tick_volume``.
+
+    ``log(parkinson_pct / dt)`` -- realised volatility per unit calendar time, the
+    price-only analogue of ``log(ticks / dt)``. It carries the same structural feature that
+    makes the warm start work (a weekend spreads its price movement over ~49 hours, so its
+    rate is far below median and it compresses), while leaving the tick channel genuinely
+    held out.
+    """
+    park = np.maximum(data["parkinson_pct"].to_numpy(dtype=float), 1e-6)
+    return np.log(park / data["dt"].to_numpy(dtype=float))
 
 
 def train_model(
@@ -191,11 +218,21 @@ def train_model(
     seed: int = 20260810,
     verbose: bool = True,
     model=None,
+    stop_windows: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ):
-    """Fit on training windows only. Returns (model, history).
+    """Fit on the INNER training windows only. Returns (best_model, history, best_epoch).
 
     ``model`` may be supplied pre-initialised (e.g. by
     ``initialise_warp_as_clark_clock``); otherwise a fresh one is built.
+
+    ``stop_windows`` is the inner early-stopping slice ``[63:70]``. The epoch is chosen by
+    AURC on THAT slice -- never on ``validation[70:80]``, which is the arbiter. Using the
+    arbiter to pick an epoch count is model selection on the arbiter, and it would convert
+    it into a training set exactly as the spec warns.
+
+    AURC is the selection criterion rather than raw CRPS because AURC is H_ltc.1's primary
+    quantity; selecting on a different loss than the one being scored would optimise for
+    the wrong thing.
     """
     import equinox as eqx  # noqa: PLC0415
     import jax  # noqa: PLC0415
@@ -205,6 +242,7 @@ def train_model(
     from src.ltc_spiking_arch import (  # noqa: PLC0415
         LTCSpikingModel,
         dual_ascent,
+        recentre_warp,
         selective_crps_loss,
     )
 
@@ -234,11 +272,23 @@ def train_model(
         updates, st = opt.update(
             eqx.filter(grads, eqx.is_inexact_array), st, eqx.filter(m, eqx.is_inexact_array)
         )
-        return eqx.apply_updates(m, updates), st, loss, aux
+        m = eqx.apply_updates(m, updates)
+        # Re-pin the gauge after EVERY update. The drift along the (rate, tau) symmetry is
+        # fast -- Stage 1 measured the rate travelling from 1.0 to the exp(3) ceiling in
+        # two epochs -- so recentring per epoch would leave it saturated most of the time.
+        return recentre_warp(m, xb.reshape(-1, xb.shape[-1])), st, loss, aux
+
+    def aux_rate_probe(m, n_probe: int = 4000):
+        """Median warp rate over a fixed slice of fitting covariates -- the gauge monitor.
+        A value pinned at exp(MAX_LOG_RATE) means the gauge fix has failed."""
+        flat = xw.reshape(-1, xw.shape[-1])[:n_probe]
+        _, rate = jax.vmap(m.warp)(jnp.ones(len(flat)), jnp.asarray(flat))
+        return rate
 
     n = len(xw)
     history: list[dict[str, float]] = []
     starved = 0
+    best_stop, best_epoch, best_model = float("inf"), -1, model
     for ep in range(epochs):
         t0 = time.perf_counter()
         key, sub = jax.random.split(key)
@@ -259,12 +309,25 @@ def train_model(
         # tens of seconds on CPU. Report both so a full-run estimate uses the steady-state
         # number, not the compile-inflated first epoch.
         elapsed = time.perf_counter() - t0
+
+        stop_aurc = float("nan")
+        if stop_windows is not None:
+            xs, ys, ds = stop_windows
+            sp = evaluate(model, xs, ys, ds)
+            stop_aurc = L.aurc(sp["crps"].to_numpy(), sp["membrane"].to_numpy())
+            if np.isfinite(stop_aurc) and stop_aurc < best_stop:
+                best_stop, best_epoch = stop_aurc, ep
+                best_model = model
+
+        median_rate = float(np.median(np.abs(np.asarray(aux_rate_probe(model)))))
         history.append(
             {
                 "epoch": ep,
                 "loss": float(np.mean(losses)),
                 "coverage": cov,
                 "lambda": float(lam),
+                "stop_aurc": stop_aurc,
+                "median_warp_rate": median_rate,
                 "seconds": elapsed,
             }
         )
@@ -272,6 +335,7 @@ def train_model(
             print(
                 f"  epoch {ep:>3d}  loss {history[-1]['loss']:.5f}  "
                 f"coverage {cov:.3f}  lambda {float(lam):.3f}  "
+                f"stop_AURC {stop_aurc:.5f}  median_rate {median_rate:.3f}  "
                 f"{elapsed:.1f}s{'  (incl. compile)' if ep == 0 else ''}"
             )
         starved = starved + 1 if cov < coverage_floor / 2 else 0
@@ -282,7 +346,11 @@ def train_model(
                 "optimum. Raise --coverage-floor or the dual-ascent rate; do NOT accept "
                 "this run because the loss looked good."
             )
-    return model, pd.DataFrame(history)
+
+    # Freeze the gauge against the FITTING slice so evaluation does not depend on whichever
+    # batch a row happened to land in.
+    best_model = recentre_warp(best_model, jnp.asarray(xw.reshape(-1, xw.shape[-1])[:20000]))
+    return best_model, pd.DataFrame(history), best_epoch
 
 
 # ======================================================================================
@@ -349,19 +417,68 @@ def score_hypotheses(
     }
     h1["cleared_bar"] = bool(boot["ci_low"] > 0)
 
+    return h1
+
+
+def clock_statistic(pred: pd.DataFrame, data_val: pd.DataFrame) -> tuple[float, float]:
+    """(partial, raw) Spearman of tau_eff against the HELD-OUT log tick rate."""
     tau = pred["tau_eff"].to_numpy()
+    ltr = data_val["log_tick_rate"].to_numpy()
     ctrl = data_val[["abs_return_pct", "parkinson_pct"]].to_numpy()
-    raw = L.spearman(tau, data_val["log_tick_rate"].to_numpy())
-    partial = L.partial_spearman(tau, data_val["log_tick_rate"].to_numpy(), ctrl)
-    h2 = {
+    return L.partial_spearman(tau, ltr, ctrl), L.spearman(tau, ltr)
+
+
+def score_clock_against_null(
+    model, xw, yw, dw, data_val: pd.DataFrame, *, x_fit, log_rate_proxy, train_mask,
+    hidden: int, n_null: int = 30, base_seed: int = 90210,
+) -> dict[str, object]:
+    """H_ltc.2 against an UNTRAINED-INITIALISATION null.
+
+    Stage 1 established that the original zero-null was invalid: ``tau_net`` is a
+    near-linear map of its inputs at init, so untrained models already produced partial rho
+    of -0.71 / -0.42 / -0.61, and the sign flipped between data slices. The null is
+    therefore not "no correlation" but "whatever an identically-constructed, UNTRAINED model
+    produces", and only a trained statistic far outside that distribution is evidence of
+    learning.
+
+    The null models are built exactly as the trained one -- same architecture, same
+    tick-blind covariates, same price-only warp warm start -- and differ ONLY in seed and in
+    having received no gradient step. That isolates the effect of training rather than the
+    effect of the architecture or the initialisation.
+    """
+    partial, raw = clock_statistic(evaluate(model, xw, yw, dw), data_val)
+
+    null_partial, null_raw = [], []
+    for i in range(n_null):
+        m = build_model(input_size=xw.shape[-1], hidden=hidden, seed=base_seed + i)
+        m = initialise_warp_as_clark_clock(
+            m, x_fit, log_rate_proxy, train_mask=train_mask
+        )
+        p, r = clock_statistic(evaluate(m, xw, yw, dw), data_val)
+        null_partial.append(p)
+        null_raw.append(r)
+
+    arr = np.asarray(null_partial, dtype=float)
+    mu, sd = float(np.nanmean(arr)), float(np.nanstd(arr, ddof=1))
+    z = (partial - mu) / sd if sd > 0 else float("nan")
+    return {
         "hypothesis": "H_ltc.2_learned_clock_tracks_tick_rate",
-        "partial_spearman": partial,
-        "raw_spearman": raw,
+        "partial_spearman": float(partial),
+        "raw_spearman": float(raw),
+        "null_n": int(n_null),
+        "null_partial_mean": mu,
+        "null_partial_sd": sd,
+        "null_partial_min": float(np.nanmin(arr)),
+        "null_partial_max": float(np.nanmax(arr)),
+        "z_vs_untrained_null": float(z),
         "alpha_bonferroni": 0.025,
-        "cleared_bar": bool(np.isfinite(partial) and partial < 0),
-        "note": "sign pre-declared NEGATIVE; positive of any size is a DROP",
+        # pre-declared: NEGATIVE direction AND z < -3 against the untrained null
+        "cleared_bar": bool(np.isfinite(z) and z < -3.0 and partial < 0),
+        "note": (
+            "sign pre-declared NEGATIVE; cleared only at z < -3 vs the untrained-seed null. "
+            "Model trained TICK-BLIND; tick_volume genuinely held out."
+        ),
     }
-    return {"H_ltc.1": h1, "H_ltc.2": h2}
 
 
 def warp_sanity_check(
@@ -457,6 +574,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--coverage-floor", type=float, default=0.10)
     ap.add_argument("--seed", type=int, default=20260810)
+    ap.add_argument("--n-null", type=int, default=30,
+                    help="untrained seeds forming the H_ltc.2 null")
     ap.add_argument("--dry-run", action="store_true", help="2000 rows, 2 epochs — smoke test")
     args = ap.parse_args()
 
@@ -468,59 +587,93 @@ def main() -> None:
         data = data.iloc[:2000].copy()
         args.epochs = 2
     n = len(data)
-    train, val, _test = L.chronological_masks(n)
-    print(f"{args.timeframe}: {n:,} rows | train {train.sum():,} | val {val.sum():,}")
+
+    # 63 / 7 / 10 / 20. The inner [63:70] slice chooses the epoch count; validation[70:80]
+    # is the arbiter and is used ONLY for the final score. The test block is never indexed.
+    lo_fit = int(0.63 * n)
+    lo_val = int(L.TRAIN_FRACTION * n)
+    hi_val = int((L.TRAIN_FRACTION + L.VAL_FRACTION) * n)
+    fit = np.zeros(n, dtype=bool); fit[:lo_fit] = True
+    stop = np.zeros(n, dtype=bool); stop[lo_fit:lo_val] = True
+    train = np.zeros(n, dtype=bool); train[:lo_val] = True
+    val = np.zeros(n, dtype=bool); val[lo_val:hi_val] = True
+    print(f"{args.timeframe}: {n:,} rows | fit[0:63] {fit.sum():,} | "
+          f"stop[63:70] {stop.sum():,} | val[70:80] {val.sum():,}")
     print(L.gap_profile(data).to_string(index=False))
 
-    x = L.covariate_matrix(data, train_mask=train)
     y = data["target_return_pct"].to_numpy(dtype=float)
     dt = data["dt"].to_numpy(dtype=float)
 
+    # Benchmark stays fitted on [0:70] exactly as registered -- it uses raw returns and no
+    # scaler, so it is unaffected by the inner split.
     bench_sigma_all, bench_par = L.garch_dow_sigma(y, data["dow"].to_numpy(), train_mask=train)
     print(f"GARCH a={bench_par['alpha']:.4f} b={bench_par['beta']:.4f}")
 
-    xw_tr, yw_tr, dw_tr, _ = make_windows(x, y, dt, train, seq_len=args.seq_len)
-    xw_va, yw_va, dw_va, idx_va = make_windows(x, y, dt, val, seq_len=args.seq_len)
-    print(f"windows: train {len(xw_tr):,} | val {len(xw_va):,}")
+    results: dict[str, object] = {}
+    preds: dict[str, pd.DataFrame] = {}
 
-    init_model = build_model(input_size=x.shape[-1], hidden=args.hidden, seed=args.seed)
-    raw_warp = warp_sanity_check(init_model, x, dt)
-    print("\nwarp sanity at IDENTITY initialisation (before the Clark warm start):")
-    print(json.dumps(raw_warp, indent=2, default=str))
-
-    init_model = initialise_warp_as_clark_clock(
-        init_model, x, data["log_tick_rate"].to_numpy(dtype=float), train_mask=train
-    )
-    init_warp = warp_sanity_check(init_model, x, dt)
-    print("\nwarp sanity AFTER the Clark warm start (this is what trains):")
-    print(json.dumps(init_warp, indent=2, default=str))
-    if not init_warp["healthy"]:
-        print(
-            "  ^ UNHEALTHY. Per LTC_INTEGRATION_SPEC Stage 1 task 4, training from here "
-            "measures the optimiser's escape from a dead initialisation, not the "
-            "subordination hypothesis. Stop and fix before Stage 2."
+    for tag, columns, proxy_name in (
+        ("A_full", L.COVARIATES, "clark_tick_rate"),
+        ("B_tick_blind", TICK_BLIND_COVARIATES, "price_only_parkinson_per_dt"),
+    ):
+        print(f"\n{'=' * 78}\nMODEL {tag}  covariates={list(columns)}\n{'=' * 78}")
+        # Scaler fitted on the FITTING slice only, so the early-stopping slice does not
+        # leak into standardisation.
+        x = L.covariate_matrix(data, train_mask=fit, columns=columns)
+        proxy = (
+            data["log_tick_rate"].to_numpy(dtype=float)
+            if proxy_name == "clark_tick_rate"
+            else price_only_log_rate_proxy(data)
         )
 
-    model, history = train_model(
-        xw_tr, yw_tr, dw_tr,
-        hidden=args.hidden, epochs=args.epochs, batch=args.batch, lr=args.lr,
-        coverage_floor=args.coverage_floor, seed=args.seed, model=init_model,
+        xw_fit, yw_fit, dw_fit, _ = make_windows(x, y, dt, fit, seq_len=args.seq_len)
+        xw_st, yw_st, dw_st, _ = make_windows(x, y, dt, stop, seq_len=args.seq_len)
+        xw_va, yw_va, dw_va, idx_va = make_windows(x, y, dt, val, seq_len=args.seq_len)
+        print(f"windows: fit {len(xw_fit):,} | stop {len(xw_st):,} | val {len(xw_va):,}")
+
+        m0 = build_model(input_size=x.shape[-1], hidden=args.hidden, seed=args.seed)
+        m0 = initialise_warp_as_clark_clock(m0, x, proxy, train_mask=fit)
+        warp_init = warp_sanity_check(m0, x, dt)
+        print(f"warp at init ({proxy_name}): ratio {warp_init['compression_ratio']:.3f}  "
+              f"retention_weekend {warp_init['state_retention_weekend']:.4f}  "
+              f"healthy {warp_init['healthy']}")
+
+        model, history, best_epoch = train_model(
+            xw_fit, yw_fit, dw_fit,
+            hidden=args.hidden, epochs=args.epochs, batch=args.batch, lr=args.lr,
+            coverage_floor=args.coverage_floor, seed=args.seed, model=m0,
+            stop_windows=(xw_st, yw_st, dw_st),
+        )
+        print(f"selected epoch {best_epoch} by inner-stop AURC "
+              f"({history['stop_aurc'].min():.6f})")
+        warp_post = warp_sanity_check(model, x, dt)
+        print("warp post-training:", json.dumps(warp_post, default=str))
+
+        pred = evaluate(model, xw_va, yw_va, dw_va)
+        preds[tag] = pred
+        history.to_csv(OUTDIR / f"training_history_{tag}.csv", index=False)
+        pred.to_csv(OUTDIR / f"validation_predictions_{tag}.csv", index=False)
+
+        if tag == "A_full":
+            h1 = score_hypotheses(pred, data.iloc[idx_va], bench_sigma_all[idx_va])
+            h1.update({"selected_epoch": int(best_epoch), "model": tag})
+            results["H_ltc.1"] = h1
+            results["warp_A"] = warp_post
+        else:
+            h2 = score_clock_against_null(
+                model, xw_va, yw_va, dw_va, data.iloc[idx_va],
+                x_fit=x, log_rate_proxy=proxy, train_mask=fit,
+                hidden=args.hidden, n_null=args.n_null,
+            )
+            h2.update({"selected_epoch": int(best_epoch), "model": tag})
+            results["H_ltc.2"] = h2
+            results["warp_B"] = warp_post
+
+    (OUTDIR / "hypothesis_scores.json").write_text(
+        json.dumps(results, indent=2, default=str)
     )
-    print("\nwarp sanity (post-training, measured on real rows):")
-    print(json.dumps(warp_sanity_check(model, x, dt), indent=2, default=str))
-
-    pred = evaluate(model, xw_va, yw_va, dw_va)
-    scores = score_hypotheses(pred, data.iloc[idx_va], bench_sigma_all[idx_va])
-
-    history.to_csv(OUTDIR / "training_history.csv", index=False)
-    pred.to_csv(OUTDIR / "validation_predictions.csv", index=False)
-    (OUTDIR / "hypothesis_scores.json").write_text(json.dumps(scores, indent=2, default=str))
-    print(json.dumps(scores, indent=2, default=str))
+    print("\n" + json.dumps(results, indent=2, default=str))
     print(f"\nwrote -> {OUTDIR.resolve()}")
-    print(
-        "\nScores are NOT registered. Copy them into results/ltc_hypothesis_log.csv "
-        "manually, replacing the PENDING rows, once you have read them."
-    )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,89 @@
+{
+  "hypothesis": "H_spk.1_trained_lif_beats_fixed_sigma_threshold",
+  "instruments": {
+    "GBPUSD": {
+      "instrument": "GBPUSD",
+      "n_rows": 69998,
+      "n_val_windows": 7000,
+      "S0_mean_crps": 0.048949819058179855,
+      "S0_selected_epoch": 19,
+      "S1_aurc": 0.03698290313014,
+      "S1_sigma_threshold": 0.09363757818937302,
+      "S1_coverage": 0.5937142857142857,
+      "S2_aurc": 0.03773496793956082,
+      "S2_selected_epoch": 20,
+      "S2_coverage": 0.9998571428571429,
+      "random_aurc": 0.048957679049516256,
+      "spearman_sigma_absy": 0.3673446870908318,
+      "corr_membrane_neg_sigma": 0.9035101750430947,
+      "delta_aurc": -0.0007520648094208188,
+      "block_len_sensitivity": {
+        "24": {
+          "delta_aurc": -0.0007520648094208188,
+          "ci_low": -0.0010245539263573776,
+          "ci_high": -0.0004964033498971634,
+          "excludes_zero": false
+        },
+        "96": {
+          "delta_aurc": -0.0007520648094208188,
+          "ci_low": -0.001045966507697689,
+          "ci_high": -0.00048674846860441597,
+          "excludes_zero": false
+        },
+        "168": {
+          "delta_aurc": -0.0007520648094208188,
+          "ci_low": -0.0010559621389573863,
+          "ci_high": -0.0004520327680386114,
+          "excludes_zero": false
+        }
+      },
+      "registered_block_len": 24,
+      "ci_low": -0.0010245539263573776,
+      "ci_high": -0.0004964033498971634,
+      "cleared_this_instrument": false
+    },
+    "AUDUSD": {
+      "instrument": "AUDUSD",
+      "n_rows": 69998,
+      "n_val_windows": 7000,
+      "S0_mean_crps": 0.06525107473134995,
+      "S0_selected_epoch": 8,
+      "S1_aurc": 0.07346167543944629,
+      "S1_sigma_threshold": 0.11554516851902008,
+      "S1_coverage": 0.5137142857142857,
+      "S2_aurc": 0.055513259452900116,
+      "S2_selected_epoch": 3,
+      "S2_coverage": 0.9964285714285714,
+      "random_aurc": 0.06517890645720549,
+      "spearman_sigma_absy": -0.08178882205406877,
+      "corr_membrane_neg_sigma": -0.4110562960751881,
+      "delta_aurc": 0.017948415986546173,
+      "block_len_sensitivity": {
+        "24": {
+          "delta_aurc": 0.017948415986546173,
+          "ci_low": 0.015510941520628062,
+          "ci_high": 0.020689835894252287,
+          "excludes_zero": true
+        },
+        "96": {
+          "delta_aurc": 0.017948415986546173,
+          "ci_low": 0.015417973492882682,
+          "ci_high": 0.020974783546815243,
+          "excludes_zero": true
+        },
+        "168": {
+          "delta_aurc": 0.017948415986546173,
+          "ci_low": 0.015268485632294508,
+          "ci_high": 0.02124321208027599,
+          "excludes_zero": true
+        }
+      },
+      "registered_block_len": 24,
+      "ci_low": 0.015510941520628062,
+      "ci_high": 0.020689835894252287,
+      "cleared_this_instrument": true
+    }
+  },
+  "cleared_bar": false,
+  "rule": "CLEARED only if BOTH instruments exclude zero in S2's favour"
+}

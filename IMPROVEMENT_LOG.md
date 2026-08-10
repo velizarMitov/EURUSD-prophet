@@ -1871,6 +1871,174 @@ test-era rows). Full table: `results/train_vs_test_diagnostic.csv`.
       variant, no serving change. A real test needs a longer/again-two-sided
       forward window. See ARCHITECTURE_DOCS.md §4.3.2.
 
+## Backlog — Idea 3: LTC/CfC + spiking abstention readout (added 2026-08-10, NEW OWN family, VERDICT: H_ltc.1 CLEARED-BUT-QUALIFIED / H_ltc.2 DROP)
+
+Liquid time-constant (CfC) dynamics in a *learned business time*, with a
+leaky-integrate-and-fire readout whose spike means "commit to a forecast" and
+whose silence is abstention. Own family log
+(`results/ltc_hypothesis_log.csv`), α = 0.05/2 = 0.025 per hypothesis. Modules:
+`src/ltc_spiking_arch.py`, `src/ltc_data.py`, `src/ltc_experiment.py`. JAX is an
+OPTIONAL dependency (`requirements-ltc.txt`); nothing in `src/` imports the
+architecture, and `src/inference.py`, `models/` and the serving path were never
+touched.
+
+- [x] **Both hypotheses were re-specified BEFORE scoring, and the reason is the
+      main methodological result of this work.** As first registered, H_ltc.2
+      asked for a negative partial Spearman between `tau_eff` and the log tick
+      rate. But `log_tick_rate` was fed straight into `tau_net`, so UNTRAINED
+      models already scored partial ρ of −0.7113 / −0.4192 / −0.6129 across
+      seeds, and the sign flipped between data slices (−0.9681 on a 2k dry
+      slice, +0.9437 on full H1). The null was never zero — it was "whatever an
+      MLP handed `log_tick_rate` returns". The test could not fail, and would
+      have registered a discovery for an untrained network. Amended: **Model B
+      is trained TICK-BLIND** (covariates = `log_return_pct`, `abs_return_pct`,
+      `parkinson_pct`), its warp is warm-started from a price-only proxy
+      (`parkinson/dt`) so a Clark tick warm start cannot leak the held-out
+      observable back in, and the bar became **z < −3 against an N=30
+      untrained-seed null**. After the fix the untrained null sits at
+      **+0.0074 ± 0.0377** — centred on zero, as a valid null must be.
+- [x] **Warp gauge fixed, not bounded.** Only `dt·rate/tau` enters the
+      dynamics, so `(rate, tau) → (c·rate, c·tau)` is an exact symmetry and the
+      optimiser drifts along it until it hits whichever bound exists — measured
+      in Stage 1, the rate reached the `exp(3)=20.09` ceiling within two epochs
+      and normal-bar state retention fell 0.955 → 0.462. Raising the ceiling
+      moves the wall, it does not remove the flat direction. `recentre_warp`
+      subtracts a batch-median offset INSIDE the tanh (before the squash, so
+      tanh keeps its dynamic range) and is applied after every optimiser step,
+      pinning the median rate at 1 so only the clock's SHAPE is learned.
+      Regression tests pin both the pinning and the survival of the shape.
+- [x] **Inner early-stopping split [0:63] fit / [63:70] stop.** The arbiter
+      `validation[70:80]` never chose an epoch count. Scaler fitted on `[0:63]`;
+      the GARCH×day-of-week benchmark stays on `[0:70]` exactly as registered
+      (it uses raw returns and no scaler, so the inner split cannot affect it —
+      it reproduced the registered **AURC = 0.03044** to five figures, which is
+      the main evidence the data path is wired correctly).
+- [x] **H_ltc.1 — CLEARED at the pre-registered parameters, with three caveats
+      that matter more than the clearance.** Model A, epoch 15/30 selected on
+      inner-stop AURC. Model AURC **0.029627** vs benchmark **0.030440**,
+      ΔAURC = **+0.000812**, CI95 **[+0.0000328, +0.001660]**, spike coverage
+      0.504. Stable across 8 bootstrap seeds (all `ci_low` > 0). But:
+      **(1) fragile to block length** — `ci_low` by `block_len` is
+      6:−0.000008, 12:+0.000006, **24:+0.000033 (registered)**, 48:+0.000057,
+      96:−0.000026, 168:−0.000076; three of six alternatives include zero, and
+      the two that best match H1 FX weekly dependence (96 = 4 days, 168 = 1
+      week) are among them. **(2) the mechanism is unsupported** — the scored
+      model's warp is degenerate: weekend rate pinned at the ceiling (20.086),
+      `business_dt_weekend` = 984, `state_retention_weekend` = **2.8e-09**, and
+      `tau_eff` = 48.9 against `TAU_MAX` = 50. It annihilates hidden state
+      across every weekend, with both τ and the weekend rate on their bounds.
+      **(3) the edge is coverage-localised** — risk difference (benchmark −
+      model) runs +0.0016/+0.0019/+0.0029/+0.0032/+0.0012 over coverage
+      0.1–0.5 and turns NEGATIVE (−0.0000/−0.0010/−0.0011/−0.0009) over
+      0.6–0.9; at full coverage the two are effectively tied (mean CRPS
+      0.038595 vs 0.038748). The selective ranking is doing real work in the
+      confident half and losing it again in the tail.
+- [x] **H_ltc.2 — DROP, cleanly.** Model B (tick-blind), epoch 12/30. Observed
+      partial Spearman **+0.021842** against an untrained-seed null of
+      **+0.007424 ± 0.037668** (N=30, range [−0.0737, +0.1020]), giving
+      **z = +0.383** against a pre-declared bar of z < −3 in the *negative*
+      direction. Not a near miss: the wrong sign, and statistically
+      indistinguishable from an untrained network. Note the RAW Spearman was
+      **−0.7590** — large and in the predicted direction — while the partial is
+      +0.02; the raw figure is entirely explained by the volatility controls,
+      exactly the confound the amendment anticipated. Reporting it would have
+      manufactured a discovery. **There is no evidence the cell learned an
+      information clock.**
+- [ ] **Known defect, disclosed rather than silently re-run.** The final gauge
+      freeze recentres on `xw.reshape(-1,C)[:20000]` — the *earliest* rows of
+      the fitting slice, not a representative sample of it. That is train-only
+      data, so it is not leakage, but it is why both scored models ended with
+      saturated warps despite per-step recentring during training. Fixing it
+      changes the models' predictions, and doing that *after* seeing the
+      arbiter is precisely the contamination the pre-commitment forbids. Any
+      re-run must be registered as a NEW hypothesis with its own slot, not as a
+      revision of these two rows.
+- [ ] **Stage 4 (serving integration) is gated on H_ltc.1 and the
+      pre-registered arithmetic clears it — but the gate should be read with
+      caveats (1)–(3) above.** What cleared is a marginal, block-length-fragile
+      AURC edge produced by a model whose learned business time had collapsed.
+      Recommendation: do not wire this into serving on this evidence.
+
+## Backlog — Spiking readout vs a lookup table (added 2026-08-10, NEW OWN family, VERDICT: H_spk.1 DROP; benchmark RETIRED)
+
+Follow-up to the LTC family. H_ltc.1 cleared marginally while its continuous-time
+mechanism had collapsed, so the suspect was the SPIKING READOUT rather than the
+liquid dynamics. This family isolated it. Own log
+(`results/spiking_readout_hypothesis_log.csv`), α = 0.05, rows written **PENDING
+before any training**. Module: `src/spiking_readout.py`. Nothing touched
+`src/inference.py`, `models/` or the serving path.
+
+- [x] **Design: fixed-substrate ablation ladder.** A plain GRU (no continuous-time
+      machinery, no warp, no gauge freedom), Δt supplied as ordinary input features
+      `log_dt` + `is_gap` rather than as ODE time. S0 = GRU trained once with plain
+      mean CRPS, then **frozen**; S1 = the same frozen weights plus a fixed sigma
+      threshold calibrated on `[0:63]`; S2 = the same frozen weights plus a LIF
+      readout trained on top, with the substrate receiving no gradient.
+      `selective_crps_loss` and `dual_ascent` reused unchanged from
+      `ltc_spiking_arch.py`. Substrate identity is pinned by
+      `test_readout_training_leaves_the_substrate_bit_identical`, so ΔAURC is
+      attributable to the readout alone. Arbiter: GBPUSD H1 **and** AUDUSD H1, each
+      with its own `[0:70]/[70:80]`; not EURUSD, whose validation slice was already
+      spent. Note these files carry OHLC only — no `tick_volume` — which is why the
+      family needed its own price-only dataset builder.
+- [x] **H_spk.1 — DROP on the pre-registered conjunction.** GBPUSD ΔAURC
+      **−0.000752**, CI95 [−0.001025, −0.000496] — excludes zero in the WRONG
+      direction, i.e. the trivial sigma threshold beat the trained LIF. AUDUSD
+      ΔAURC **+0.017948**, CI95 [+0.015511, +0.020690] — cleared. One instrument is
+      an anecdote; the rule was both. Block-length sensitivity was flat at 24/96/168
+      on both, so the split is not a bootstrap artefact.
+- [x] **The split is explained, and the explanation is the real finding: the LIF
+      only wins where the sigma head is broken.** GBPUSD Spearman(σ, |y|) = **+0.3674**
+      (calibrated), S1 beats random (0.036983 vs 0.048958), and the LIF converged to
+      corr **+0.9035** with −σ — it rediscovered σ and then lost to it. AUDUSD
+      Spearman(σ, |y|) = **−0.0818** (uninformative), S1 is *worse than random*
+      (0.073462 vs 0.065179), and the LIF diverged (corr −0.4111) and won. EURUSD,
+      the motivating slice, sits with AUDUSD (σ Spearman −0.1834). The readout is not
+      a better confidence estimator; it is a **rescue mechanism for a miscalibrated
+      σ head**. Registered separately as an OBSERVATION (row 2, no α): the LTC
+      Gaussian head is both nearly constant (σ spans 0.0688–0.0714 across its own
+      deciles, a 3.7% range) and inverted (realised |y| runs 0.0702 → 0.0366 in the
+      opposite order), so ranking by −σ scores AURC 0.045060, *worse than random*
+      0.038540, while deliberately inverting it scores 0.033317.
+- [x] **The decisive check, run BEFORE any new architecture was written: a dow×hour
+      lookup table beats the readout and the benchmark.** Losses held fixed at Model
+      A's own per-row CRPS on the arbiter; only the ranking varies. Table fitted on
+      `[0:70]` = **0.026130**; LIF membrane = **0.029627**; GARCH×DoW σ as a ranking
+      = **0.030912**; random = 0.038540. Lower is better. The table's edge is not an
+      in-sample artefact — fitted on validation it scores 0.025753, fitted honestly
+      on `[0:70]` it scores 0.026130. Paired bootstrap ΔAURC(table − LIF) =
+      **−0.003497**, CI [−0.004195, −0.002915] at block_len 24 and stable at 96 and
+      168; the LIF never wins at any block length. That gap is **4.3× larger** than
+      H_ltc.1's entire +0.000812 clearance, which itself survived only at block_len 24.
+- [x] **Mechanism: the readout learned an hour-of-day rule, not selective skill.**
+      77.5% of its most-confident decile falls in 21:00–05:00 UTC against a 37.45%
+      base rate; lift is 5.68× at 00:00, 2.72× at 05:00, 2.68× at 06:00, and exactly
+      **0.00× at 10:00–16:00** — it never speaks during London or New York. Fire-rate
+      by hour runs 0.96 at 00:00 against 0.08–0.24 through the active sessions. Mean
+      |target| in that decile is 0.559× the sample. It did not learn *when it has an
+      edge*; it learned *predict when the market is quiet*.
+- [x] **Economics, independently.** The 30%-coverage CRPS gain is 0.0029 percentage
+      points = **0.29 bp**, against a **0.92 bp** round trip — this project's own
+      measured EURUSD median spread is 0.46 bp one way
+      (`results/curl/m1_coverage.csv`, from the Idea-2 M1 pull). 0.32× of cost even
+      granting a 1:1 CRPS-to-P&L conversion, which is far too generous. Two numbers
+      from unrelated parts of the project agreeing is the useful part.
+- [x] **GARCH×DoW is RETIRED as the selective-prediction benchmark.** It loses to the
+      table (0.030912 vs 0.026130 as rankings). Any future learned confidence signal
+      must beat a dow×hour table fitted on `[0:70]`, or it does not deserve to exist.
+      A dated cross-reference was appended to the H_ltc.1 row — its verdict, point
+      estimate and CI are UNCHANGED, but a reader must not take that CLEARED as
+      support for deployment, because it cleared a benchmark now known to be too weak.
+- [x] **THIRD OCCURRENCE OF ONE PATTERN.** `volatility_hypothesis_log.csv` #3
+      (2026-08-07): the neural volatility ensemble was beaten by a six-number
+      day-of-week table. Now: the spiking readout is beaten by an hour-of-day table.
+      A complex architecture rediscovers the intraday liquidity cycle, and the lookup
+      table does it better. Weekend/gap handling was deliberately NOT ignored here
+      (`log_dt` and `is_gap` stayed as input features) precisely because ignoring it
+      is how the calendar artefact entered the volatility family in the first place.
+      **Standing rule going forward: a calendar lookup table is the first benchmark
+      any new architecture faces, not the last.**
+
 ## Bug fixes
 
 - [x] **H1 consensus 2-2 tie bug (live dashboard report, 2026-07-07).** A 2-2

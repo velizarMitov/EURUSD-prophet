@@ -361,6 +361,69 @@ def test_coverage_floor_counts_the_whole_batch_not_just_its_first_axis(model, ba
     assert float(aux.crps_on_fired) != pytest.approx(by_first_axis, rel=1e-3)
 
 
+def test_recentring_pins_the_median_warp_rate_at_one(model, batch) -> None:
+    """The gauge fix. Only ``dt*rate/tau`` enters the dynamics, so ``(rate, tau) ->
+    (c*rate, c*tau)`` is an exact symmetry and the optimiser drifts along it until it hits
+    a bound -- Stage 1 measured the rate pinned at exp(3)=20.09 after two epochs, with
+    normal-bar state retention collapsing 0.955 -> 0.462. Raising the ceiling cannot help;
+    it only moves the wall. Recentring removes the symmetry instead of bounding it."""
+    u, dt, cov, y = batch
+    # The fixture model is identity-initialised, so its warp head is ZERO and net(cov) is
+    # constant -- there would be no shape for recentring to preserve. Give it real
+    # covariate dependence first, then drive it off gauge the way training does.
+    head = model.warp.net.layers[-1]
+    shaped = eqx.tree_at(
+        lambda m: m.warp.net.layers[-1].weight, model,
+        jax.random.normal(jax.random.PRNGKey(21), head.weight.shape) * 0.8,
+    )
+    drifted = eqx.tree_at(
+        lambda m: m.warp.net.layers[-1].bias, shaped,
+        shaped.warp.net.layers[-1].bias + 8.0,
+    )
+    _, rate_drifted = jax.vmap(drifted.warp)(dt, cov)
+    assert float(jnp.median(rate_drifted)) > 15.0, "setup failed to drive the rate to the wall"
+    # deep in tanh saturation the shape is already almost gone -- this is the state the
+    # gauge fix has to recover from, and why centring happens BEFORE the squash
+    assert float(jnp.std(jnp.log(rate_drifted))) < 1e-2
+
+    fixed = arch.recentre_warp(drifted, cov)
+    _, rate_fixed = jax.vmap(fixed.warp)(dt, cov)
+    # Not exactly 1: for an even row count jnp.median averages the two middle elements, and
+    # tanh is nonlinear, so that midpoint does not map to exactly 0. The residual is ~0.2%
+    # and irrelevant next to the 20x drift this exists to remove.
+    assert float(jnp.median(rate_fixed)) == pytest.approx(1.0, abs=0.05)
+    # the SHAPE must survive: recentring is a gauge fix, not a flattening. Centring BEFORE
+    # the squash is what recovers it -- tanh is back near its linear region.
+    assert float(jnp.std(jnp.log(rate_fixed))) > 1e-2
+
+
+def test_recentring_leaves_the_rate_unpinned_after_training(batch) -> None:
+    """Regression guard requested for Stage 2: after real optimiser steps with recentring
+    in the loop, the warp rate must NOT sit at its ceiling."""
+    import optax
+
+    u, dt, cov, y = batch
+    m = arch.LTCSpikingModel(IN, COV, hidden_size=HID, key=jax.random.PRNGKey(3))
+    opt = optax.adam(1e-2)
+    state = opt.init(eqx.filter(m, eqx.is_inexact_array))
+
+    def loss_fn(mm):
+        return arch.selective_crps_loss(
+            mm(u, dt, cov), y, lam=jnp.asarray(1.0), rho_min=0.3
+        )[0]
+
+    for _ in range(40):
+        grads = eqx.filter_grad(loss_fn)(m)
+        updates, state = opt.update(eqx.filter(grads, eqx.is_inexact_array), state)
+        m = eqx.apply_updates(m, updates)
+        m = arch.recentre_warp(m, cov)
+
+    _, rate = jax.vmap(m.warp)(dt, cov)
+    ceiling = float(np.exp(m.warp.max_log_rate))
+    assert float(jnp.median(rate)) == pytest.approx(1.0, abs=1e-3)
+    assert float(jnp.max(rate)) < 0.9 * ceiling, "warp rate pinned at the ceiling"
+
+
 def test_dual_ascent_raises_lambda_only_while_violated() -> None:
     """lambda is a Lagrange multiplier, not a hyperparameter: it climbs while the floor is
     breached and stops when it is met. It must never go negative -- a negative multiplier

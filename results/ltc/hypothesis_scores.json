@@ -1,22 +1,62 @@
 {
   "H_ltc.1": {
     "hypothesis": "H_ltc.1_selective_cfc_lif_vs_garch_dow",
-    "model_aurc": 0.05364267002673884,
+    "model_aurc": 0.029627269364457642,
     "benchmark_aurc": 0.030439606858104488,
-    "coverage": 0.9953333333333333,
-    "delta_aurc": -0.02320306316863435,
-    "ci_low": -0.025863550041219343,
-    "ci_high": -0.02070026019814658,
+    "coverage": 0.5038333333333334,
+    "delta_aurc": 0.0008123374936468454,
+    "ci_low": 3.275486881591577e-05,
+    "ci_high": 0.001660064843756007,
     "excludes_zero": true,
     "alpha_bonferroni": 0.025,
-    "cleared_bar": false
+    "cleared_bar": true,
+    "selected_epoch": 15,
+    "model": "A_full"
+  },
+  "warp_A": {
+    "n_normal_rows": 4000,
+    "n_weekend_rows": 503,
+    "median_calendar_dt_weekend": 49.0,
+    "business_dt_normal_bar": 1.1280333995819092,
+    "business_dt_weekend": 984.1912841796875,
+    "warp_rate_normal": 1.1280333995819092,
+    "warp_rate_weekend": 20.08553695678711,
+    "tau_eff_normal": 48.90570068359375,
+    "tau_eff_weekend": 49.971885681152344,
+    "state_retention_normal": 0.9740055799484253,
+    "state_retention_weekend": 2.796415987660339e-09,
+    "compression_ratio": 872.4841698343906,
+    "healthy": false
   },
   "H_ltc.2": {
     "hypothesis": "H_ltc.2_learned_clock_tracks_tick_rate",
-    "partial_spearman": 0.9436782054602737,
-    "raw_spearman": 0.9756937279056618,
+    "partial_spearman": 0.021842162046321403,
+    "raw_spearman": -0.7590405368316901,
+    "null_n": 30,
+    "null_partial_mean": 0.007424172915608854,
+    "null_partial_sd": 0.037667534844988915,
+    "null_partial_min": -0.07365796670360618,
+    "null_partial_max": 0.10195806466483565,
+    "z_vs_untrained_null": 0.38276965004601676,
     "alpha_bonferroni": 0.025,
     "cleared_bar": false,
-    "note": "sign pre-declared NEGATIVE; positive of any size is a DROP"
+    "note": "sign pre-declared NEGATIVE; cleared only at z < -3 vs the untrained-seed null. Model trained TICK-BLIND; tick_volume genuinely held out.",
+    "selected_epoch": 12,
+    "model": "B_tick_blind"
+  },
+  "warp_B": {
+    "n_normal_rows": 4000,
+    "n_weekend_rows": 503,
+    "median_calendar_dt_weekend": 49.0,
+    "business_dt_normal_bar": 20.08473014831543,
+    "business_dt_weekend": 984.1892700195312,
+    "warp_rate_normal": 20.08473014831543,
+    "warp_rate_weekend": 20.085498809814453,
+    "tau_eff_normal": 43.19696807861328,
+    "tau_eff_weekend": 44.936214447021484,
+    "state_retention_normal": 0.648229718208313,
+    "state_retention_weekend": 5.423799187553868e-10,
+    "compression_ratio": 49.0018667291917,
+    "healthy": false
   }
 }

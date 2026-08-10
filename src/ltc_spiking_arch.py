@@ -132,6 +132,7 @@ class BusinessTimeWarp(eqx.Module):
     """
 
     net: eqx.nn.MLP
+    log_rate_offset: Float[Array, ""]
     max_log_rate: float = eqx.field(static=True)
 
     def __init__(
@@ -169,21 +170,67 @@ class BusinessTimeWarp(eqx.Module):
             )
         self.net = net
         self.max_log_rate = max_log_rate
+        self.log_rate_offset = jnp.asarray(0.0)
 
     def __call__(
         self, dt_calendar: Float[Array, ""], covariates: Float[Array, " c"]
     ) -> tuple[Float[Array, ""], Float[Array, ""]]:
         """Returns ``(dt_business, rate)``. ``rate`` is returned for diagnostics -- a warp
         that has collapsed to a constant means the learned clock earned nothing over
-        calendar time, and that is invisible in the loss."""
-        raw = self.net(covariates)[0]
+        calendar time, and that is invisible in the loss.
+
+        ``log_rate_offset`` PINS THE GAUGE. Only ``dt * rate / tau`` enters the dynamics, so
+        ``(rate, tau) -> (c*rate, c*tau)`` is an exact symmetry and the optimiser drifts
+        freely along it until it hits whichever bound exists -- measured in Stage 1, the
+        rate pinned at ``exp(MAX_LOG_RATE) = 20.09`` after two epochs and normal-bar state
+        retention fell 0.955 -> 0.462 as a result. Raising the bound cannot fix that; it
+        just moves the wall and makes retention worse.
+
+        Subtracting a batch-derived offset INSIDE the tanh removes the symmetry instead of
+        bounding it: the median rate is held at 1, so only the SHAPE of the clock is
+        learned. Centring before the squash (not after) also keeps tanh operating near 0
+        where it has full dynamic range -- centring the output would let tanh saturate and
+        destroy the shape while still reporting a median of 1.
+
+        ``stop_gradient`` because the offset is a gauge-fixing statistic, not a parameter:
+        it is set by ``recentre_warp`` from the data, and letting the optimiser also push
+        on it would reintroduce the flat direction it exists to remove.
+        """
+        raw = self.net(covariates)[0] - jax.lax.stop_gradient(self.log_rate_offset)
         rate = jnp.exp(self.max_log_rate * jnp.tanh(raw))
         return dt_calendar * rate, rate
+
+    def raw_preactivation(self, covariates: Float[Array, " c"]) -> Float[Array, ""]:
+        """Pre-squash, pre-offset output. Used by ``recentre_warp`` to fix the gauge."""
+        return self.net(covariates)[0]
 
 
 # ======================================================================================
 # 2. The liquid (CfC) substrate
 # ======================================================================================
+
+
+def recentre_warp(model, covariates: Float[Array, "n c"]):
+    """Fix the warp gauge so the MEDIAN business-clock rate is 1 over ``covariates``.
+
+    Sets ``log_rate_offset`` to the median pre-activation, which makes
+    ``median(tanh(raw - offset)) = 0`` and hence ``median(rate) = 1``. Only the rate's
+    SHAPE across bars then carries information; its overall level is no longer a free
+    parameter the optimiser can drift along.
+
+    Call it every step during training (the drift is fast -- Stage 1 saw the rate travel
+    from 1.0 to the ceiling at 20.09 within two epochs) and once at the end against the
+    FITTING slice, so evaluation uses a frozen, data-independent gauge rather than a
+    statistic of whatever batch a row happened to land in.
+
+    Median, not mean: the rate distribution is heavily right-skewed once a weekend
+    compresses to ~0.05 while ordinary bars sit near 1, and a mean would let the tail set
+    the gauge.
+    """
+    raws = jax.vmap(model.warp.raw_preactivation)(covariates)
+    return eqx.tree_at(
+        lambda m: m.warp.log_rate_offset, model, jnp.median(raws)
+    )
 
 
 class LiquidCell(eqx.Module):
