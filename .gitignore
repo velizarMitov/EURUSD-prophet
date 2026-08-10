@@ -35,3 +35,6 @@ results/retrain_state.json
 
 # Commit-pinned external Kronos checkout (see requirements-kronos.txt); not vendored.
 src/external/kronos/upstream/
+
+# Local working notes and task briefs — not part of the deliverable
+.dev/
