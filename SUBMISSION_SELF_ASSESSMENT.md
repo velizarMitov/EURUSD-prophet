@@ -123,7 +123,7 @@ macro panel was stopped before fitting). **37 of 56 hypotheses are recorded as D
 
 `src/calendar_volatility.py` — a GARCH(1,1) × six-weekday-multiplier model, ten parameters,
 numpy only — beats the production 5-seed multi-task LSTM ensemble on **both** blocks of the
-identical row set: validation MAE 0.16209 vs 0.18594, test 0.19279 vs 0.21897, higher R² on
+identical row set: validation MAE 0.16213 vs 0.18919, test 0.19152 vs 0.21777, higher R² on
 both. Section 22.6. Its outstanding gaps are stated in the registry row rather than hidden.
 
 `src/calibration_audit.py` shows the live `CONFIDENCE_THRESHOLD = 0.52` guard lifts accuracy
@@ -167,8 +167,9 @@ conclusion was reached.
   synthetic data only, no hypothesis is registered, and it touches no production code.
 - **The calendar model (Section 22.6) now CLEARS its paired test, with two caveats standing.**
   The paired bootstrap has been executed (`python -m src.calendar_paired_bootstrap`): on the
-  out-of-sample test block it beats the frozen 5-seed ensemble by ΔMAE **+0.02618**, CI95
-  **[+0.02249, +0.03027]**. What that run does *not* fix, and what stays in the registry row:
+  out-of-sample test block it beats the frozen 5-seed ensemble by ΔMAE **+0.02624**, CI95
+  **[+0.02232, +0.02998]** — run twice, on row sets 45 bars apart, clearing both times.
+  What that does *not* fix, and what stays in the registry row:
   its GARCH is a numpy variance-targeting fit rather than the `arch` MLE used elsewhere, and
   it was built and scored in one pass with no pre-registration preceding measurement. A
   cleared interval does not retire either.

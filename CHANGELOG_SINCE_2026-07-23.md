@@ -190,8 +190,8 @@ seconds to fit on a CPU. Scored on the identical row set as the volatility famil
 
 | model | val MAE | val R² | test MAE | test R² |
 |---|---:|---:|---:|---:|
-| **Calendar** | **0.16209** | **0.1602** | **0.19279** | **0.1348** |
-| 5-seed MT LSTM ensemble | 0.18594 | 0.1444 | 0.21897 | 0.1098 |
+| **Calendar** | **0.16213** | **0.1592** | **0.19152** | **0.1369** |
+| 5-seed MT LSTM ensemble (frozen artifacts) | 0.18919 | 0.1305 | 0.21777 | 0.1112 |
 | GARCH(1,1) | 0.20379 | 0.0094 | 0.23257 | 0.0356 |
 | Persistence | 0.26133 | −0.8396 | 0.29214 | — |
 
@@ -209,12 +209,12 @@ neither neural.
 
 **The paired bootstrap has since been run and the row now reads CLEARED.**
 `python -m src.calendar_paired_bootstrap` scores both models row by row against the frozen
-`models/volatility/` ensemble (block_len 5, n_boot 2000). Test block: dMAE **+0.02618**, CI95
-**[+0.02249, +0.03027]**, excluding zero. Validation gives +0.02764 [+0.02213, +0.03418] and
+`models/volatility/` ensemble (block_len 5, n_boot 2000). Test block: dMAE **+0.02624**, CI95
+**[+0.02232, +0.02998]**, excluding zero. Validation gives +0.02705 [+0.02078, +0.03283] and
 is reported but **not gating** — the frozen ensemble early-stopped on that block, so a
 calendar win there is conservative rather than inflated.
 
-Note the frozen ensemble scores 0.18974 on validation, not the 0.18594 logged by
+Note the frozen ensemble scores 0.18919 on validation, not the 0.18594 logged by
 `volatility.run()`. Those are two different objects: the logged figure came from the
 experiment path's stricter inner split, and those models were never persisted, so they cannot
 be re-scored row by row. The calendar model beats both.
