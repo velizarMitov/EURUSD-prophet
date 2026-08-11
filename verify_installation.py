@@ -115,6 +115,19 @@ def main() -> int:
         print(f"  {'GARCH(1,1) (recorded)':<34}{0.20379:>10.5f}{0.0094:>9.4f}"
               f"{0.23257:>10.5f}{0.0356:>9.4f}")
         print()
+        # Two deliberate differences from notebooks/00_final_report.ipynb §7.1, so the two
+        # documents can be compared without wondering why they disagree in the 4th decimal:
+        #   * here ONE model is fitted on [0:70%] and scored on both blocks -- a fast
+        #     smoke check. The report refits on [0:80%] before scoring the test block,
+        #     which is the correct protocol and gives a slightly better test MAE.
+        #   * the two 'recorded' rows are the historical logged figures. The report scores
+        #     the CURRENT frozen models/volatility/ artifacts instead, which is why its
+        #     ensemble column differs.
+        print("  note: one fit on [0:70%] scored on both blocks (fast check). The report")
+        print("        refits on [0:80%] for the test block and re-scores the frozen")
+        print("        ensemble rather than quoting these recorded figures, so its table")
+        print("        differs slightly by design — see 00_final_report.ipynb §7.1.")
+        print()
         names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         p = model.params
         print(f"  the entire model: GARCH a={p.alpha:.4f} b={p.beta:.4f} scale={p.scale:.4f}")
@@ -132,17 +145,37 @@ def main() -> int:
 
     header("4. Production service (needs TensorFlow)")
     try:
-        from src.inference import PredictionService
+        import tensorflow  # noqa: F401
+        tf_present = True
+    except Exception:  # noqa: BLE001
+        tf_present = False
 
-        svc = PredictionService()
-        for flag in ("baseline_ready", "macro_ready", "vol_ready"):
-            val = getattr(svc, flag, None)
-            (ok if val else note)(f"{flag} = {val}")
-        note("start the dashboard with:  python -m uvicorn api:app --reload")
-        note("then open http://127.0.0.1:8000")
-    except Exception as exc:  # noqa: BLE001
-        note(f"service not loadable here ({type(exc).__name__}) — TensorFlow required")
+    if not tf_present:
+        note("TensorFlow not installed — the serving path cannot be checked here")
         note("this does NOT affect section 3; the calendar model needs no deep-learning stack")
+    else:
+        try:
+            from src.inference import PredictionService
+
+            # PredictionService takes (base_dir, config). Calling it with no arguments
+            # raised TypeError, which the old handler reported as "TensorFlow required" —
+            # so a fully working install looked like a missing dependency. Report what
+            # actually happened instead of guessing a cause.
+            repo = Path(__file__).resolve().parent
+            cfg = json.loads((repo / "config.json").read_text(encoding="utf-8"))
+            svc = PredictionService(str(repo), cfg)
+            for flag in ("baseline_ready", "macro_ready", "vol_ready"):
+                val = getattr(svc, flag, None)
+                (ok if val else note)(f"{flag} = {val}")
+            if svc.load_errors:
+                for err in svc.load_errors:
+                    note(f"load error: {err}")
+            note("start the dashboard with:  python -m uvicorn api:app --reload")
+            note("then open http://127.0.0.1:8000")
+        except Exception as exc:  # noqa: BLE001
+            bad(f"serving path FAILED to load: {type(exc).__name__}: {exc}")
+            note("TensorFlow is installed, so this is a real failure, not a missing dependency")
+            failures += 1
 
     header("5. Hypothesis registry")
     try:
