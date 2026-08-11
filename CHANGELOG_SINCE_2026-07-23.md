@@ -19,7 +19,7 @@ network in it (section 8 below).
 | Hypothesis families (registry files) | 4 | 15 | +11 |
 | Registered hypotheses (all-time) | 15 | 56 | +41 |
 | …of which recorded as DROP | — | 37 | — |
-| Python modules in `src/` | 14 | 52 | +38 |
+| Python modules in `src/` | 14 | 54 | +40 |
 | Test files | 4 | 13 | +9 |
 | Test functions | 73 | 452 | +379 |
 | `IMPROVEMENT_LOG.md` (lines) | 799 | 2,025 | +1,226 |

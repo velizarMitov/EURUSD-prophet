@@ -118,6 +118,36 @@ def build_inventory() -> list[NetworkSpec]:
             notes="Sits alongside XGBoost, RandomForest and SVM members.",
         ),
         NetworkSpec(
+            key="kronos_foundation_model",
+            path="models/external_kronos/vol_calibration.json",
+            family="External pre-trained time-series foundation model (Kronos)",
+            task="Zero-shot probabilistic forecasting; used for cross-model comparison",
+            architecture=(
+                "Third-party pre-trained transformer, loaded at PINNED HuggingFace "
+                "revisions via src/external/kronos/loader.py. Not trained here — "
+                "autoregressive sampling (pred_len=24, sample_count=30, T=1.0, top_p=0.9)"
+            ),
+            trained_on="NOT trained by this project. Vendored behind a commit-pinned "
+                       "loader; optional dependency in requirements-kronos.txt so the "
+                       "core app installs and runs without it (kronos_ready = False)",
+            status="RESEARCH ONLY — evaluated, not served",
+            notes=(
+                "The project's first cross-model comparison, and the one place a modern "
+                "foundation model is put against our own. Pre-declared primary: "
+                "incremental correlation of Kronos's pred_abs_move_pct with the 5-seed "
+                "ensemble's residual = +0.1667, CI99.44% [+0.0354, +0.3090] -- excludes "
+                "zero, robust to block length, seed and rank transform. But the secondary "
+                "forecast-improvement test INCLUDES zero, and Kronos does not beat "
+                "GARCH(1,1) on those rows. Verdict: the signal is real and does not "
+                "convert into a distinguishable forecast gain. "
+                "CONTAMINATION HANDLED EXPLICITLY: the comparison window was forced to "
+                "2024-07..2026-06 by Kronos's own training cutoff, and the registry entry "
+                "records that this is the spent test block rather than the usual "
+                "validation arbiter -- a constraint imposed by the external model, "
+                "disclosed rather than ignored."
+            ),
+        ),
+        NetworkSpec(
             key="ti_lstm_h1",
             path="models/ti_lstm_h1/ti_lstm_h1.keras",
             family="H1 technical-indicator LSTM",
@@ -150,12 +180,13 @@ def _try_load_keras(path: str):
 def report(show_summary: bool = True) -> dict:
     inventory = build_inventory()
     print("=" * 78)
-    print("DEEP LEARNING MODEL CARD — trained neural networks in this project")
+    print("DEEP LEARNING MODEL CARD — neural networks in this project")
     print("=" * 78)
 
     present = [n for n in inventory if Path(n.path).exists()]
     missing = [n for n in inventory if not Path(n.path).exists()]
-    print(f"\n{len(present)} of {len(inventory)} networks present on disk.")
+    print(f"\n{len(present)} of {len(inventory)} entries present "
+          "(9 trained here + 1 external pre-trained model evaluated for comparison).")
     if missing:
         print("  MISSING: " + ", ".join(n.path for n in missing))
 

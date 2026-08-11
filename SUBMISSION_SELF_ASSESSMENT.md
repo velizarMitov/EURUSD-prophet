@@ -36,7 +36,7 @@ interpretation). Supporting documents are separated by purpose:
 
 ### Code quality (0–20)
 
-52 modules in `src/`, each with a single responsibility and a module docstring stating
+54 modules in `src/`, each with a single responsibility and a module docstring stating
 scope and constraints. The single-source-of-truth contract is the central design decision:
 training and serving both import `src/features.py`, so the feature matrix is byte-identical
 on both sides and research-to-production drift is structurally impossible.
@@ -50,9 +50,19 @@ prints the full model card. Two shared-trunk multi-task LSTMs (daily direction +
 one per variant), a five-seed volatility ensemble, an hourly sequence-to-vector LSTM, and
 an H1 technical-indicator LSTM. Every one was trained with a chronological split, early
 stopping on a held-out slice, and dropout regularisation; the seed ensembling was forced by
-measured framework nondeterminism rather than chosen for effect. Beyond Keras: a raw
-PyTorch MLP (`H1.2`) and a JAX/Equinox continuous-time architecture with custom surrogate
-gradients (`src/ltc_spiking_arch.py`, 703 lines) — three frameworks, all exercised.
+measured framework nondeterminism rather than chosen for effect.
+
+Beyond Keras, two further frameworks were used directly rather than through a wrapper: a
+PyTorch `DirectionLSTM` (`src/h1_direction_model.py`), an LSTM with a dropout-regularised
+MLP head written against `torch.nn`; and a JAX/Equinox continuous-time architecture with
+custom surrogate gradients for a spiking readout (`src/ltc_spiking_arch.py`, 758 lines).
+
+A tenth network is **not** ours: **Kronos**, a third-party pre-trained time-series
+foundation model, integrated behind a commit-pinned HuggingFace loader
+(`src/external/kronos/`) as an optional dependency, so the core app installs and serves
+without it. It is the project's only comparison against a modern foundation model, and the
+contamination it forced — its own training cutoff restricted the evaluation window to the
+spent test block — is disclosed in the registry rather than worked around.
 
 That inventory is the context for the headline finding. The calendar model wins **against
 properly built networks**, which is what makes the comparison worth reporting.
