@@ -1,5 +1,21 @@
 # How to Run This Project (EUR/USD Prophet)
 
+## Reviewers: start here
+
+```bash
+pip install -r requirements.txt
+python verify_installation.py
+```
+
+That single command reports what is available on your machine, re-fits the project's
+headline model from committed data, and compares it against the recorded numbers. It never
+raises on a missing optional dependency — TensorFlow, JAX and MetaTrader 5 are all reported
+as unavailable rather than crashing the run.
+
+Data provenance, the offline fallback chains and the no-look-ahead guarantees are documented
+in [`DATA.md`](DATA.md).
+
+
 This guide describes how to clone, install, and run the project from scratch. Every step has been verified for real — the repo was cloned into a clean folder, a fresh virtual environment was created, and the server was actually launched before writing this down.
 
 ---

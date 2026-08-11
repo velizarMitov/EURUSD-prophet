@@ -8,6 +8,23 @@ The pipeline formally implements, evaluates, and contrasts:
 2. **Deep Learning (LSTM):** Sliding-window sequential topologies exploring implicitly unconstrained modeling.
 3. **Gradient Boosting Machine (GBM):** Tree-based iterative residual optimizers capturing feature importance mathematically.
 
+## Quick start for reviewers
+
+```bash
+pip install -r requirements.txt
+python verify_installation.py          # environment + data + headline model, ~20 s
+python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
+python -m pytest -q                    # 452 tests
+```
+
+**No API key, no broker terminal, no network, and no training run is required.** All data
+and all 46 trained artifacts are committed — see [`DATA.md`](DATA.md) for provenance,
+offline fallback chains, and the statistical-validity guarantees.
+
+`verify_installation.py` re-fits the headline model from the committed CSVs and checks the
+result against the recorded figures, so a broken or incomplete checkout fails loudly rather
+than silently.
+
 ## Exam submission notes (second submission)
 
 This project was first submitted on **23 July 2026**. It has been developed continuously

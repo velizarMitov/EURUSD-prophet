@@ -75,6 +75,14 @@ only ever carries a past value forward, scaler and PCA fitted on the training bl
 `TimeSeriesSplit` everywhere and never random K-fold. Dedicated no-look-ahead unit tests
 guard each of these. Documented in `ARCHITECTURE_DOCS.md` §2.
 
+**`DATA.md` documents provenance end to end**: every FRED series identifier, the MT5 server
+clock forensics (CET/CEST, established from a March DST excursion), the strict-inner-join
+alignment (2,980,060 raw bars → 2,959,641 common rows, unmatched bars dropped rather than
+forward-filled), the gap census, and a **permutation control proving the activity proxy
+carries real information** (z = −42.7 honest vs −0.6 shuffled). All data and all 46 trained
+artifacts are committed; `python verify_installation.py` re-derives the headline result
+offline and fails loudly if the checkout is incomplete.
+
 ### Testing (0–10)
 
 **452 test functions** (up from 73 at the first submission),
