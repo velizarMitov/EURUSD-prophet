@@ -31,7 +31,7 @@ interpretation). Supporting documents are separated by purpose:
 | `README.md` | orientation and how to run |
 | `HOW_TO_RUN.md` | step-by-step execution |
 | `ARCHITECTURE_DOCS.md` | 1,892-line technical reference |
-| `IMPROVEMENT_LOG.md` | 2,025-line dated research journal |
+| `IMPROVEMENT_LOG.md` | 2,193-line dated research journal |
 | `CHANGELOG_SINCE_2026-07-23.md` | what changed since the first submission |
 
 ### Code quality (0–20)
@@ -107,9 +107,11 @@ offline and fails loudly if the checkout is incomplete.
 
 ### Testing (0–10)
 
-**452 test functions** (up from 73 at the first submission),
+**452 test functions** across 15 files (up from 73 at the first submission),
 covering smoke, unit, integration, no-look-ahead, and artifact-checksum tests that prevent
-a retrain from silently altering production models.
+a retrain from silently altering production models. **Five currently fail**, all of them
+checksum tests, because the 2026-08-08 retrain moved the artifacts they pin — the guard
+working as designed rather than a regression (see *Known limitations*).
 
 Hypothesis testing is the project's organising principle: 15 families, 56 registered
 hypotheses, Bonferroni-corrected bars (`α = 0.05 / family_size`), moving-block bootstrap
@@ -163,10 +165,16 @@ conclusion was reached.
   are retained pending forward evidence and labelled as such everywhere.
 - **The curl / discrete-Hodge work (Section 22.9) is unfinished.** It is validated on
   synthetic data only, no hypothesis is registered, and it touches no production code.
-- **The calendar model (Section 22.6) is not fully registered.** Its row reads
-  `PENDING-PAIRED-CI`: the paired bootstrap against the ensemble needs that model's per-row
-  predictions, its GARCH is a numpy variance-targeting fit rather than the `arch` MLE used
-  elsewhere, and it was built and scored in one pass with no pre-registration preceding
-  measurement. All three are stated in the registry row.
+- **The calendar model (Section 22.6) now CLEARS its paired test, with two caveats standing.**
+  The paired bootstrap has been executed (`python -m src.calendar_paired_bootstrap`): on the
+  out-of-sample test block it beats the frozen 5-seed ensemble by ΔMAE **+0.02618**, CI95
+  **[+0.02249, +0.03027]**. What that run does *not* fix, and what stays in the registry row:
+  its GARCH is a numpy variance-targeting fit rather than the `arch` MLE used elsewhere, and
+  it was built and scored in one pass with no pre-registration preceding measurement. A
+  cleared interval does not retire either.
+- **Five checksum tests fail by design.** The 2026-08-08 retrain moved nineteen SHA-256
+  protected artifacts, so the guard that exists to catch exactly that is firing. It is left
+  red rather than re-baselined, because re-baselining would erase the evidence. Every
+  hypothesis-registry CSV still matches its fixture.
 - **`mit-deep-learning-book-pdf-master/`** is a third-party reference text included in the
   repository. It is not project code and is not used by any module.

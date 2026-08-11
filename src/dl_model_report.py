@@ -191,7 +191,19 @@ def report(show_summary: bool = True) -> dict:
         print("  MISSING: " + ", ".join(n.path for n in missing))
 
     total_params = 0
-    tf_available = True
+    # Availability is decided ONCE by actually importing, not inferred from a load failure.
+    # Inferring it was a real bug: the Kronos entry is a JSON calibration file, not a Keras
+    # artifact, so it never loads -- and that one expected miss used to flip the flag for the
+    # whole report, printing "TensorFlow unavailable" directly underneath nine model
+    # summaries with full parameter counts.
+    try:
+        import tensorflow  # noqa: F401, PLC0415
+
+        tf_available = True
+    except Exception:  # noqa: BLE001
+        tf_available = False
+
+    loaded, not_keras = 0, []
     for spec in present:
         print("\n" + "-" * 78)
         print(f"{spec.key}    ({Path(spec.path).stat().st_size / 1024:.0f} KB)")
@@ -204,9 +216,17 @@ def report(show_summary: bool = True) -> dict:
 
         model = _try_load_keras(spec.path)
         if model is None:
-            tf_available = False
-            print("  parameters    (TensorFlow not available — declared architecture shown)")
+            if not spec.path.endswith(".keras"):
+                not_keras.append(spec.key)
+                print("  parameters    n/a — not a Keras artifact "
+                      f"({Path(spec.path).suffix or 'no suffix'}); "
+                      "declared architecture shown above")
+            elif not tf_available:
+                print("  parameters    (TensorFlow not installed — declared architecture shown)")
+            else:
+                print("  parameters    UNREADABLE — the file exists but Keras could not load it")
         else:
+            loaded += 1
             n = int(model.count_params())
             total_params += n
             print(f"  parameters    {n:,} trainable+non-trainable")
@@ -223,12 +243,17 @@ def report(show_summary: bool = True) -> dict:
             print(f"\n  note: {spec.notes}")
 
     print("\n" + "=" * 78)
-    if tf_available and total_params:
-        print(f"Total parameters across all networks: {total_params:,}")
-    else:
+    if loaded:
+        print(f"Total parameters across the {loaded} networks loaded: {total_params:,}")
+        if not_keras:
+            print(f"Excluded (not Keras artifacts): {', '.join(not_keras)}")
+    elif not tf_available:
         print("TensorFlow unavailable — parameter counts require `pip install tensorflow`.")
         print("Declared architectures and committed metrics are shown above and are")
         print("sufficient to audit what was built without running anything.")
+    else:
+        print("No network could be loaded despite TensorFlow being importable — the")
+        print("artifacts are present but unreadable. Investigate before trusting anything above.")
 
     print("""
 HOW TO READ THIS ALONGSIDE THE PROJECT'S HEADLINE FINDING

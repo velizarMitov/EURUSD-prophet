@@ -14,9 +14,15 @@ The pipeline formally implements, evaluates, and contrasts:
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model, ~20 s
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
-python -m pytest -q                    # 452 tests
+python -m pytest -q                    # 452 test functions; 5 fail by design (see below)
 python -m src.dl_model_report          # model card for all 9 trained networks
 ```
+
+**Five checksum tests fail, and they are meant to.** The production models were retrained on
+2026-08-08, so nineteen SHA-256-pinned artifacts no longer match the fixtures recorded when
+the hypotheses were registered. That guard exists to make exactly this visible, so it is left
+red rather than re-baselined — re-baselining would delete the evidence that the artifacts
+moved. Every hypothesis-registry CSV still matches its fixture.
 
 **No API key, no broker terminal, no network, and no training run is required.** All data
 and all 46 trained artifacts are committed — see [`DATA.md`](DATA.md) for provenance,
@@ -35,6 +41,7 @@ since; this is the **second submission**.
 |---|---|
 | [`SUBMISSION_SELF_ASSESSMENT.md`](SUBMISSION_SELF_ASSESSMENT.md) | Criterion-by-criterion mapping to evidence, plus known limitations |
 | [`CHANGELOG_SINCE_2026-07-23.md`](CHANGELOG_SINCE_2026-07-23.md) | Commit-level record of everything added since the first submission |
+| `notebooks/00_final_report.ipynb` | **Start here.** The self-contained report: problem, method, results, three required visualisations, conclusion. Every figure is regenerated from `src/` when the notebook runs |
 | `notebooks/01_data_preparation.ipynb` **Section 22** | Then-vs-now comparison, the volatility re-verification, external-model comparison, references |
 
 Headline changes since 23 July: **4 → 15** hypothesis families, **15 → 56** registered

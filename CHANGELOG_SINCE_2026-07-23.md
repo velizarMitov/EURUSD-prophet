@@ -20,9 +20,9 @@ network in it (section 8 below).
 | Registered hypotheses (all-time) | 15 | 56 | +41 |
 | …of which recorded as DROP | — | 37 | — |
 | Python modules in `src/` | 14 | 54 | +40 |
-| Test files | 4 | 13 | +9 |
+| Test files | 4 | 15 | +11 |
 | Test functions | 73 | 452 | +379 |
-| `IMPROVEMENT_LOG.md` (lines) | 799 | 2,025 | +1,226 |
+| `IMPROVEMENT_LOG.md` (lines) | 799 | 2,193 | +1,394 |
 | `ARCHITECTURE_DOCS.md` (lines) | 1,150 | 1,892 | +742 |
 
 The DROP count is the point. A research pipeline that only records its successes is not
@@ -207,10 +207,21 @@ Honest decomposition: an MAE-optimal scale on plain GARCH alone already reaches 
 validation, level with the ensemble; the weekday factors add the rest. Two cheap wins,
 neither neural.
 
-Outstanding, and stated in the registry row: no paired bootstrap against the ensemble (needs
-its per-row predictions, i.e. TensorFlow); GARCH here is a numpy variance-targeting fit, not
-the `arch` MLE; and the model was built and scored in one pass with no pre-registration
-preceding measurement. The row reads `PENDING-PAIRED-CI`, not CLEARED.
+**The paired bootstrap has since been run and the row now reads CLEARED.**
+`python -m src.calendar_paired_bootstrap` scores both models row by row against the frozen
+`models/volatility/` ensemble (block_len 5, n_boot 2000). Test block: dMAE **+0.02618**, CI95
+**[+0.02249, +0.03027]**, excluding zero. Validation gives +0.02764 [+0.02213, +0.03418] and
+is reported but **not gating** — the frozen ensemble early-stopped on that block, so a
+calendar win there is conservative rather than inflated.
+
+Note the frozen ensemble scores 0.18974 on validation, not the 0.18594 logged by
+`volatility.run()`. Those are two different objects: the logged figure came from the
+experiment path's stricter inner split, and those models were never persisted, so they cannot
+be re-scored row by row. The calendar model beats both.
+
+Still outstanding, and still in the registry row: the GARCH here is a numpy
+variance-targeting fit, not the `arch` MLE; and the model was built and scored in one pass
+with no pre-registration preceding measurement. A cleared interval retires neither.
 
 ## 9. Production calibration audit — the live confidence guard is inert
 
