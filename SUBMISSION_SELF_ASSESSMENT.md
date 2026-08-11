@@ -45,6 +45,18 @@ Typed throughout (`pyrightconfig.json`, `mypy`), linted (`ruff`), configuration 
 in `config.json`. Four invariants that previously caused real bugs are documented in
 `CLAUDE.md` and enforced by tests.
 
+**Nine trained neural networks ship with the repository** — `python -m src.dl_model_report`
+prints the full model card. Two shared-trunk multi-task LSTMs (daily direction + return,
+one per variant), a five-seed volatility ensemble, an hourly sequence-to-vector LSTM, and
+an H1 technical-indicator LSTM. Every one was trained with a chronological split, early
+stopping on a held-out slice, and dropout regularisation; the seed ensembling was forced by
+measured framework nondeterminism rather than chosen for effect. Beyond Keras: a raw
+PyTorch MLP (`H1.2`) and a JAX/Equinox continuous-time architecture with custom surrogate
+gradients (`src/ltc_spiking_arch.py`, 703 lines) — three frameworks, all exercised.
+
+That inventory is the context for the headline finding. The calendar model wins **against
+properly built networks**, which is what makes the comparison worth reporting.
+
 ### Previous research (0–10)
 
 **Eleven cited sources**, notebook Section 22.10 — Fama (1970), Meese & Rogoff (1983), Harvey,
