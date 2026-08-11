@@ -107,11 +107,11 @@ offline and fails loudly if the checkout is incomplete.
 
 ### Testing (0–10)
 
-**452 test functions** across 15 files (up from 73 at the first submission),
+**452 test functions** across 15 files (up from 73 at the first submission), **all passing**,
 covering smoke, unit, integration, no-look-ahead, and artifact-checksum tests that prevent
-a retrain from silently altering production models. **Five currently fail**, all of them
-checksum tests, because the 2026-08-08 retrain moved the artifacts they pin — the guard
-working as designed rather than a regression (see *Known limitations*).
+a retrain from silently altering production models. That guard fired on the 2026-08-08
+retrain and caught all nineteen moved artifacts; the fixtures were re-baselined on
+2026-08-11 with every old→new digest preserved (see *Known limitations*).
 
 Hypothesis testing is the project's organising principle: 15 families, 56 registered
 hypotheses, Bonferroni-corrected bars (`α = 0.05 / family_size`), moving-block bootstrap
@@ -172,9 +172,13 @@ conclusion was reached.
   its GARCH is a numpy variance-targeting fit rather than the `arch` MLE used elsewhere, and
   it was built and scored in one pass with no pre-registration preceding measurement. A
   cleared interval does not retire either.
-- **Five checksum tests fail by design.** The 2026-08-08 retrain moved nineteen SHA-256
-  protected artifacts, so the guard that exists to catch exactly that is firing. It is left
-  red rather than re-baselined, because re-baselining would erase the evidence. Every
-  hypothesis-registry CSV still matches its fixture.
+- **The checksum guard fired on the 2026-08-08 retrain and was then re-baselined.** Nineteen
+  protected artifacts moved; all nineteen were caught. They were re-baselined on 2026-08-11
+  rather than left red, because a permanently failing guard has no power to detect the *next*
+  change. Every old→new digest is preserved in
+  `tests/fixtures/PROTECTED_SET_REBASELINE_2026-08-11.json`. The residual limitation is real
+  and stated in §7.1 of the report: the registered volatility figures were earned against the
+  pre-retrain artifacts, so the frozen ensemble is re-scored separately rather than reusing
+  its logged number.
 - **`mit-deep-learning-book-pdf-master/`** is a third-party reference text included in the
   repository. It is not project code and is not used by any module.

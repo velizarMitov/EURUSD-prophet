@@ -1,0 +1,198 @@
+{
+  "rebaselined": "2026-08-11",
+  "reason": "Production retrain of 2026-08-08 moved these artifacts. The checksum guard detected every one of them, which is what it exists to do. These are the digests it was pinning BEFORE that retrain, preserved so the change remains auditable now that the fixtures track the current files. Re-baselining rather than leaving the tests red is deliberate: a permanently failing guard cannot detect the NEXT change.",
+  "changed": {
+    "_train_pipeline.py": {
+      "old_sha256": "4d5757f634b0b564398840e4a5783803c369bcde969ba36343db947f59d36d82",
+      "new_sha256": "443f673a2f33bff51772107693a6dbcd8d7892d908f28fbeabdfae3deec78b8a",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/lstm_multitask_eurusd.keras": {
+      "old_sha256": "194f7a8362d09506c0ed3229da96ca960e751a20de62de7faa9328a7cd95bd6e",
+      "new_sha256": "02c13e81a79c848bde8b51ece3679fe79096c5bbc1ac6f3a409d1e0f088b59a6",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_feature_scaler.pkl": {
+      "old_sha256": "ce5884cd9a55bb4ea61ac1868e7df620d62e9ddb6579cea2cdc1b382f04191ce",
+      "new_sha256": "654ff370fc7c49e8259281381c797a40272acd9b6597a35ba53c178ccd380ce9",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm.keras": {
+      "old_sha256": "59cb84e06d7e27b055f4ee64b81fa46c69ec0574bf527329ec16be8f0264debe",
+      "new_sha256": "5b87d9a522ea90c48715250bb790cf3a903b091cb214f7e58eeefa1992c64edd",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm_scaler.pkl": {
+      "old_sha256": "f2767bf4eb38b2100930d1dace2b6294623a8f4baf2031ee9accffb3369e7c18",
+      "new_sha256": "a92b1c215cb8468c4a1760b197ccf136c8085a74b7e69415e28e20618ecea54c",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_rf_regressor.pkl": {
+      "old_sha256": "f318322758f13acd9b9f9cc6c970d647723f8d32a5c33e6a7fc329027ecdbdcf",
+      "new_sha256": "81bf9b9fd53897b87c6a2469278050e1e62d2e4d79ec48d0d15d3b63892b3143",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_svm_regressor.pkl": {
+      "old_sha256": "e0452de88b6b94c7a6024277b6c696cbd568ea7e5ec84c582483763bcffb3289",
+      "new_sha256": "db5634f3824c82ae5bcc6041062f24fb3b6cf195091a6ee70fe691f3be7976af",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_xgb_regressor.pkl": {
+      "old_sha256": "48b7e56573a8a5251cd03f562cb179ad3e315c1002f586932b63d0bd7e4f3430",
+      "new_sha256": "5bfa73a697539b5a29dbc731d9f83e988aba85b14504c0a0c8520ceb65028173",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_lstm_h1.keras": {
+      "old_sha256": "c67ed69e6955d9483a091e7ee716d3a1cd62e32ac9254557fbc53bdd4ce0523e",
+      "new_sha256": "e5a7f3733da3076d79a67a5e8dfaff03dabab667093e8551adc830855c6d5da9",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_metrics.json": {
+      "old_sha256": "d8ebce69d51a2b81191bd4e0a5b065205076e2e8fbac7cdecb0e30b4c2d1440a",
+      "new_sha256": "8a3f0052ea4c6c64cae5ff534eedf6885cae04c48b37ff65128fa0dd41ccba37",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_scaler.pkl": {
+      "old_sha256": "4747f370ce0ced4d6c0816696055a4113d4fa44221ad804de5930eeec5f266e9",
+      "new_sha256": "b060dde08df47510665282b2af4842b74953b227465e23b8c528858896534407",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/vol_metrics.json": {
+      "old_sha256": "8006e8b2d97d34a18533186baed40ff7010113243d78826e33c995c94cd97737",
+      "new_sha256": "7f87b6f04c657bcc2960ab6e05f12187ca465a93f89af74f0b0f40082a0a35a5",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed42.keras": {
+      "old_sha256": "1712cd306445f9e94d509a51defa83ea38a1124de42ec8539ef987301ccb5ce0",
+      "new_sha256": "a7317d4b7c95ed3ec5de1171b965ea4444dc4b34044f6319c15ab274569e9e12",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed43.keras": {
+      "old_sha256": "dff5fb1d36def736ac9dee0292bcb0d2d15346e944e10316fa1d2f9f94d86937",
+      "new_sha256": "a44e50e015ae2d4d912362c01764108199ca7d8ef140ee573c21df3a61d72e0d",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed44.keras": {
+      "old_sha256": "66bbc17c4abb89d6d3787b8605076ade6b24afbbb4a01a6aff620b5bd015ee27",
+      "new_sha256": "b4e9c682f766149e911736f9bc8ccc844deebd594d74badef7bb79c87e0c0dd0",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed45.keras": {
+      "old_sha256": "3612a23ed7e83ceb9d29d4e2a27e57e99691e3b1badec3dfb99442775e9b4923",
+      "new_sha256": "ead7fea460b965b250e2419a6eec66a8a0e3616517d1fde3fb404a70004a7985",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed46.keras": {
+      "old_sha256": "5c150f3f8cb233d364b344d93f56dbc7ad00d76120d674caff8ea01aed428ec1",
+      "new_sha256": "a10e34e819c584ea6aeab44a1e998d02dbd3dce4d352d07ac09acf71dcd14531",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/global_scaler.pkl": {
+      "old_sha256": "7fb244fc4dc34cc96a92c8d84b7d73327a8dafb4c70e0355584e8c7279d37b52",
+      "new_sha256": "fefb1a9e1b9b1c0e83dadaa5d3a4e223be3c6b76697aa1299ea9224b524e5bb7",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/lstm_multitask_eurusd.keras": {
+      "old_sha256": "d16d80e486fe64f6399ce93efb930c0d1467791d01029a114287e46fd2231132",
+      "new_sha256": "1466a1a93c7bd0881dfa20d5603e7af0d98efa30a989097b3c5ef0e58c6f5af5",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    }
+  },
+  "unchanged_count": 172,
+  "missing": []
+}

@@ -14,15 +14,16 @@ The pipeline formally implements, evaluates, and contrasts:
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model, ~20 s
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
-python -m pytest -q                    # 452 test functions; 5 fail by design (see below)
+python -m pytest -q                    # 452 test functions, all passing
 python -m src.dl_model_report          # model card for all 9 trained networks
 ```
 
-**Five checksum tests fail, and they are meant to.** The production models were retrained on
-2026-08-08, so nineteen SHA-256-pinned artifacts no longer match the fixtures recorded when
-the hypotheses were registered. That guard exists to make exactly this visible, so it is left
-red rather than re-baselined — re-baselining would delete the evidence that the artifacts
-moved. Every hypothesis-registry CSV still matches its fixture.
+**On the checksum guard.** The 2026-08-08 retrain moved nineteen SHA-256-pinned artifacts and
+the guard caught every one of them. The fixtures were re-baselined on 2026-08-11 rather than
+left failing, because a permanently red test cannot detect the *next* change — every old→new
+digest, and which fixtures pinned each file, is preserved in
+[`tests/fixtures/PROTECTED_SET_REBASELINE_2026-08-11.json`](tests/fixtures/PROTECTED_SET_REBASELINE_2026-08-11.json).
+No hypothesis-registry CSV moved at any point.
 
 **No API key, no broker terminal, no network, and no training run is required.** All data
 and all 46 trained artifacts are committed — see [`DATA.md`](DATA.md) for provenance,
