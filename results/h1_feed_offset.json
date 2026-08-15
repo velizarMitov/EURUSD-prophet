@@ -1,6 +1,6 @@
 {
  "offset_hours": 2,
- "accepted_at_utc": "2026-08-10T08:52:07.351455",
+ "accepted_at_utc": "2026-08-14T04:09:16.110723",
  "pending": null,
  "history": [
   {
@@ -67,6 +67,42 @@
    "offset_hours": 2,
    "previous_offset_hours": -11,
    "accepted_at_utc": "2026-08-10T08:52:07.351455",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": -8,
+   "previous_offset_hours": 2,
+   "accepted_at_utc": "2026-08-12T04:23:07.240490",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": 2,
+   "previous_offset_hours": -8,
+   "accepted_at_utc": "2026-08-12T04:23:07.449685",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": -2,
+   "previous_offset_hours": 2,
+   "accepted_at_utc": "2026-08-13T09:17:06.081471",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": 2,
+   "previous_offset_hours": -2,
+   "accepted_at_utc": "2026-08-13T09:17:06.296117",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": -9,
+   "previous_offset_hours": 2,
+   "accepted_at_utc": "2026-08-14T04:09:15.872115",
+   "reason": "clear_of_boundary"
+  },
+  {
+   "offset_hours": 2,
+   "previous_offset_hours": -9,
+   "accepted_at_utc": "2026-08-14T04:09:16.110723",
    "reason": "clear_of_boundary"
   }
  ]
