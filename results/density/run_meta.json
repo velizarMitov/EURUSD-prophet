@@ -1,6 +1,6 @@
 {
   "prereg_commit": "7524cab0237d325a144b7eef1f85ca759643b942",
-  "stage": "validation",
+  "stage": "all",
   "seeds": [
     42,
     43,
@@ -23,5 +23,5 @@
   "n": 8603,
   "train_end": 6022,
   "val_end": 6882,
-  "runtime_seconds": 1025.6
+  "runtime_seconds": 1037.7
 }

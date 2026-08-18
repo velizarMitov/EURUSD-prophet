@@ -143,3 +143,75 @@ calibrated than the registered rival (0.0742) on this diagnostic either.
 - `k_selection.csv` — validation-only K sweep
 - `pit_histograms.csv` — 20-bin rank histograms for every model
 - `run_meta.json` — pre-registration hash, K, alpha, block_len, split sizes
+
+---
+
+# One-shot test-block report
+
+Run **after** the validation verdict above was recorded and committed
+(`dd4a87d`), exactly as section 10 of the pre-registration requires. The test
+block was never indexed to select K, seeds, architecture, link constants, or the
+verdict. **This section does not arbitrate anything** — the registered verdict
+is the validation one and it stands regardless of what follows.
+
+**Reproduction check.** The test-stage run refits from scratch. Its validation
+numbers reproduced the committed run at `dd4a87d` to **0.0 absolute difference
+on every model**, so the two blocks below are scored by the identical ensemble
+and nothing here is confounded by run-to-run drift.
+
+## Test `[80:100]`, n = 1721
+
+| Model | CRPS | NLL | PIT mean | PIT var |
+|---|---|---|---|---|
+| Student-t(nu, 0, c_t·sigma_cal) | **0.218840** | 0.365283 | 0.4936 | 0.0753 |
+| MDN 5-seed ensemble (K=5) | 0.220332 | **0.360981** | 0.4872 | 0.0781 |
+| MDN symmetric ensemble | 0.221363 | 0.365211 | 0.4781 | 0.0762 |
+| Gaussian(0, c_g·sigma_cal) | 0.221729 | 0.477853 | 0.4947 | 0.0624 |
+| Student-t(nu, 0, c_h·sigma_garch) | 0.225439 | 0.483860 | 0.4949 | 0.0765 |
+| Empirical unconditional | 0.231608 | — | 0.4961 | 0.0623 |
+
+| Rival | delta (rival − MDN) | 97.5% CI | excludes 0? |
+|---|---|---|---|
+| **Student-t + calendar scale** *(registered primary)* | **-0.001492** | **[-0.003163, +0.000112]** | **no** |
+| Gaussian + calendar scale | +0.001397 | [-0.000607, +0.003219] | no |
+| Student-t + GARCH(1,1) | +0.005107 | [+0.003052, +0.007060] | yes |
+| Empirical unconditional | +0.011276 | [+0.009137, +0.013332] | yes |
+
+**The test block agrees with the arbiter on every point.** The model ordering is
+identical, the registered gap again covers zero with the point estimate favouring
+the rival (and slightly more so), and the MDN again beats GARCH+t and the
+unconditional baseline with intervals excluding zero. The DROP is not a
+single-slice artifact.
+
+## H_den.2 on the test block — a number, still not a verdict
+
+The symmetric ablation on test is **+0.001031, 97.5% CI [+0.000137, +0.001835]**,
+which *excludes* zero.
+
+**This is not a KEEP and is not read as one.** Two independent reasons, both
+fixed in advance:
+
+1. `H_den.2`'s precondition failed. The pre-registration made it conditional on
+   `H_den.1` clearing; it did not, so `H_den.2` is NOT-RUN with its alpha
+   unspent. A decomposition of "where the advantage lives" cannot be run on an
+   advantage that does not exist — the unrestricted MDN loses to the registered
+   rival, so beating its own hobbled variant establishes nothing about EUR/USD.
+2. Even setting that aside, this is the **test block**, which is a one-shot
+   report and not the arbiter. On the arbiter the same quantity was +0.001060
+   with CI [-0.000078, +0.002211] — covering zero.
+
+Promoting this cell to a finding would be precisely the post-hoc adaptation this
+family was constructed to make impossible. It is recorded, in full, and left
+unread.
+
+## Seeds: what the spread does and does not show
+
+Seed-to-seed CRPS range (0.00071) exceeds the effect under test (0.00045), so
+**different seeds** genuinely could have produced either sign — which is what
+makes the 5-seed all-or-nothing ensemble load-bearing rather than ceremonial.
+
+To be precise about a related but different claim: **run-to-run** determinism
+held perfectly here (0.0 difference across two independent full runs). The
+TF/oneDNN nondeterminism measured elsewhere in this project did not reproduce
+for this dense MDN. The seed argument stands; the nondeterminism argument does
+not apply to this particular model and is not claimed.

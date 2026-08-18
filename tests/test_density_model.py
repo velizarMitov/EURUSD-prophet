@@ -225,7 +225,7 @@ def test_sigma_parameterisation_is_structurally_above_the_floor():
 def test_sigma_guard_aborts_loudly_on_a_diverged_model():
     """The guard exists because a silent NaN would look like a result. Feed it a
     model whose parameters have gone non-finite and require it to raise."""
-    keras = pytest.importorskip('keras')
+    pytest.importorskip('keras')
     from src.density_model import SigmaFloorViolation, _make_sigma_guard, build_mdn
 
     k = 2
@@ -243,7 +243,7 @@ def test_sigma_guard_aborts_loudly_on_a_diverged_model():
 
 
 def test_sigma_guard_aborts_on_a_non_finite_loss():
-    keras = pytest.importorskip('keras')
+    pytest.importorskip('keras')
     from src.density_model import SigmaFloorViolation, _make_sigma_guard, build_mdn
     model = build_mdn(4, 2, seed=0)
     guard = _make_sigma_guard(model, np.zeros((8, 4)), 2)
