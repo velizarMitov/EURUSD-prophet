@@ -1,0 +1,11 @@
+model,seed,validation_crps
+mdn_ensemble,42,0.19297799747360642
+mdn_ensemble,43,0.19338730031136486
+mdn_ensemble,44,0.19329799329809974
+mdn_ensemble,45,0.19363166777353236
+mdn_ensemble,46,0.1929215025101619
+mdn_symmetric_ensemble,42,0.19361254914313228
+mdn_symmetric_ensemble,43,0.19404502517945418
+mdn_symmetric_ensemble,44,0.19340064613791788
+mdn_symmetric_ensemble,45,0.19750696458663572
+mdn_symmetric_ensemble,46,0.1949524237442501

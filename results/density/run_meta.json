@@ -1,0 +1,27 @@
+{
+  "prereg_commit": "7524cab0237d325a144b7eef1f85ca759643b942",
+  "stage": "validation",
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "K_selected": 5,
+  "K_grid": [
+    2,
+    3,
+    5
+  ],
+  "alpha": 0.025,
+  "ci_level": 0.975,
+  "block_len": 5,
+  "n_boot": 2000,
+  "sigma_floor": 0.05,
+  "family_size": 2,
+  "n": 8603,
+  "train_end": 6022,
+  "val_end": 6882,
+  "runtime_seconds": 1025.6
+}
