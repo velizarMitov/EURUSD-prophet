@@ -17,14 +17,23 @@ recorded figures. If the data were incomplete or altered, that check would fail.
 
 ## 1. What ships with the repository
 
+Row counts and spans below are **asserted by**
+`tests/test_input_data_provenance.py`, which fails if this table drifts away
+from the committed files. Update the table in the same commit as any data
+change — see §1.1.
+
 | File | Rows | Size | Content |
 |---|---:|---:|---|
-| `results/eurusd_features.csv` | 15,715 | 4.2 MB | EUR/USD **daily** OHLCV + engineered features, 1971-01-11 → 2026-06-18 |
-| `results/eurusd_h1.csv` | 60,032 | 3.9 MB | EUR/USD **hourly** OHLCV with tick volume |
-| `results/eurusd_m15.csv` | 350,000 | 22 MB | EUR/USD **15-minute** OHLCV with tick volume |
-| `results/pooled_h1/GBPUSD_h1.csv` | 70,000 | — | GBP/USD hourly — replication instrument |
-| `results/pooled_h1/AUDUSD_h1.csv` | 70,000 | — | AUD/USD hourly — replication instrument |
-| `results/pooled_h1/retired/CHFUSD_h1.csv` | — | — | CHF/USD hourly — replication instrument |
+| `results/eurusd_features.csv` | 15,760 | 4.4 MB | EUR/USD **daily** OHLCV + engineered features, 1971-01-11 → 2026-08-10 |
+| `results/eurusd_h1.csv` | 60,056 | 4.1 MB | EUR/USD **hourly** OHLCV with tick volume, 2016-12-21 18:00 → 2026-08-18 14:00 UTC — **rolling cache, see §1.1** |
+| `results/eurusd_m15.csv` | 350,000 | 22.9 MB | EUR/USD **15-minute** OHLCV with tick volume, 2012-06-25 21:30 → 2026-07-24 22:45 UTC |
+| `results/pooled_h1/EURUSD_h1.csv` | 70,000 | 4.2 MB | EUR/USD hourly — **frozen** pooled snapshot, 2015-04-27 → 2026-07-28 UTC |
+| `results/pooled_h1/GBPUSD_h1.csv` | 70,000 | 4.5 MB | GBP/USD hourly — replication instrument, same window |
+| `results/pooled_h1/AUDUSD_h1.csv` | 70,000 | 4.1 MB | AUD/USD hourly — replication instrument, same window |
+| `results/pooled_h1/EURUSD_h1_newyork.csv` | 70,000 | 6.7 MB | EUR/USD hourly re-stamped to New-York session time |
+| `results/pooled_h1/EURUSD_m15_newyork.csv` | 350,000 | 33.5 MB | EUR/USD 15-minute re-stamped to New-York session time |
+| `results/pooled_h1/retired/CHFUSD_h1.csv` | 70,000 | 7.1 MB | CHF/USD hourly — retired instrument (see `retired/README.md`) |
+| `results/pooled_h1/retired/USDCHF_h1.csv` | 70,000 | 4.1 MB | USD/CHF hourly — retired instrument |
 | `results/yield_differential.csv` | — | 804 KB | US 10Y − DE 10Y government bond yield spread |
 | `results/policy_rate_differential.csv` | — | 432 KB | Fed funds − ECB deposit facility rate |
 | `results/inflation_differential.csv` | — | 32 KB | US − DE CPI, year-on-year |
@@ -35,6 +44,49 @@ recorded figures. If the data were incomplete or altered, that check would fail.
 | `models/` | 46 files | 24 MB | All trained artifacts (see §4) |
 
 Total working tree: **~277 MB**.
+
+---
+
+## 1.1 Frozen inputs vs. the rolling cache
+
+Not every committed CSV is the same kind of object, and conflating the two is
+what let a data rewrite go unnoticed. The inputs split into two classes, and
+`tests/fixtures/input_data_protected_sha256.json` records which is which.
+
+**FROZEN — byte-pinned.** `results/pooled_h1/*`, `results/eurusd_m15.csv` and
+`results/eurusd_features.csv` are research inputs that no running code rewrites.
+Each has one, or a small handful of, revisions in git history, and changes only
+when a human deliberately regenerates it. Their SHA-256 digests are pinned;
+`tests/test_input_data_provenance.py` fails loudly if one moves. **Three of the
+four H1 families — `h1_direction`, `h1_multiday`, `pooled_h1` — read
+`results/pooled_h1/EURUSD_h1.csv`, not the rolling cache**, so pinning this tree
+is what actually protects their committed numbers.
+
+**ROLLING — stamped, not pinned.** `results/eurusd_h1.csv` is an *operational
+cache*. `src/live_data.py::fetch_h1_market_data` writes it on every successful
+MT5/yfinance pull, so it legitimately changes whenever anyone runs a prediction
+or a retrain; it has 25 revisions, the fixed-size MT5 window sliding forward each
+time. Byte-pinning it would assert only that nobody had run the app — a
+permanently red guard cannot detect the next change, so the repository
+deliberately leaves it unpinned (the reasoning is recorded in the PINNING POLICY
+docstring of `tests/test_h1_production.py`). Instead it carries a **recorded
+provenance stamp** — digest, row count and span at the moment of stamping — plus
+structural invariants (UTC, strictly increasing unique timestamps, schema, sane
+OHLC), and the row count in §1 above must match the file on disk.
+
+**Why the stamp matters.** Two commits rewrote input data under a title that
+named something else:
+
+| Commit | Title | What it also did |
+|---|---|---|
+| `f2645a0` (2026-08-15) | *Refactor code structure for improved readability and maintainability* | full production retrain: 30 model artifacts + `results/eurusd_h1.csv` |
+| `c638f8d` (2026-08-18) | *Add unit tests for Yildirim/Toroslu/Fiore (2021) replication study* | appended 56 bars to `results/eurusd_h1.csv` and completed one partial bar |
+
+Neither rewrite invalidated a committed H1 result — the affected file is the
+rolling cache, and the families that matter read the frozen pooled snapshot —
+but neither was visible in review either. A refresh of the cache is allowed; what
+is not allowed is refreshing it silently. Re-stamp the fixture and §1 in the same
+commit that refreshes the data, and say so in the commit message.
 
 ---
 

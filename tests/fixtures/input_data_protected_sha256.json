@@ -1,0 +1,184 @@
+{
+  "_policy": {
+    "frozen": "Research INPUTS that no running code rewrites. Byte-pinned: any digest move fails loudly. Re-baselining one is a deliberate, documented act, never a side effect of another commit.",
+    "rolling": "Operational caches that the application rewrites BY DESIGN (src/live_data.py::fetch_h1_market_data writes cache_path on every successful MT5/yfinance pull). Byte-pinning these would assert only that nobody had run the app, so they carry a RECORDED provenance stamp plus structural invariants instead. The stamp is what makes a silent rewrite visible."
+  },
+  "frozen": {
+    "results/eurusd_features.csv": {
+      "sha256": "ad476688c3e1d2d584f5a5dee9b191ac5016660616fe1ce336e9890205ee02ab",
+      "n_rows": 15760,
+      "first_timestamp": "1971-01-11",
+      "last_timestamp": "2026-08-10",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "tick_volume",
+        "log_return",
+        "lag_1",
+        "lag_2",
+        "lag_3",
+        "lag_4",
+        "lag_5",
+        "bar_dynamics",
+        "bar_dynamics_lag_1",
+        "day_of_week",
+        "day_sin",
+        "day_cos",
+        "target_return"
+      ]
+    },
+    "results/eurusd_m15.csv": {
+      "sha256": "cb6698f9b61907d2dec7dc3039f6d7dcf29a4d821a48f641e83c3e3462ce6557",
+      "n_rows": 350000,
+      "first_timestamp": "2012-06-25 21:30:00+00:00",
+      "last_timestamp": "2026-07-24 22:45:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "tick_volume"
+      ]
+    },
+    "results/pooled_h1/EURUSD_h1.csv": {
+      "sha256": "92a723495b37b5878d95f5f04ab408d757e7990b0bc99aa2c9fddfdb3ec2df30",
+      "n_rows": 70000,
+      "first_timestamp": "2015-04-27 20:00:00+00:00",
+      "last_timestamp": "2026-07-28 15:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close"
+      ]
+    },
+    "results/pooled_h1/GBPUSD_h1.csv": {
+      "sha256": "efb0721fedfb4852d026b96f0ec7819fd4d48437feae341c536a36f956576534",
+      "n_rows": 70000,
+      "first_timestamp": "2015-04-27 20:00:00+00:00",
+      "last_timestamp": "2026-07-28 15:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close"
+      ]
+    },
+    "results/pooled_h1/AUDUSD_h1.csv": {
+      "sha256": "b169be951eaa02b31ee8279aa15f73725a83c1215fc8c8b6ee54e14b4d6b33ec",
+      "n_rows": 70000,
+      "first_timestamp": "2015-04-27 20:00:00+00:00",
+      "last_timestamp": "2026-07-28 15:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close"
+      ]
+    },
+    "results/pooled_h1/EURUSD_h1_newyork.csv": {
+      "sha256": "1ab99b237490466c5a5dc79df0310aeb0d4c1074fdc3e62a728f0d1c6ff15f5f",
+      "n_rows": 70000,
+      "first_timestamp": "2015-04-27 14:00:00-04:00",
+      "last_timestamp": "2026-07-28 09:00:00-04:00",
+      "columns": [
+        "ny_timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "server_timestamp",
+        "ny_hour",
+        "fx_day_hour",
+        "fx_week_day",
+        "is_dst_mismatch",
+        "server_to_ny_offset_h",
+        "broker_utc_offset_h"
+      ]
+    },
+    "results/pooled_h1/EURUSD_m15_newyork.csv": {
+      "sha256": "43c53ebd1236f152e2cea81c1540b1f4c103e924d32616bacdaf405a2464c07a",
+      "n_rows": 350000,
+      "first_timestamp": "2012-06-25 15:30:00-04:00",
+      "last_timestamp": "2026-07-24 16:45:00-04:00",
+      "columns": [
+        "ny_timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "server_timestamp",
+        "ny_hour",
+        "fx_day_hour",
+        "fx_week_day",
+        "is_dst_mismatch",
+        "server_to_ny_offset_h",
+        "broker_utc_offset_h"
+      ]
+    },
+    "results/pooled_h1/pooled_h1_run_log.csv": {
+      "sha256": "f6069825606bda82d6535577b616715bb15d4cfaa6e174d083480acdae6c307d",
+      "n_rows": 4,
+      "first_timestamp": "EURUSD",
+      "last_timestamp": "CHFUSD",
+      "columns": [
+        "pair",
+        "n_purged",
+        "n_embargoed",
+        "n_train",
+        "n_val",
+        "n_test_reserved"
+      ]
+    },
+    "results/pooled_h1/retired/CHFUSD_h1.csv": {
+      "sha256": "98cfa1dd3b5dbfd585632a6210cf9c07a179272dcc194bb6d2ea15de6d88753f",
+      "n_rows": 70000,
+      "first_timestamp": "2015-03-16 07:00:00+00:00",
+      "last_timestamp": "2026-07-28 15:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close"
+      ]
+    },
+    "results/pooled_h1/retired/USDCHF_h1.csv": {
+      "sha256": "0341fdaaaa41206df346b7f3df68f188585eb49f43fcd2ada91dae4c61318eb5",
+      "n_rows": 70000,
+      "first_timestamp": "2015-03-16 07:00:00+00:00",
+      "last_timestamp": "2026-07-28 15:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close"
+      ]
+    }
+  },
+  "rolling": {
+    "results/eurusd_h1.csv": {
+      "sha256_at_stamp": "bd3fbe641914d9af21895d5924535511281661e37068e0d84035abd274df6892",
+      "n_rows": 60056,
+      "first_timestamp": "2016-12-21 18:00:00+00:00",
+      "last_timestamp": "2026-08-18 14:00:00+00:00",
+      "columns": [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "tick_volume"
+      ],
+      "stamped_commit": "c638f8d"
+    }
+  }
+}
