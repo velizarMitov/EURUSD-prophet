@@ -181,5 +181,67 @@ conclusion was reached.
   and stated in §7.1 of the report: the registered volatility figures were earned against the
   pre-retrain artifacts, so the frozen ensemble is re-scored separately rather than reusing
   its logged number.
+- **The one-shot test block was re-scored, repeatedly, and this is the whole record.**
+  The production methodology reserves the test block `[80%:100%]` for a **single** final
+  report; it is never a search knob and never a criterion. That rule was not honoured for
+  `models/volatility/vol_metrics.json`. Disclosed here rather than corrected away: **no
+  number below has been deleted or reverted.**
+
+  The specific event that prompted this entry — commit `f2645a0`, 2026-08-15, titled
+  *"Refactor code structure for improved readability and maintainability"* — retrained 30
+  model artifacts and, as a side effect, re-read and overwrote the test-block figures:
+
+  | Reading | Date | n_test | test ensemble MAE |
+  |---|---|---:|---:|
+  | before `f2645a0` (written by `3def541`) | 2026-08-08 | 1,712 | 0.218973 |
+  | after `f2645a0` | 2026-08-15 | 1,721 | **0.216033** |
+
+  Four things are true about it, and all four are stated rather than only the convenient one:
+
+  1. **The block is reserved for a single final report, and it was scored more than once.**
+     That is a methodology violation on its face, independent of what the numbers showed.
+  2. **The second scoring was a side effect, not a decision.** `f2645a0` declared itself a
+     readability refactor. Nobody chose to spend the block; a retrain rode in under a commit
+     message that concealed it.
+  3. **No verdict anywhere in this project used the second reading.** Every volatility
+     verdict in `results/volatility_hypothesis_log.csv` is dated 2026-07-07 → 2026-08-06 and
+     every one predates `f2645a0`. The SHIP decision was made on the validation arbiter
+     (`results/volatility_seed_ensemble.csv`), whose `validation_decision` block —
+     `mt_ensemble_mae` 0.18594, CI, `cleared_bar` — is **byte-unchanged through every one of
+     these rewrites**. The contamination touched a reported figure, never a decision.
+  4. **The difference carries no information.** 0.218973 → 0.216033 is a move of **0.00294**.
+     The measured run-to-run spread of this same ensemble, at identical code, data and seeds,
+     is **0.00536** (§8.1 of `DATA.md`). The change is smaller than the noise floor of the
+     instrument that produced it. It is not a better measurement or a worse one; it is the
+     same measurement drawn again.
+
+  **The fuller record, which is worse than the event that prompted this entry.** Auditing
+  the file's whole history for this disclosure showed the re-scoring was not a one-off. The
+  test block has been re-read and overwritten on **nine** separate commits:
+
+  | Date | Commit | n_test | test ensemble MAE |
+  |---|---|---:|---:|
+  | 2026-07-07 | `0ece63c` *(file created)* | 1,712 | 0.218756 |
+  | 2026-07-10 | `21449dd` | 1,712 | 0.217550 |
+  | 2026-07-17 | `994208d` | 1,712 | 0.218682 |
+  | 2026-07-20 | `506a742` | 1,712 | 0.217309 |
+  | 2026-07-25 | `b30599f` | 1,712 | 0.216235 |
+  | 2026-08-05 | `7327e94` | 1,712 | 0.219248 |
+  | 2026-08-08 | `a73344e` | 1,712 | 0.215174 |
+  | 2026-08-08 | `3def541` | 1,712 | 0.218973 |
+  | 2026-08-15 | `f2645a0` | 1,721 | 0.216033 |
+
+  Point 4 holds across the entire table and holds harder: the full spread of all nine
+  readings is **0.004074** (0.215174 – 0.219248), still **inside** the 0.00536 run-to-run
+  noise of a single re-run. Nine re-scorings of the one-shot block produced no signal
+  whatsoever — which is the strongest available evidence that nothing was learned from
+  spending it, and no defence at all of having spent it. Point 3 also holds across the whole
+  table: `mt_ensemble_mae` = 0.18594 in every one of the nine versions, so no verdict moved.
+
+  The honest summary: a guard-rail was broken repeatedly and silently for five weeks, the
+  breakage was invisible because each retrain arrived under a commit message describing
+  something else, and it happened to cost nothing because the quantity being re-read was
+  noise-dominated. The last clause is luck, not process, and it is not offered as mitigation.
+
 - **`mit-deep-learning-book-pdf-master/`** is a third-party reference text included in the
   repository. It is not project code and is not used by any module.
