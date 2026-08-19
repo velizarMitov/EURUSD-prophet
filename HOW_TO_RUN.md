@@ -140,12 +140,38 @@ Contains the full research process — feature engineering, training, diagnostic
 ```bash
 python -m pytest -q
 ```
-Expected result: **21 passed** (smoke + unit + integration tests).
+Expected result: **530 passed** (smoke, unit, integration, no-look-ahead,
+artifact-checksum and hypothesis-registry tests).
 
 To run a single test:
 ```bash
 python -m pytest -q -k fetch_yield_differential
 ```
+
+### Enable the retrain guard (one command, once per clone)
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`.githooks/commit-msg` refuses any commit that stages a path under `models/`
+unless the message carries a line beginning with `RETRAIN:`. It exists because
+three commits in this repository titled *"Refactor code structure for improved
+readability and maintainability"* each contained a production retrain, one of
+which also spent a one-shot evaluation block before anyone noticed.
+
+Declare a genuine retrain like this:
+
+```
+Refit the volatility ensemble on the extended row set
+
+RETRAIN: 5-seed volatility ensemble, 8,605-row set
+```
+
+If you did not mean to retrain anything, `git restore --staged models/` and
+commit again. `git commit --no-verify` bypasses it, as it bypasses every hook —
+the checksum fixtures in `tests/fixtures/` remain the second line of defence.
+The hook itself is tested: `python -m pytest -q tests/test_retrain_commit_guard.py`.
 
 ---
 

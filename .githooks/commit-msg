@@ -1,0 +1,22 @@
+#!/bin/sh
+# Refuse a commit that touches models/ unless the message declares the retrain.
+#
+# Enable (once per clone):    git config core.hooksPath .githooks
+# Check it is on:             git config core.hooksPath
+#
+# This lives in commit-msg rather than pre-commit because the rule needs the
+# staged paths AND the message at the same time, and pre-commit runs before a
+# message exists. See .githooks/check_retrain_declaration.py for the full note.
+
+hook_dir=$(dirname "$0")
+
+if command -v python >/dev/null 2>&1; then
+    PY=python
+elif command -v python3 >/dev/null 2>&1; then
+    PY=python3
+else
+    echo "check_retrain_declaration: no python on PATH; skipping the retrain guard" >&2
+    exit 0
+fi
+
+exec "$PY" "$hook_dir/check_retrain_declaration.py" "$1"

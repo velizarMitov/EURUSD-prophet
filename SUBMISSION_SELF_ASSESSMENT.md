@@ -211,7 +211,8 @@ conclusion was reached.
      That is a methodology violation on its face, independent of what the numbers showed.
   2. **The second scoring was a side effect, not a decision.** `f2645a0` declared itself a
      readability refactor. Nobody chose to spend the block; a retrain rode in under a commit
-     message that concealed it.
+     message that concealed it. This is the failure mode now blocked at commit time —
+     see *Preventing the recurrence* below.
   3. **No verdict anywhere in this project used the second reading.** Every volatility
      verdict in `results/volatility_hypothesis_log.csv` is dated 2026-07-07 → 2026-08-06 and
      every one predates `f2645a0`. The SHIP decision was made on the validation arbiter
@@ -251,6 +252,17 @@ conclusion was reached.
   breakage was invisible because each retrain arrived under a commit message describing
   something else, and it happened to cost nothing because the quantity being re-read was
   noise-dominated. The last clause is luck, not process, and it is not offered as mitigation.
+
+- **Preventing the recurrence.** The three commits titled *"Refactor code structure for
+  improved readability and maintainability"* that each carried a production retrain are the
+  root cause behind both re-baselines and the spent test block above. The checksum fixtures
+  catch a moved artifact, but only afterwards, and only if someone runs the suite and reads
+  the failure. `.githooks/commit-msg` now refuses any commit that stages a path under
+  `models/` unless the message carries an explicit `RETRAIN:` declaration, moving detection
+  to the moment the commit is written. Enable with `git config core.hooksPath .githooks`;
+  26 tests in `tests/test_retrain_commit_guard.py` cover it, including end-to-end proof that
+  `git commit` is actually refused. `--no-verify` still bypasses it — this stops the
+  accident, not a determined author, which is why the checksum fixtures stay.
 
 - **`mit-deep-learning-book-pdf-master/`** is a third-party reference text included in the
   repository. It is not project code and is not used by any module.
