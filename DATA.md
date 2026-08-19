@@ -257,7 +257,7 @@ python -m src.curl_mt5_fetch        # requires a running MT5 terminal (Windows)
 ```bash
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model
-python -m pytest -q                    # 530 tests (see §8.1 for 5 known failures)
+python -m pytest -q                    # 530 tests, all passing
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
 ```
 
@@ -380,11 +380,22 @@ untouched**. It is the historical record of a pre-registered test at its own dat
 re-running a spent family's arbiter and overwriting the row would erase the audit trail
 rather than correct it.
 
-**Five known test failures.** All five are one defect: commit `f2645a0` (2026-08-15),
-titled *"Refactor code structure for improved readability and maintainability"*, retrained
-30 model artifacts without re-baselining the four `tests/fixtures/*_protected_sha256.json`
-fixtures. The guards have been red since. The same commit also re-read and rewrote the
-**one-shot test block** figures in `models/volatility/vol_metrics.json`
+**The five checksum guards, and why they were red.** Between 2026-08-15 and 2026-08-19 five
+tests failed, all of them one defect. Commit `f2645a0` (2026-08-15), titled *"Refactor code
+structure for improved readability and maintainability"*, retrained 30 model artifacts
+without re-baselining the four `tests/fixtures/*_protected_sha256.json` fixtures, and the
+guards fired on every one of the 30 — which is exactly what they exist to do.
+
+They were re-baselined on **2026-08-19**, after the reproducibility study above had finished
+measuring the current artifacts, so the fixtures now pin files whose behaviour is known
+rather than merely current. Every old→new digest is preserved in
+`tests/fixtures/PROTECTED_SET_REBASELINE_2026-08-19.json`, following the precedent set by
+`PROTECTED_SET_REBASELINE_2026-08-11.json`: nothing is silently replaced, and a permanently
+red guard is worse than a re-baselined one because it cannot detect the *next* change.
+
+Two consequences of `f2645a0` are **not** retired by that re-baseline. It also re-read and
+overwrote the **one-shot test block** in `models/volatility/vol_metrics.json`
 (n_test 1,712 → 1,721; test MAE 0.218973 → 0.216033) — a block the methodology reserves for
-a single final report. Re-baselining pinned model artifacts is a deliberate decision and is
-not bundled into this correction.
+a single final report; that is disclosed in full, with the complete rewrite history, in
+`SUBMISSION_SELF_ASSESSMENT.md` under *Known limitations*. And the commit message concealed
+a production retrain, which is now blocked at commit time rather than found afterwards.

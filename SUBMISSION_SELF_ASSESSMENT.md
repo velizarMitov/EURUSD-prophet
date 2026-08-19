@@ -107,11 +107,20 @@ offline and fails loudly if the checkout is incomplete.
 
 ### Testing (0–10)
 
-**452 test functions** across 15 files (up from 73 at the first submission), **all passing**,
-covering smoke, unit, integration, no-look-ahead, and artifact-checksum tests that prevent
-a retrain from silently altering production models. That guard fired on the 2026-08-08
-retrain and caught all nineteen moved artifacts; the fixtures were re-baselined on
-2026-08-11 with every old→new digest preserved (see *Known limitations*).
+**514 test functions** across 18 files (530 collected tests; up from 73 at the first
+submission), **all passing**, covering smoke, unit, integration, no-look-ahead, and
+artifact-checksum tests that prevent a retrain from silently altering production models.
+
+That guard has now fired twice, on both undeclared retrains, and caught every moved artifact
+both times: nineteen on the 2026-08-08 retrain (re-baselined 2026-08-11) and thirty on the
+2026-08-15 retrain in `f2645a0` (re-baselined 2026-08-19, after the reproducibility study had
+measured the new artifacts). Every old→new digest of both events is preserved in
+`tests/fixtures/PROTECTED_SET_REBASELINE_2026-08-11.json` and
+`PROTECTED_SET_REBASELINE_2026-08-19.json`. Nothing was silently replaced.
+
+Read the guard's record honestly: it did its job perfectly and it is still the *second* line
+of defence. It reports a retrain after the fact; it cannot stop one arriving under a commit
+message that describes something else. See *Known limitations*.
 
 Hypothesis testing is the project's organising principle: 15 families, 56 registered
 hypotheses, Bonferroni-corrected bars (`α = 0.05 / family_size`), moving-block bootstrap

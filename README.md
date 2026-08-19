@@ -14,7 +14,7 @@ The pipeline formally implements, evaluates, and contrasts:
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model, ~20 s
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
-python -m pytest -q                    # 452 test functions, all passing
+python -m pytest -q                    # 530 tests, all passing
 python -m src.dl_model_report          # model card for all 9 trained networks
 ```
 
@@ -46,7 +46,7 @@ since; this is the **second submission**.
 | `notebooks/01_data_preparation.ipynb` **Section 22** | Then-vs-now comparison, the volatility re-verification, external-model comparison, references |
 
 Headline changes since 23 July: **4 → 15** hypothesis families, **15 → 56** registered
-hypotheses (37 recorded as DROP), **73 → 452** test functions, and **a ten-number calendar
+hypotheses (37 recorded as DROP), **73 → 514** test functions, and **a ten-number calendar
 model that beats the production 5-seed neural ensemble on both the validation and test
 blocks** (Section 22.6) — the clearest statement of the project's thesis it has produced.
 

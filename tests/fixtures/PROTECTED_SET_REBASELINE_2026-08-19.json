@@ -1,0 +1,321 @@
+{
+  "rebaselined": "2026-08-19",
+  "reason": "Commit f2645a0 (2026-08-15), titled \"Refactor code structure for improved readability and maintainability\", contained an undeclared production retrain that moved these 30 artifacts. The checksum guard detected every one of them, which is what it exists to do, and five guard tests have been red since. These are the digests those fixtures were pinning BEFORE that retrain, preserved so the change remains auditable now that the fixtures track the current files. Re-baselining rather than leaving the tests red is deliberate and follows the 2026-08-11 precedent: a permanently failing guard cannot detect the NEXT change. This was held until the reproducibility study of 2026-08-19 had finished measuring the current artifacts, so the re-baseline pins files whose behaviour is known rather than merely current -- see DATA.md 8.1. What the re-baseline does NOT do is retire the underlying problem: the same commit also re-read the one-shot test block, which is disclosed in SUBMISSION_SELF_ASSESSMENT.md under Known limitations, and the recurrence is blocked separately at commit time.",
+  "supersedes": "PROTECTED_SET_REBASELINE_2026-08-11.json",
+  "caused_by": {
+    "commit": "f2645a0",
+    "date": "2026-08-15",
+    "subject": "Refactor code structure for improved readability and maintainability"
+  },
+  "cleared_tests": [
+    "tests/test_external_kronos.py::test_protected_set_is_sha256_identical",
+    "tests/test_h1_direction_final.py::test_protected_set_is_sha256_identical",
+    "tests/test_h1_production.py::test_protected_set_is_sha256_identical",
+    "tests/test_kronos_volatility.py::test_protected_set_sha256_identical",
+    "tests/test_macro_tier_a.py::test_protected_set_is_sha256_identical"
+  ],
+  "changed": {
+    "models/baseline/best_gbm_eurusd.pkl": {
+      "old_sha256": "b7a104b78227e911518894e6a558505dfca3783f5ca879f5f556aad4cccd66f5",
+      "new_sha256": "5ea6c76f1d9294a3222855ffe70ab6e1c5fe18e4ebe08af8478ab2c5be894bd0",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/best_gbm_regressor_eurusd.pkl": {
+      "old_sha256": "b31d6af95d91404779cd7ef84be6777cf9b82abd1c79a6ea5506f1c220b9b7b9",
+      "new_sha256": "37ad51b8b561c61222f0562e5f2bb2edcf3dbce0e9287dcb07b038f989b7b430",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/global_scaler.pkl": {
+      "old_sha256": "da609532a0dff9edffc8493dc9b0e17789779860cd8a5e770441228c16daa8b5",
+      "new_sha256": "40caf065f2cceaf4a8dc4e267e99a3e6da718731d60b3dfe8d4acefaf658e28d",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/lag_pca.pkl": {
+      "old_sha256": "cf6a4586f3ea7c78f3179861087f42269df07909558cc45ccbab7f1798c994ce",
+      "new_sha256": "49119f731e614071be0e07e3bb6c094f88435a2ce6d112829b92561af973ad3a",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/lag_scaler.pkl": {
+      "old_sha256": "ef15c6d10add0c73cd085e40e6ac6d9f4b3afd0098859a82b5c48baa0bf44a73",
+      "new_sha256": "3b43dd99de05d36b0611b8b568cb3e6fd6d60b84319568564d27e2daa57e1a3b",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/baseline/lstm_multitask_eurusd.keras": {
+      "old_sha256": "02c13e81a79c848bde8b51ece3679fe79096c5bbc1ac6f3a409d1e0f088b59a6",
+      "new_sha256": "ae7cea39225c8ad39e5c5542b1d708cad6da70711a3a91d5a983e1cc12c1f474",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_feature_scaler.pkl": {
+      "old_sha256": "654ff370fc7c49e8259281381c797a40272acd9b6597a35ba53c178ccd380ce9",
+      "new_sha256": "c8fd9d282cbc7cffda02bf13d073916d187cf587d1c1fa47c4e85fcc2c0e631d",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm.keras": {
+      "old_sha256": "5b87d9a522ea90c48715250bb790cf3a903b091cb214f7e58eeefa1992c64edd",
+      "new_sha256": "05a5e06563fa743ba7d9bc2700f36d86dc83905413471b8a19daa42105629fd9",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm_scaler.pkl": {
+      "old_sha256": "a92b1c215cb8468c4a1760b197ccf136c8085a74b7e69415e28e20618ecea54c",
+      "new_sha256": "024d8193aef0ce8d0cd1bd6e017cd92612ad11e0c2967bcc404c6255e71c80e8",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_rf_regressor.pkl": {
+      "old_sha256": "81bf9b9fd53897b87c6a2469278050e1e62d2e4d79ec48d0d15d3b63892b3143",
+      "new_sha256": "8c3baf9ce64e2381b82173a97159c969ac124d7f2f706ccb4ad85462b6446d59",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_svm_regressor.pkl": {
+      "old_sha256": "db5634f3824c82ae5bcc6041062f24fb3b6cf195091a6ee70fe691f3be7976af",
+      "new_sha256": "8ab7957ac5cefac19f6c337cc460f5cb7ec4a40423f0e39f372856bdedce2d22",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_xgb_regressor.pkl": {
+      "old_sha256": "5bfa73a697539b5a29dbc731d9f83e988aba85b14504c0a0c8520ceb65028173",
+      "new_sha256": "e2a38b4548741197372c36b4aaae8d5689d7e47d3fce197d10948bcf21795e30",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_lstm_h1.keras": {
+      "old_sha256": "e5a7f3733da3076d79a67a5e8dfaff03dabab667093e8551adc830855c6d5da9",
+      "new_sha256": "f323f8b48d57aaa35c942f99ad1c19e209728dfff8104ed518290caf888ff708",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_metrics.json": {
+      "old_sha256": "8a3f0052ea4c6c64cae5ff534eedf6885cae04c48b37ff65128fa0dd41ccba37",
+      "new_sha256": "20780689ce0238e6e5589fc9306d51d778e1c64bfe9dce27b9cd41e4d44125b5",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_scaler.pkl": {
+      "old_sha256": "b060dde08df47510665282b2af4842b74953b227465e23b8c528858896534407",
+      "new_sha256": "e5b4883e0e530e6f901aa52066f769a5ae87e4d7f2d7d3f3000877af983183be",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/global_scaler.pkl": {
+      "old_sha256": "da609532a0dff9edffc8493dc9b0e17789779860cd8a5e770441228c16daa8b5",
+      "new_sha256": "40caf065f2cceaf4a8dc4e267e99a3e6da718731d60b3dfe8d4acefaf658e28d",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/lag_pca.pkl": {
+      "old_sha256": "cf6a4586f3ea7c78f3179861087f42269df07909558cc45ccbab7f1798c994ce",
+      "new_sha256": "49119f731e614071be0e07e3bb6c094f88435a2ce6d112829b92561af973ad3a",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/lag_scaler.pkl": {
+      "old_sha256": "ef15c6d10add0c73cd085e40e6ac6d9f4b3afd0098859a82b5c48baa0bf44a73",
+      "new_sha256": "3b43dd99de05d36b0611b8b568cb3e6fd6d60b84319568564d27e2daa57e1a3b",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/vol_metrics.json": {
+      "old_sha256": "7f87b6f04c657bcc2960ab6e05f12187ca465a93f89af74f0b0f40082a0a35a5",
+      "new_sha256": "d464c9cfbdde99410a8282cdf47aff2b582ff359b23cbd53d3b9e4545e084e7f",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed42.keras": {
+      "old_sha256": "a7317d4b7c95ed3ec5de1171b965ea4444dc4b34044f6319c15ab274569e9e12",
+      "new_sha256": "f71b2da191be95ba047a1f56abb82fa471568b47e12f9a273ca7e8af57e79cc6",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed43.keras": {
+      "old_sha256": "a44e50e015ae2d4d912362c01764108199ca7d8ef140ee573c21df3a61d72e0d",
+      "new_sha256": "6f4f7d065da5a6d75d963c3023c33dfb487cc8a6c99b1cd188f48f76b9a72e96",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed44.keras": {
+      "old_sha256": "b4e9c682f766149e911736f9bc8ccc844deebd594d74badef7bb79c87e0c0dd0",
+      "new_sha256": "f9b8d8c2b3535225ecd268f306ee963fd7bbfc2460da411ed5404f9006cbaf70",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed45.keras": {
+      "old_sha256": "ead7fea460b965b250e2419a6eec66a8a0e3616517d1fde3fb404a70004a7985",
+      "new_sha256": "9cae040dcdb53dcd2e632d1ff122ee4ff74c1217dc781236cee90e4355e6f472",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed46.keras": {
+      "old_sha256": "a10e34e819c584ea6aeab44a1e998d02dbd3dce4d352d07ac09acf71dcd14531",
+      "new_sha256": "1a51a354d9a396d0d5e5db57beee9596f1f078f6db28a36f1bee79717b2901d8",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/best_gbm_eurusd.pkl": {
+      "old_sha256": "d4a4f1d062d1d226cdb0c527a5467de85911c443471b0d16d2148ca4e95dcf3e",
+      "new_sha256": "2d1c1e328026a88636a0dafea0ee2fb4b7155bd28189d2b0e57e37257cda9035",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/best_gbm_regressor_eurusd.pkl": {
+      "old_sha256": "8d214d7e62428e626112cb027591873776f5e7491c3f5c5cb82d968e89ebc10a",
+      "new_sha256": "55714f80c7db99ca301843d7ff697689105d7cf16e52c23e24cb696cb3cf6895",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/global_scaler.pkl": {
+      "old_sha256": "fefb1a9e1b9b1c0e83dadaa5d3a4e223be3c6b76697aa1299ea9224b524e5bb7",
+      "new_sha256": "4a4d79a18c97a13d31badd9f706277269e9aa836b761eb50fdffb43ceb7295d7",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/lag_pca.pkl": {
+      "old_sha256": "cf6a4586f3ea7c78f3179861087f42269df07909558cc45ccbab7f1798c994ce",
+      "new_sha256": "49119f731e614071be0e07e3bb6c094f88435a2ce6d112829b92561af973ad3a",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/lag_scaler.pkl": {
+      "old_sha256": "ef15c6d10add0c73cd085e40e6ac6d9f4b3afd0098859a82b5c48baa0bf44a73",
+      "new_sha256": "3b43dd99de05d36b0611b8b568cb3e6fd6d60b84319568564d27e2daa57e1a3b",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/lstm_multitask_eurusd.keras": {
+      "old_sha256": "1466a1a93c7bd0881dfa20d5603e7af0d98efa30a989097b3c5ef0e58c6f5af5",
+      "new_sha256": "a1a4818c63a5cc4da81f6295725e4dedbd44b60bca8912f4f335bbab5cbc2cef",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    }
+  },
+  "unchanged_count": 128,
+  "missing": []
+}
