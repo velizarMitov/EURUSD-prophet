@@ -291,24 +291,70 @@ after run. The neural comparison does not — see §8.1.
 ## 8.1 What reproduces, and to what precision
 
 Re-measured 2026-08-19 against the committed files. Not every published figure is the same
-KIND of number, and the difference matters more than the digits:
+KIND of number, and the difference matters more than the digits.
 
-| Quantity | Published | Re-measured | Status |
+**Two distinct mechanisms move numbers in this repository. They are not the same defect and
+must not be read as one:**
+
+| Mechanism | Which model | What it means |
+|---|---|---|
+| **Run-to-run nondeterminism at a fixed seed** | 5-seed LSTM ensemble | The *same* code on the *same* data with the *same* seeds (42–46) returns a *different* number on every run. TensorFlow/oneDNN CPU kernels and thread-scheduled float reductions are not bit-reproducible. |
+| **Changed inputs** | calendar model, GARCH(1,1) | The code is **fully deterministic**: identical inputs return bit-identical outputs. These figures moved because the *dataset grew* — 8,559 → 8,605 rows (§6), so **46 new rows entered the fit**. |
+
+Only the first is a reproducibility defect. The second is arithmetic behaving correctly on a
+longer sample, and re-running it on the old row set would return the old numbers exactly.
+
+| Quantity | Published | Re-measured | Mechanism |
 |---|---:|---:|---|
-| Calendar validation MAE | 0.16209 | **0.16213** | deterministic, reproduces |
-| Calendar test MAE | 0.19279 | **0.19197** | deterministic; drift is the longer row set |
-| Calendar GARCH + DoW parameters | as above | identical | deterministic, reproduces |
-| GARCH(1,1) validation MAE | 0.203794 | **0.203227** | deterministic; drift is the longer row set |
-| 5-seed LSTM ensemble validation MAE | 0.18594 | **0.18452 – 0.18988** | **not reproducible to the published precision** |
-| Ensemble verdict vs GARCH(1,1) | CLEARED | **CLEARED in 3/3 runs** | **the verdict holds** |
+| Calendar validation MAE | 0.16209 | **0.16213** | deterministic — 46 new rows |
+| Calendar test MAE | 0.19279 | **0.19197** | deterministic — 46 new rows |
+| Calendar GARCH α, β, scale | 0.0284 / 0.9685 / 0.5495 | **bit-identical** | deterministic — unmoved by the new rows |
+| Calendar DoW factors | Mon 1.291, Wed 1.271, Fri 0.275 | **Mon 1.289, Wed 1.273, Fri 0.274** | deterministic — 46 new rows. Tue, Thu, Sun unchanged |
+| GARCH(1,1) validation MAE | 0.203794 | **0.203227** | deterministic — 46 new rows |
+| 5-seed LSTM ensemble validation MAE | 0.18594 | **0.18452 – 0.18988** | **nondeterministic across runs at a fixed seed** |
+| Ensemble verdict vs GARCH(1,1) | CLEARED | **CLEARED in 3/3 runs** | the verdict holds |
 
-The neural row is the one to read carefully. Three runs of the *same code* on the *same
-data* with the *same seeds* (42–46) gave ensemble MAE 0.189877 / 0.184520 / 0.185618 — a
-spread of **0.00536**, which is comparable to the effect being measured (GARCH-relative
-ΔMAE ≈ 0.018). TensorFlow/oneDNN on CPU is not seed-deterministic, and
-`src/volatility.py::run_seed_ensemble_confirmation` says so in its own docstring. The
-registered 0.18594 falls inside that band, so it was a fair draw — but it is a draw from a
-distribution, not a fixed constant, and quoting it to six decimals overstates what is known.
+### The calendar model is deterministic; its inputs changed
+
+`src/calendar_volatility.py` is pure numpy/pandas. It contains no RNG, no GPU kernel and no
+threaded reduction, and it reproduces bit-identically given the same rows.
+
+The re-measurement confirms this directly. **The GARCH block came back bit-identical** —
+α = 0.0284, β = 0.9685, scale = 0.5495, unchanged in every digit that is printed. Only the
+day-of-week factors moved, and they moved in the **third decimal**:
+
+```
+             frozen (8,559 rows)      re-measured (8,605 rows)
+Mon               1.291          ->        1.289
+Tue               1.232          ->        1.232      (unchanged)
+Wed               1.271          ->        1.273
+Thu               1.354          ->        1.354      (unchanged)
+Fri               0.275          ->        0.274
+Sun               1.058          ->        1.058      (unchanged)
+```
+
+**The cause is the 46 new rows, not nondeterminism.** Each weekday multiplier is an average
+over the rows carrying that weekday; extending the sample by 46 daily bars adds roughly nine
+observations per weekday and nudges three of the six averages by one unit in the third
+decimal. Three factors did not move at all. The GARCH parameters, which are fitted over the
+whole sample rather than per weekday, absorbed the new rows without a printed change.
+
+Nothing about the calendar model is unstable. Re-run it on the 8,559-row vintage and the
+frozen numbers return exactly.
+
+### The LSTM ensemble is nondeterministic, at a fixed seed
+
+This is the row to read carefully, and it is a different kind of problem. Three runs of the
+*same code* on the *same data* with the *same seeds* (42–46) gave ensemble MAE
+0.189877 / 0.184520 / 0.185618 — a spread of **0.00536**, which is comparable to the effect
+being measured (GARCH-relative ΔMAE ≈ 0.018). TensorFlow/oneDNN on CPU is not
+seed-deterministic, and `src/volatility.py::run_seed_ensemble_confirmation` says so in its
+own docstring. The registered 0.18594 falls inside that band, so it was a fair draw — but it
+is a draw from a distribution, not a fixed constant, and quoting it to six decimals
+overstates what is known.
+
+Re-running this on the old row set would **not** return the old number. That is what
+separates it from the calendar row above.
 
 **What this does and does not change.** The ship gate was that both bootstrap CIs exclude
 zero at the Bonferroni bar α = 0.0167. That cleared in all three re-runs, so the volatility
