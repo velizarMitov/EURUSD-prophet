@@ -140,7 +140,7 @@ Contains the full research process — feature engineering, training, diagnostic
 ```bash
 python -m pytest -q
 ```
-Expected result: **530 passed** (smoke, unit, integration, no-look-ahead,
+Expected result: **556 passed** (smoke, unit, integration, no-look-ahead,
 artifact-checksum and hypothesis-registry tests).
 
 To run a single test:

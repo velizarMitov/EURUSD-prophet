@@ -107,7 +107,7 @@ offline and fails loudly if the checkout is incomplete.
 
 ### Testing (0–10)
 
-**514 test functions** across 18 files (530 collected tests; up from 73 at the first
+**533 test functions** across 19 files (556 collected tests; up from 73 at the first
 submission), **all passing**, covering smoke, unit, integration, no-look-ahead, and
 artifact-checksum tests that prevent a retrain from silently altering production models.
 

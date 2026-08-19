@@ -257,7 +257,7 @@ python -m src.curl_mt5_fetch        # requires a running MT5 terminal (Windows)
 ```bash
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model
-python -m pytest -q                    # 530 tests, all passing
+python -m pytest -q                    # 556 tests, all passing
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
 ```
 
