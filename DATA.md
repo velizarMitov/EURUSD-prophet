@@ -219,7 +219,13 @@ Four invariants, each enforced by unit tests rather than convention:
 4. `TimeSeriesSplit` throughout; random K-fold appears nowhere in the repository.
 
 Splits are chronological: train `[0:70%]`, validation `[70%:80%]`, test `[80%:100%]`. On the
-modelled euro-era daily set (8,559 rows) that is 5,991 / 856 / 1,712.
+modelled euro-era daily set (**8,605 rows**) that is **6,023 / 861 / 1,721**.
+`src/calendar_volatility.py::build_daily_dataset` applies its own `dropna` and yields
+**8,604** rows (6,022 / 861 / 1,721) — one row fewer, same validation and test blocks.
+
+These counts grow as the daily history extends; earlier documents record 8,559 rows
+(5,991 / 856 / 1,712). Any figure quoted against a row set is only comparable to another
+figure from the same vintage — see §8.1.
 
 ---
 
@@ -251,7 +257,7 @@ python -m src.curl_mt5_fetch        # requires a running MT5 terminal (Windows)
 ```bash
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model
-python -m pytest -q                    # 452 tests
+python -m pytest -q                    # 530 tests (see §8.1 for 5 known failures)
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
 ```
 
@@ -272,5 +278,54 @@ model = CalendarVolatilityModel(use_dow=True).fit(
 print(model.params)                                # all ten parameters
 ```
 
-Expected: validation MAE 0.16209, test MAE 0.19279 — against 0.18594 and 0.21897 for the
-five-seed neural ensemble on the identical rows.
+Expected on the current row set: **validation MAE 0.16213, test MAE 0.19197**, with
+
+```
+GARCH  α = 0.0284   β = 0.9685   scale = 0.5495
+Mon 1.289   Tue 1.232   Wed 1.273   Thu 1.354   Fri 0.274   Sun 1.058
+```
+
+This model is pure numpy/pandas and **deterministic**: those figures reproduce exactly, run
+after run. The neural comparison does not — see §8.1.
+
+## 8.1 What reproduces, and to what precision
+
+Re-measured 2026-08-19 against the committed files. Not every published figure is the same
+KIND of number, and the difference matters more than the digits:
+
+| Quantity | Published | Re-measured | Status |
+|---|---:|---:|---|
+| Calendar validation MAE | 0.16209 | **0.16213** | deterministic, reproduces |
+| Calendar test MAE | 0.19279 | **0.19197** | deterministic; drift is the longer row set |
+| Calendar GARCH + DoW parameters | as above | identical | deterministic, reproduces |
+| GARCH(1,1) validation MAE | 0.203794 | **0.203227** | deterministic; drift is the longer row set |
+| 5-seed LSTM ensemble validation MAE | 0.18594 | **0.18452 – 0.18988** | **not reproducible to the published precision** |
+| Ensemble verdict vs GARCH(1,1) | CLEARED | **CLEARED in 3/3 runs** | **the verdict holds** |
+
+The neural row is the one to read carefully. Three runs of the *same code* on the *same
+data* with the *same seeds* (42–46) gave ensemble MAE 0.189877 / 0.184520 / 0.185618 — a
+spread of **0.00536**, which is comparable to the effect being measured (GARCH-relative
+ΔMAE ≈ 0.018). TensorFlow/oneDNN on CPU is not seed-deterministic, and
+`src/volatility.py::run_seed_ensemble_confirmation` says so in its own docstring. The
+registered 0.18594 falls inside that band, so it was a fair draw — but it is a draw from a
+distribution, not a fixed constant, and quoting it to six decimals overstates what is known.
+
+**What this does and does not change.** The ship gate was that both bootstrap CIs exclude
+zero at the Bonferroni bar α = 0.0167. That cleared in all three re-runs, so the volatility
+family's conclusion stands. What does not stand is the precision: report the ensemble as
+≈ 0.186 ± 0.003, not 0.185940. Per-run detail:
+`results/volatility_verification/seed_ensemble_reproduction_2026-08-19.csv`.
+
+The pre-registered arbiter record `results/volatility_seed_ensemble.csv` is **left
+untouched**. It is the historical record of a pre-registered test at its own data vintage;
+re-running a spent family's arbiter and overwriting the row would erase the audit trail
+rather than correct it.
+
+**Five known test failures.** All five are one defect: commit `f2645a0` (2026-08-15),
+titled *"Refactor code structure for improved readability and maintainability"*, retrained
+30 model artifacts without re-baselining the four `tests/fixtures/*_protected_sha256.json`
+fixtures. The guards have been red since. The same commit also re-read and rewrote the
+**one-shot test block** figures in `models/volatility/vol_metrics.json`
+(n_test 1,712 → 1,721; test MAE 0.218973 → 0.216033) — a block the methodology reserves for
+a single final report. Re-baselining pinned model artifacts is a deliberate decision and is
+not bundled into this correction.
