@@ -278,15 +278,28 @@ model = CalendarVolatilityModel(use_dow=True).fit(
 print(model.params)                                # all ten parameters
 ```
 
-Expected on the current row set: **validation MAE 0.16213, test MAE 0.19197**, with
+Expected, to three decimals with a stated tolerance of **± 0.002**:
 
 ```
+validation MAE  0.162 ± 0.002        test MAE  0.192 ± 0.002
 GARCH  α = 0.0284   β = 0.9685   scale = 0.5495
 Mon 1.289   Tue 1.232   Wed 1.273   Thu 1.354   Fri 0.274   Sun 1.058
 ```
 
-This model is pure numpy/pandas and **deterministic**: those figures reproduce exactly, run
-after run. The neural comparison does not — see §8.1.
+**Why a tolerance on a deterministic model.** The model itself is pure numpy/pandas with no
+RNG: on a *fixed* row set it reproduces bit-identically, run after run. But the daily history
+extends, and the MAE is scored on whatever rows exist when you run it. The last growth of
+8,559 → 8,605 rows moved validation MAE by 0.00004 and test MAE by 0.00082 (§8.1); ± 0.002
+is roughly twice the larger of those, so it absorbs a comparable data refresh without
+either becoming a promise the next `git pull` breaks or growing so wide it would accept a
+genuine regression. Quoting five decimals here was a promise this repository cannot keep —
+it was correct only for the row set it was measured on, and it silently expired.
+
+`python verify_installation.py` checks the live figures against these values at this
+tolerance and says which row set it used. If it reports a miss, compare row counts first.
+
+The neural comparison carries a *different* kind of uncertainty and cannot be pinned this
+way at all — see §8.1.
 
 ## 8.1 What reproduces, and to what precision
 

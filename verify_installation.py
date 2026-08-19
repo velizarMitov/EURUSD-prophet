@@ -24,6 +24,46 @@ GREEN, RED, DIM, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[0m"
 if sys.platform == "win32":
     GREEN = RED = DIM = RESET = ""
 
+# ---------------------------------------------------------------------------
+# Comparison figures, and why every one of them carries a tolerance
+# ---------------------------------------------------------------------------
+# NONE of the numbers below is a constant. Two different things move them, and
+# the two tolerances exist for two different reasons (DATA.md section 8.1):
+#
+#   * The 5-seed LSTM ensemble is NOT reproducible at a fixed seed. Three runs
+#     of identical code on identical data with identical seeds (42-46) returned
+#     validation MAE 0.189877 / 0.184520 / 0.185618 -- a range of 0.00536, which
+#     is comparable to the ~0.018 effect the volatility family measures.
+#     TensorFlow/oneDNN CPU kernels and threaded float reductions are not
+#     bit-reproducible. Per-run detail:
+#     results/volatility_verification/seed_ensemble_reproduction_2026-08-19.csv
+#
+#     So ENSEMBLE_*_RECORDED below are single draws from a distribution, not
+#     constants. A bare `<` against them would make this check pass or fail on
+#     WHICH DRAW happened to get written down, which is not a property of the
+#     calendar model at all. The comparison therefore requires the calendar model
+#     to win by more than the ensemble's own run-to-run range, so a PASS still
+#     means something after the ensemble is retrained.
+#
+#   * The calendar model IS deterministic -- pure numpy/pandas, no RNG, bit
+#     identical on a fixed row set. Its tolerance exists because its INPUTS grow:
+#     the daily history extends and the MAE is scored on whatever rows exist at
+#     run time. The 8,559 -> 8,605 row growth moved validation MAE by 0.00004 and
+#     test MAE by 0.00082, so +/- 0.002 absorbs a comparable refresh while
+#     staying far too tight to swallow a real regression.
+#
+# The ensemble range was measured on the VALIDATION block. Reusing the same
+# absolute tolerance on the test block assumes the noise is comparable there.
+# That is an assumption rather than a measurement, and it is applied in the
+# conservative direction only: it makes this check harder to pass, never easier.
+ENSEMBLE_VAL_MAE_RECORDED = 0.18594    # one draw; measured band 0.18452 - 0.18988
+ENSEMBLE_TEST_MAE_RECORDED = 0.21897   # one draw; spread not separately measured
+ENSEMBLE_RUN_TO_RUN_MAE_RANGE = 0.00536
+
+CALENDAR_VAL_MAE_EXPECTED = 0.162      # 3 decimals + tolerance, DATA.md section 8
+CALENDAR_TEST_MAE_EXPECTED = 0.192
+CALENDAR_MAE_TOLERANCE = 0.002
+
 
 def ok(msg: str) -> None:
     print(f"  {GREEN}PASS{RESET}  {msg}")
@@ -110,10 +150,15 @@ def main() -> int:
         print(f"  {'model':<34}{'val MAE':>10}{'val R2':>9}{'test MAE':>10}{'test R2':>9}")
         print(f"  {'calendar (this run)':<34}{mv['mae']:>10.5f}{mv['r2']:>9.4f}"
               f"{mt['mae']:>10.5f}{mt['r2']:>9.4f}")
-        print(f"  {'5-seed LSTM ensemble (recorded)':<34}{0.18594:>10.5f}{0.1444:>9.4f}"
-              f"{0.21897:>10.5f}{0.1098:>9.4f}")
+        print(f"  {'5-seed LSTM ensemble (one draw)':<34}"
+              f"{ENSEMBLE_VAL_MAE_RECORDED:>10.5f}{0.1444:>9.4f}"
+              f"{ENSEMBLE_TEST_MAE_RECORDED:>10.5f}{0.1098:>9.4f}")
         print(f"  {'GARCH(1,1) (recorded)':<34}{0.20379:>10.5f}{0.0094:>9.4f}"
               f"{0.23257:>10.5f}{0.0356:>9.4f}")
+        print(f"  {DIM}the ensemble row is ONE DRAW, not a constant: identical code,"
+              f" data and seeds re-run{RESET}")
+        print(f"  {DIM}to 0.18452 - 0.18988, range {ENSEMBLE_RUN_TO_RUN_MAE_RANGE}."
+              f"  See DATA.md section 8.1.{RESET}")
         print()
         # Two deliberate differences from notebooks/00_final_report.ipynb §7.1, so the two
         # documents can be compared without wondering why they disagree in the 4th decimal:
@@ -134,10 +179,36 @@ def main() -> int:
         print("  " + "  ".join(
             f"{names[int(k)]} {v:.3f}" for k, v in sorted(p.dow_factors.items())
         ))
-        if mv["mae"] < 0.18594 and mt["mae"] < 0.21897:
-            ok("calendar model beats the recorded neural ensemble on BOTH blocks")
+        # Does the calendar model land where DATA.md section 8 says it should? The
+        # model is deterministic, so a miss here means the ROW SET differs from the
+        # documented one (compare the counts printed above) -- not that the model
+        # is flaky. Reported, never fatal: a longer history is expected, not an error.
+        for label, got, want in (
+            ("validation", mv["mae"], CALENDAR_VAL_MAE_EXPECTED),
+            ("test", mt["mae"], CALENDAR_TEST_MAE_EXPECTED),
+        ):
+            drift = abs(got - want)
+            if drift <= CALENDAR_MAE_TOLERANCE:
+                ok(f"calendar {label} MAE {got:.5f} is within {CALENDAR_MAE_TOLERANCE} "
+                   f"of the documented {want:.3f}")
+            else:
+                note(f"calendar {label} MAE {got:.5f} is {drift:.5f} off the documented "
+                     f"{want:.3f} (tolerance {CALENDAR_MAE_TOLERANCE}) — check row counts")
+
+        # The headline claim, stated so that it survives a retrain of the ensemble.
+        # Beating a single recorded draw would be luck; beating it by more than the
+        # ensemble's own run-to-run range is the claim the report actually makes.
+        val_bar = ENSEMBLE_VAL_MAE_RECORDED - ENSEMBLE_RUN_TO_RUN_MAE_RANGE
+        test_bar = ENSEMBLE_TEST_MAE_RECORDED - ENSEMBLE_RUN_TO_RUN_MAE_RANGE
+        if mv["mae"] < val_bar and mt["mae"] < test_bar:
+            ok("calendar model beats the neural ensemble on BOTH blocks by more than "
+               f"the ensemble's run-to-run range ({ENSEMBLE_RUN_TO_RUN_MAE_RANGE})")
+            note(f"bars: validation < {val_bar:.5f}, test < {test_bar:.5f}  "
+                 f"(recorded draw minus the measured spread)")
         else:
             bad("calendar model did not reproduce — investigate before believing the report")
+            note(f"needed validation < {val_bar:.5f} and test < {test_bar:.5f}; "
+                 f"got {mv['mae']:.5f} and {mt['mae']:.5f}")
             failures += 1
     except Exception as exc:  # noqa: BLE001
         bad(f"calendar model failed: {type(exc).__name__}: {exc}")
