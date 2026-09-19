@@ -1,0 +1,205 @@
+{
+  "rebaselined": "2026-09-19",
+  "reason": "A full production retrain (_train_pipeline.py) ran on 2026-09-11 and completed cleanly (rc=0, 1639.7s), moving these 18 artifacts. It was never committed: the artifacts sat staged in the working tree for 8 days while the app served them, and the one commit attempted over them was titled \"Refactor code structure for improved readability and maintainability\" -- the same message as the three historical commits that hid retrains. That commit was REFUSED by .githooks/commit-msg, which is the first time the guard added on 2026-08-19 has fired in anger. It worked. These are the digests the fixtures pinned BEFORE that retrain, preserved so the change stays auditable now that the fixtures track the current files. Re-baselining rather than leaving the five guard tests red follows the 2026-08-11 and 2026-08-19 precedent: a permanently red guard cannot detect the NEXT change. UNLIKE 2026-08-19 this re-baseline pins artifacts whose behaviour has NOT been independently re-measured -- no reproducibility study has been run against them. What the re-baseline does NOT do is settle two open items, both recorded here rather than left silent: (1) the retrain regenerated the one-shot test-block report in models/volatility/vol_metrics.json (test_ensemble_mae 0.216033 -> 0.214985, test_ensemble_r2 0.1162 -> 0.1143). _train_pipeline.py emits that report by design on every run ('[volatility] ONE-SHOT test report' in results/retrain.log), so this is the pipeline behaving as specified, not a rogue read -- but it is the same surface f2645a0 is remembered for and it is disclosed, not buried. (2) results/volatility_seed_ensemble.csv was NOT regenerated, so the family's pre-registered VALIDATION gate (n_val=856, arbiter validation[70:80], CLEARED) still describes the PREVIOUS 5-seed ensemble. The gate is untouched and remains the registered verdict; the artifacts it was measured against no longer exist on disk. Any future work that reuses models/volatility/ as a 'frozen validated artifact' must reckon with that gap first.",
+  "supersedes": "PROTECTED_SET_REBASELINE_2026-08-19.json",
+  "caused_by": {
+    "kind": "uncommitted retrain, detected at commit time by .githooks/commit-msg",
+    "command": "python _train_pipeline.py",
+    "finished_at": "2026-09-11 07:13:14",
+    "elapsed_s": 1639.7,
+    "returncode": 0,
+    "evidence": "results/retrain.log ('=== RETRAIN EXIT rc=0 elapsed=1639.7s at=2026-09-11 07:13:14 ===')",
+    "declared_in": "the RETRAIN: line of the commit that carries this file"
+  },
+  "cleared_tests": [
+    "tests/test_external_kronos.py::test_protected_set_is_sha256_identical",
+    "tests/test_h1_direction_final.py::test_protected_set_is_sha256_identical",
+    "tests/test_h1_production.py::test_protected_set_is_sha256_identical",
+    "tests/test_kronos_volatility.py::test_protected_set_sha256_identical",
+    "tests/test_macro_tier_a.py::test_protected_set_is_sha256_identical"
+  ],
+  "changed": {
+    "models/baseline/lstm_multitask_eurusd.keras": {
+      "old_sha256": "ae7cea39225c8ad39e5c5542b1d708cad6da70711a3a91d5a983e1cc12c1f474",
+      "new_sha256": "a48b03f8ce4096d0b2ad35611946fbfa15bcabde81d5d7d05bb95b8070389cd3",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_feature_scaler.pkl": {
+      "old_sha256": "c8fd9d282cbc7cffda02bf13d073916d187cf587d1c1fa47c4e85fcc2c0e631d",
+      "new_sha256": "958b3baa6ce57266c7292a62d0787b229727de8125cfdc21d270e7f6264707e7",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm.keras": {
+      "old_sha256": "05a5e06563fa743ba7d9bc2700f36d86dc83905413471b8a19daa42105629fd9",
+      "new_sha256": "09d58a592ed3b186db9f169d28245d2f0db8e0855690d0baad62479974a054d5",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_lstm_scaler.pkl": {
+      "old_sha256": "024d8193aef0ce8d0cd1bd6e017cd92612ad11e0c2967bcc404c6255e71c80e8",
+      "new_sha256": "7e28ba80020bbd942eca4c4ef14b9e16bc6bb358b601f5d4f15b0900c84432d6",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_rf_regressor.pkl": {
+      "old_sha256": "8c3baf9ce64e2381b82173a97159c969ac124d7f2f706ccb4ad85462b6446d59",
+      "new_sha256": "df7673821ebbe509b3d191b2aec6c10256e4cb9cda435ae79fce468571f55a8c",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_svm_regressor.pkl": {
+      "old_sha256": "8ab7957ac5cefac19f6c337cc460f5cb7ec4a40423f0e39f372856bdedce2d22",
+      "new_sha256": "84fa86542bbf0a4382574768b5905de326a51e33c0254c7d0a25471ea952dfda",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/h1_xgb_regressor.pkl": {
+      "old_sha256": "e2a38b4548741197372c36b4aaae8d5689d7e47d3fce197d10948bcf21795e30",
+      "new_sha256": "ae358cd136a60d14d08f75c57a04e7e906eed6a3f368070ae8a18def96c2d456",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_lstm_h1.keras": {
+      "old_sha256": "f323f8b48d57aaa35c942f99ad1c19e209728dfff8104ed518290caf888ff708",
+      "new_sha256": "b7008db909d0531234d321a6851bceba1a3e848e06d0c9dda7841de4a78aba93",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_metrics.json": {
+      "old_sha256": "20780689ce0238e6e5589fc9306d51d778e1c64bfe9dce27b9cd41e4d44125b5",
+      "new_sha256": "f1b497193528ce6492891f5bdee77d7ed75ac7f9084265a5118d4f5b736fc4cb",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/ti_lstm_h1/ti_scaler.pkl": {
+      "old_sha256": "e5b4883e0e530e6f901aa52066f769a5ae87e4d7f2d7d3f3000877af983183be",
+      "new_sha256": "54ed8649b81c201b1cfc657a2ca7730399820b31bef02eead316d3b8a5a68edc",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/vol_metrics.json": {
+      "old_sha256": "d464c9cfbdde99410a8282cdf47aff2b582ff359b23cbd53d3b9e4545e084e7f",
+      "new_sha256": "654a94b2cefa52857f12364e061e7794c4a3a137d36d9074efc2ce15d9f7ebc9",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed42.keras": {
+      "old_sha256": "f71b2da191be95ba047a1f56abb82fa471568b47e12f9a273ca7e8af57e79cc6",
+      "new_sha256": "8773834aa7b4959893080dca3ec7caa25ccea91c217eac65af3f555e79929d07",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed43.keras": {
+      "old_sha256": "6f4f7d065da5a6d75d963c3023c33dfb487cc8a6c99b1cd188f48f76b9a72e96",
+      "new_sha256": "4c61c64d7c8295d04a40f545737332d39f44d03cad7437bebc6aba561ac6b2e7",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed44.keras": {
+      "old_sha256": "f9b8d8c2b3535225ecd268f306ee963fd7bbfc2460da411ed5404f9006cbaf70",
+      "new_sha256": "f48a684ff18b62750a6ad44ce19ba1ba403714cb85868691373fe999a5b77219",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed45.keras": {
+      "old_sha256": "9cae040dcdb53dcd2e632d1ff122ee4ff74c1217dc781236cee90e4355e6f472",
+      "new_sha256": "29e031de3e8209401b8ff66707625fbce363f2deb213fb315811bcae24f104ea",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/volatility/volatility_lstm_seed46.keras": {
+      "old_sha256": "1a51a354d9a396d0d5e5db57beee9596f1f078f6db28a36f1bee79717b2901d8",
+      "new_sha256": "f7aa6694416dd215fb05126f0d3fe7c247cb4f0390188183e173deb201ca3406",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/global_scaler.pkl": {
+      "old_sha256": "4a4d79a18c97a13d31badd9f706277269e9aa836b761eb50fdffb43ceb7295d7",
+      "new_sha256": "042ad1a4b5efbbd6abc393a45584aa43eee4a296d0d1e2ca3300744bb590f2ca",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    },
+    "models/with_macro/lstm_multitask_eurusd.keras": {
+      "old_sha256": "a1a4818c63a5cc4da81f6295725e4dedbd44b60bca8912f4f335bbab5cbc2cef",
+      "new_sha256": "2ef37f954418550d192ab4f40abf35c8f8a8f2af6fca9feef92d8be9d6597c1f",
+      "pinned_by": [
+        "h1_production_protected_sha256.json",
+        "h_dir_final_protected_sha256.json",
+        "kronos_protected_sha256.json",
+        "macro_tier_a_protected_sha256.json"
+      ]
+    }
+  },
+  "unchanged_count": 176,
+  "missing": []
+}
