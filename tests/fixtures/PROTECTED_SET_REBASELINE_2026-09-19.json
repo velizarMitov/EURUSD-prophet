@@ -201,5 +201,19 @@
     }
   },
   "unchanged_count": 176,
-  "missing": []
+  "missing": [],
+  "partially_reverted": {
+    "date": "2026-09-19",
+    "paths": [
+      "models/volatility/vol_metrics.json",
+      "models/volatility/volatility_lstm_seed42.keras",
+      "models/volatility/volatility_lstm_seed43.keras",
+      "models/volatility/volatility_lstm_seed44.keras",
+      "models/volatility/volatility_lstm_seed45.keras",
+      "models/volatility/volatility_lstm_seed46.keras"
+    ],
+    "why": "The 6 volatility artifacts moved by the 2026-09-11 retrain were REVERTED to their pre-retrain state. results/volatility_seed_ensemble.csv -- the family's pre-registered ship gate -- describes the PREVIOUS 5-seed ensemble, and the family's validation arbiter is SPENT, so the gate cannot be re-earned on historical data. Reverting is the only option that makes the registered gate describe the artifacts actually serving, without spending a spent arbiter. It is free: results/eurusd_features.csv never changed, so both seed sets were fit on the IDENTICAL 8,605-row block, and the four non-.keras volatility artifacts (global_scaler, lag_pca, lag_scaler, lstm_time_steps) are BIT-IDENTICAL across the retrain -- exactly as deterministic sklearn fits on unchanged data must be. The seed sets therefore differ by TF/oneDNN nondeterminism alone, which is the very thing 5-seed ensembling exists to average over. The new seeds scored marginally better on the one-shot TEST block (0.214985 vs 0.216033); that number was deliberately NOT used as a tiebreak, because selecting artifacts on the one-shot block is the data-snooping the methodology forbids.",
+    "fixture_entries": "the 4 live fixtures pin old_sha256 again for these 6 paths; the other 12 stay at new_sha256",
+    "alternative_not_taken": "Reproduction rather than revert (re-run volatility training on the unchanged train block and check the registered validation numbers reproduce within tolerance) is precedented -- DATA.md 8.1 did exactly that on 2026-08-19 and reports \"CLEARED in 3/3 runs\". It remains available if the new seeds are ever wanted; it was not taken now because it spends compute to bless an object statistically indistinguishable from the one restored here for free."
+  }
 }
