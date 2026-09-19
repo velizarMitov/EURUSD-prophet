@@ -276,7 +276,7 @@
             const g = vf.vs_garch_baseline || {};
             const validated = g.validated === true;
             const badge = validated
-                ? '<span class="badge price-only" title="The 5-seed ensemble beat a train-only-fit GARCH(1,1) baseline on the held-out validation arbiter with Bonferroni-corrected bootstrap CIs excluding 0 (see results/volatility_seed_ensemble.csv). This is the only neural model in this project with a confirmed edge over its honest baseline.">✓ validated vs GARCH(1,1)</span>'
+                ? '<span class="badge price-only" title="Beats a train-only-fit GARCH(1,1) on the validation arbiter (Bonferroni-corrected bootstrap CIs excluding 0, results/volatility_seed_ensemble.csv). GARCH(1,1) is NOT the strongest baseline: the 2026-08-07 verification (volatility_hypothesis_log.csv row 3) found the edge is concentrated in Friday rows and is a weekday effect, and a GARCH(1,1) multiplied by a 6-number day-of-week table beats this ensemble outright (MAE 0.20521 vs 0.21925, dMAE -0.01403 CI95 [-0.01773,-0.01073]).">✓ beats GARCH(1,1) — but a GARCH×day-of-week lookup beats it</span>'
                 : '<span class="badge experimental" title="Validation evidence unavailable in vol_metrics.json — treat as unvalidated.">unvalidated</span>';
             const ctx = (typeof g.ensemble_mae_pct === 'number' && typeof g.garch_mae_pct === 'number')
                 ? `Validation MAE ${g.ensemble_mae_pct.toFixed(4)}% vs GARCH ${g.garch_mae_pct.toFixed(4)}% ` +
