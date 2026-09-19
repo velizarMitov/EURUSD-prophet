@@ -25,7 +25,7 @@ change — see §1.1.
 | File | Rows | Size | Content |
 |---|---:|---:|---|
 | `results/eurusd_features.csv` | 15,760 | 4.4 MB | EUR/USD **daily** OHLCV + engineered features, 1971-01-11 → 2026-08-10 |
-| `results/eurusd_h1.csv` | 60,056 | 4.1 MB | EUR/USD **hourly** OHLCV with tick volume, 2016-12-21 18:00 → 2026-08-18 14:00 UTC — **rolling cache, see §1.1** |
+| `results/eurusd_h1.csv` | 60,136 | 4.1 MB | EUR/USD **hourly** OHLCV with tick volume, 2017-01-20 02:00 → 2026-09-18 22:00 UTC — **rolling cache, see §1.1** |
 | `results/eurusd_m15.csv` | 350,000 | 22.9 MB | EUR/USD **15-minute** OHLCV with tick volume, 2012-06-25 21:30 → 2026-07-24 22:45 UTC |
 | `results/pooled_h1/EURUSD_h1.csv` | 70,000 | 4.2 MB | EUR/USD hourly — **frozen** pooled snapshot, 2015-04-27 → 2026-07-28 UTC |
 | `results/pooled_h1/GBPUSD_h1.csv` | 70,000 | 4.5 MB | GBP/USD hourly — replication instrument, same window |
@@ -81,6 +81,7 @@ named something else:
 |---|---|---|
 | `f2645a0` (2026-08-15) | *Refactor code structure for improved readability and maintainability* | full production retrain: 30 model artifacts + `results/eurusd_h1.csv` |
 | `c638f8d` (2026-08-18) | *Add unit tests for Yildirim/Toroslu/Fiore (2021) replication study* | appended 56 bars to `results/eurusd_h1.csv` and completed one partial bar |
+| `4cc7920` + `e77a4eb` (2026-09-19) | *Declare the 2026-09-11 production retrain…* + *Forward ledgers and serving caches…* | re-stamped the cache after the 2026-09-11 retrain refreshed it and 8 days of live serving appended to it: 60,056 → 60,136 rows. The MT5 window **slid forward**, so the file also LOST its earliest bars — first row 2016-12-21 18:00 → 2017-01-20 02:00, about 30 days of leading history gone. That matters for the SMA504/RSI_24 trailing warm-ups, which consume leading rows; the frozen `pooled_h1/` snapshot the H1 families actually score on is unaffected. Declared, not silent — unlike the two rows above. |
 
 Neither rewrite invalidated a committed H1 result — the affected file is the
 rolling cache, and the families that matter read the frozen pooled snapshot —

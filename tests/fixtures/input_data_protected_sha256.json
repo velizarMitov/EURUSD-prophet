@@ -166,10 +166,10 @@
   },
   "rolling": {
     "results/eurusd_h1.csv": {
-      "sha256_at_stamp": "bd3fbe641914d9af21895d5924535511281661e37068e0d84035abd274df6892",
-      "n_rows": 60056,
-      "first_timestamp": "2016-12-21 18:00:00+00:00",
-      "last_timestamp": "2026-08-18 14:00:00+00:00",
+      "sha256_at_stamp": "09989992912edac33c618fb8e72e26910ffcf9b67b97140d89e7631c75269a77",
+      "n_rows": 60136,
+      "first_timestamp": "2017-01-20 02:00:00+00:00",
+      "last_timestamp": "2026-09-18 22:00:00+00:00",
       "columns": [
         "time",
         "open",
@@ -178,7 +178,8 @@
         "close",
         "tick_volume"
       ],
-      "stamped_commit": "c638f8d"
+      "stamped_commit": "e77a4eb",
+      "stamp_note": "Re-stamped 2026-09-19. The 2026-09-11 production retrain (declared in 4cc7920) refreshed this cache and 8 days of live serving appended to it; e77a4eb committed the final state. The MT5 window SLID FORWARD: the file gained recent bars and LOST its earliest ones (first_timestamp 2016-12-21 18:00 -> 2017-01-20 02:00, ~30 days of leading history). Recorded because trailing warm-ups (SMA504, RSI_24) consume leading rows. The frozen pooled_h1/ snapshot that h1_direction, h1_multiday and pooled_h1 actually score on is untouched, so no committed H1 result moves."
     }
   }
 }
