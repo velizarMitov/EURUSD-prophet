@@ -1,0 +1,74 @@
+{
+  "family": "metalabel",
+  "run_at_utc": "2026-09-20T06:07:59.229760+00:00",
+  "pre_registration": "results/metalabel/PRE_REGISTRATION.md",
+  "registry": "results/metalabel_hypothesis_log.csv",
+  "family_arithmetic": {
+    "feature_log_rows": 9,
+    "new_conditions": 3,
+    "family_size": 12,
+    "alpha": 0.004166666666666667,
+    "alpha_if_c1_dropped": 0.004545454545454546,
+    "held_at_registered_size": true,
+    "repo_convention_self_contained_alpha": 0.016666666666666666
+  },
+  "design_effect": {
+    "n_rows": 7,
+    "se_ratios": [
+      1.0520194660581235,
+      1.1192093091515565,
+      1.019157852724007,
+      0.9420388324143518,
+      0.9727877169409108,
+      1.0171859176743907,
+      0.9644162141857014
+    ],
+    "deff_median": 1.0346671911150924,
+    "deff_max": 1.2526294776915043
+  },
+  "daily_split": {
+    "n": 8605,
+    "train_end": 6023,
+    "val_end": 6884,
+    "n_val": 861,
+    "n_test_reserved": 1721
+  },
+  "h1_split": {
+    "n": 69349,
+    "train_end": 48544,
+    "val_end": 58946,
+    "val_start_scored": 48568,
+    "n_train": 48543,
+    "n_val": 10378,
+    "n_purged": 1,
+    "n_embargoed": 24,
+    "n_test_reserved": 10403
+  },
+  "c0_years_to_resolve": {
+    "3pp": {
+      "factor": 18.326390204444454,
+      "n_val_needed": 15779,
+      "arbiter_years": 60.45602285833975,
+      "total_history_years": 604.5602285833975,
+      "shortfall_vs_existing": 22.39111957716287
+    },
+    "2pp": {
+      "factor": 41.23437796,
+      "n_val_needed": 35503,
+      "arbiter_years": 136.0260514312644,
+      "total_history_years": 1360.2605143126439,
+      "shortfall_vs_existing": 50.38001904861644
+    }
+  },
+  "comparisons_spent": 0,
+  "cells_evaluated": 0,
+  "models_loaded": 0,
+  "fits_performed": 0,
+  "registry_all_metrics_blank": true,
+  "registry_all_rows_unspent": true,
+  "refit_status": "HOLD / NO GO (owner ruling); precedented path in PRE_REGISTRATION \u00a78",
+  "verdict": "Every cell UNDERPOWERED \u2014 NO DECISION; C1 INFEASIBLE-AS-SPECIFIED; zero alpha spent.",
+  "python": "3.13.5",
+  "numpy": "2.2.6",
+  "pandas": "2.3.3"
+}

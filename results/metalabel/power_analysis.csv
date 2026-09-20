@@ -1,0 +1,4 @@
+cell,n1,n0,n_source,alpha,power,deff,mde_just_significant_pp,mde_80pct_power_pp,mde_80pct_power_x_deff_pp,n_required_per_cell_for_floor,smaller_cell_pct_of_required,economic_floor_pp,verdict
+C0_daily_disagree_vs_agree,353,508,ASSUMED: forward-log rate 20/49 = 40.8% of 861,0.004166666666666667,0.8,1.0346671911150924,9.927,12.8428,13.0636,7634,4.6,3.0,UNDERPOWERED — NO DECISION
+C1_proposal_gbm_vs_lstm,3585,6793,MEASURED: H_dir.2 McNemar b+c = 1734+1851,0.004166666666666667,0.8,1.0346671911150924,2.9574,3.8261,3.8919,7634,47.0,3.0,UNDERPOWERED — NO DECISION
+C2_top_vs_bottom_tercile,3459,3459,ASSUMED: equal thirds of 10378,0.004166666666666667,0.8,1.0346671911150924,3.4449,4.4568,4.5333,7634,45.3,3.0,UNDERPOWERED — NO DECISION
