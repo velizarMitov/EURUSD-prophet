@@ -4,14 +4,26 @@
 
 Why this exists
 ---------------
-Three commits in this repository's history are titled *"Refactor code structure
-for improved readability and maintainability"* and each one contains a production
-retrain:
+Six commits in this repository's history are titled *"Refactor code structure
+for improved readability and maintainability"* and each one moved production
+artifacts under models/ (counts are paths changed, from `git show --name-only`):
 
-    82b45ee  2026-08-??   retrain
-    f2645a0  2026-08-15   retrain -- 30 artifacts, AND a re-read of the one-shot
-                          test block in models/volatility/vol_metrics.json
-    d61d033  2026-08-??   retrain
+    d222ecc  2026-06-21   10 artifacts  (title also says "and remove redundant sections")
+    0ece63c  2026-07-07   10 artifacts
+    b30599f  2026-07-25   18 artifacts
+    a73344e  2026-08-08   12 artifacts
+    3def541  2026-08-08   17 artifacts
+    f2645a0  2026-08-15   30 artifacts, AND a re-read of the one-shot test block
+                          in models/volatility/vol_metrics.json
+
+97 modifications in total. An earlier version of this note counted three and
+listed 82b45ee and d61d033; both touched ZERO model artifacts. They are
+same-titled serving-churn commits that happen to share dates with the two
+fixture re-baselines (8a02c9b on 2026-08-11, 5c0fe0d on 2026-08-19), so the list
+had conflated commits *around* the incidents with commits that *hid* one. Only
+f2645a0 of the original three was right. The list above was rebuilt from git on
+2026-09-21, not from memory -- the "2026-08-??" placeholders it replaces were the
+tell that the first one was not.
 
 The damage was not the retraining. It was that nobody could see it had happened.
 The checksum guard in `tests/fixtures/*_protected_sha256.json` catches a moved
@@ -19,6 +31,15 @@ artifact, but only *afterwards*, and only if someone runs the suite and reads th
 failure rather than re-baselining it away. By then the retrain is already history
 under a message describing something else, and in `f2645a0` it had already spent
 a one-shot evaluation block that the methodology reserves for a single report.
+
+What the log can evidence is narrower still. `POST /api/retrain` truncates
+`results/retrain.log` on every launch, and until 2026-09-21 nothing preserved the
+previous run's log, so 2026-09-11 is the earliest retrain the log can EVIDENCE --
+not the earliest that occurred. Git bounds models/ movement back to 2026-06-20;
+before the repository existed there is no evidence of either kind. Since
+2026-09-21 `src/retrain_log.py` archives each log before the next launch
+truncates it, and `src/artifact_provenance.py` surfaces served artifacts that
+differ from the fixture-pinned declared set on the dashboard.
 
 This check moves the detection to the moment the commit is written, where it is
 still free to fix.
@@ -126,11 +147,12 @@ COMMIT REFUSED -- this commit touches models/ but does not declare a retrain.
 
       RETRAIN: volatility 5-seed ensemble, refit on the 8,605-row set
 
-  Three commits in this repository titled "Refactor code structure for improved
-  readability and maintainability" each hid a production retrain. One of them
-  (f2645a0) also re-read the one-shot test block in vol_metrics.json, spending an
-  evaluation block the methodology reserves for a single final report. Nobody saw
-  it for four days because the message described something else.
+  Six commits in this repository titled "Refactor code structure for improved
+  readability and maintainability" each hid a production retrain (97 artifacts,
+  2026-06-21 to 2026-08-15). One of them (f2645a0) also re-read the one-shot test
+  block in vol_metrics.json, spending an evaluation block the methodology
+  reserves for a single final report. Nobody saw it for four days because the
+  message described something else.
 
   If you did NOT mean to retrain anything, unstage the artifacts instead:
 

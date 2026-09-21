@@ -1,9 +1,12 @@
 """The commit-time guard that stops a retrain arriving under an unrelated message.
 
-Three commits titled "Refactor code structure for improved readability and
-maintainability" each contained a production retrain; `f2645a0` also re-read the
-one-shot test block in `models/volatility/vol_metrics.json` while doing it. The
-checksum fixtures caught the moved artifacts, but only after the fact.
+Six commits titled "Refactor code structure for improved readability and
+maintainability" moved production artifacts (d222ecc, 0ece63c, b30599f, a73344e,
+3def541, f2645a0 -- 97 modifications between 2026-06-21 and 2026-08-15); `f2645a0`
+also re-read the one-shot test block in `models/volatility/vol_metrics.json` while
+doing it. An earlier version of this note counted three and named two commits
+(82b45ee, d61d033) that touched no model artifact at all. The checksum fixtures
+caught the moved artifacts, but only after the fact.
 
 `.githooks/commit-msg` refuses any commit that stages a path under `models/`
 unless the message carries a `RETRAIN:` declaration. These tests cover the

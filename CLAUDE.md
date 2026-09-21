@@ -65,10 +65,25 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
 
 4. **A commit that touches `models/` must declare the retrain.** `.githooks/commit-msg`
    (enable once: `git config core.hooksPath .githooks`) refuses any commit staging a path
-   under `models/` unless the message carries a `RETRAIN:` line. Three commits titled
-   *"Refactor code structure for improved readability and maintainability"* each hid a
-   production retrain; `f2645a0` also re-read the one-shot test block while doing it. Never
-   bundle a retrain into a commit about something else, and never `--no-verify` past this.
+   under `models/` unless the message carries a `RETRAIN:` line. Six commits titled
+   *"Refactor code structure for improved readability and maintainability"* moved production
+   artifacts: `d222ecc` (2026-06-21, 10; its title also says *"and remove redundant
+   sections"*), `0ece63c` (2026-07-07, 10), `b30599f` (2026-07-25, 18), `a73344e`
+   (2026-08-08, 12), `3def541` (2026-08-08, 17), `f2645a0` (2026-08-15, 30) — 97 artifact
+   modifications; `f2645a0` also re-read the one-shot test block while doing it. An earlier
+   version of this list named `82b45ee` and `d61d033`; both touched zero model artifacts.
+   They are same-titled serving-churn commits dated to the two clean-ups (`8a02c9b`,
+   `5c0fe0d`), so the list had conflated *commits around the incidents* with *commits that
+   hid a retrain*. Only `f2645a0` of the original three was correct. What the log can
+   evidence is narrower than what git can: `POST /api/retrain` truncates
+   `results/retrain.log` on every launch, and until 2026-09-21 nothing preserved the previous
+   run, so **2026-09-11 is the earliest retrain the log can EVIDENCE, not the earliest that
+   occurred** — git bounds `models/` movement back to 2026-06-20. Since 2026-09-21
+   `src/retrain_log.py` archives each log to `results/retrain_logs/` before the next launch
+   truncates it, and `src/artifact_provenance.py` (`GET /api/provenance`, dashboard banner)
+   reports served `models/` artifacts that differ from the fixture-pinned declared set as
+   *"undeclared for N days"*. Never bundle a retrain into a commit about something else, and
+   never `--no-verify` past this.
 
 ## Notebook specifics
 
