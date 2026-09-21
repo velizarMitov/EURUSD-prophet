@@ -82,10 +82,22 @@ def test_guard_raises_not_warns_when_split_is_tampered():
 
 # ── 3. the module loads no model and fits nothing ─────────────────────────────
 
-def test_module_source_loads_no_model_and_calls_no_fit():
-    """Checked on the AST, not the raw text, so the module's own docstring
-    (which SAYS 'no .fit() is called') cannot trip or satisfy it."""
-    tree = ast.parse(open(SRC, encoding='utf-8').read())
+BANNED_METHODS = ('fit', 'fit_transform', 'predict', 'predict_proba', 'load_model', 'load')
+BANNED_LIBS = ('joblib', 'xgboost', 'keras', 'tensorflow', 'torch', 'sklearn')
+BANNED_MODULES = ('src.inference', 'src.paper_trading', 'src.h1_direction_model',
+                  'src.volatility', 'src.features', 'src.live_data', 'api')
+
+
+def assert_no_model_access(source, label='source'):
+    """Raise AssertionError if `source` calls a fitting/loading method, calls
+    load_model(), or imports a model library or a serving module.
+
+    Checked on the AST, not the raw text, so a docstring that SAYS 'no .fit()
+    is called' can neither trip it nor satisfy it. The original text-based
+    version of this guard false-positived on exactly that docstring; the AST
+    rewrite that replaced it had no test proving it still fires, which is why
+    it is a function now -- the negative tests below feed it real violations."""
+    tree = ast.parse(source)
     called_attrs, called_names, imported = set(), set(), set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -97,14 +109,58 @@ def test_module_source_loads_no_model_and_calls_no_fit():
             imported |= {a.name.split('.')[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
-    for banned in ('fit', 'fit_transform', 'predict', 'predict_proba', 'load_model', 'load'):
-        assert banned not in called_attrs, f'src/metalabel.py calls .{banned}(): it must not touch a model'
-    assert 'load_model' not in called_names
-    for lib in ('joblib', 'xgboost', 'keras', 'tensorflow', 'torch', 'sklearn'):
-        assert lib not in imported, f'metalabel imports {lib}'
-    for forbidden in ('src.inference', 'src.paper_trading', 'src.h1_direction_model',
-                      'src.volatility', 'src.features', 'src.live_data', 'api'):
-        assert forbidden not in imported, f'metalabel imports {forbidden}'
+    for banned in BANNED_METHODS:
+        assert banned not in called_attrs, f'{label} calls .{banned}(): it must not touch a model'
+    assert 'load_model' not in called_names, f'{label} calls load_model()'
+    for lib in BANNED_LIBS:
+        assert lib not in imported, f'{label} imports {lib}'
+    for forbidden in BANNED_MODULES:
+        assert forbidden not in imported, f'{label} imports {forbidden}'
+
+
+def test_module_source_loads_no_model_and_calls_no_fit():
+    assert_no_model_access(open(SRC, encoding='utf-8').read(), 'src/metalabel.py')
+
+
+@pytest.mark.parametrize('violation, expected', [
+    ('model = Thing()\nmodel.fit(X, y)\n', r'calls \.fit\(\)'),
+    ('scaler.fit_transform(X)\n', r'calls \.fit_transform\(\)'),
+    ('p = clf.predict_proba(X)[:, 1]\n', r'calls \.predict_proba\(\)'),
+    ('obj = joblib.load(path)\n', r'calls \.load\(\)'),
+    ('from keras.models import load_model\nm = load_model(p)\n', r'load_model|keras'),
+    ('import xgboost as xgb\n', r'imports xgboost'),
+    ('from src.inference import PredictionService\n', r'imports src\.inference'),
+    ('import api\n', r'imports api'),
+    ('def f():\n    return getattr(m, "x").fit()\n', r'calls \.fit\(\)'),
+], ids=['fit', 'fit_transform', 'predict_proba', 'joblib.load', 'load_model',
+        'import-xgboost', 'from-src.inference', 'import-api', 'nested-fit'])
+def test_no_model_access_guard_fires_on_a_real_violation(violation, expected):
+    """The guard must BITE. Each case is a genuine model touch of the kind the
+    family must never make; a guard that only ever passes guards nothing."""
+    with pytest.raises(AssertionError, match=expected):
+        assert_no_model_access(violation, 'probe')
+
+
+def test_no_model_access_guard_ignores_the_words_in_a_docstring():
+    """The false positive that forced the AST rewrite, pinned: the words
+    '.fit(' and 'load_model' in a string literal are not calls."""
+    benign = (
+        '"""This module never calls .fit() and never calls load_model().\n'
+        'It also does not import joblib or src.inference."""\n'
+        "BANNED = ('fit', 'load_model', 'joblib')\n"
+        "def describe():\n"
+        "    return 'no .fit() here'\n"
+    )
+    assert_no_model_access(benign, 'probe')          # must NOT raise
+
+
+def test_no_model_access_guard_is_the_one_applied_to_the_module():
+    """The negative tests above exercise assert_no_model_access; this pins that
+    the positive test on src/metalabel.py goes through the same function, so
+    the two cannot drift apart."""
+    import inspect
+    src = inspect.getsource(test_module_source_loads_no_model_and_calls_no_fit)
+    assert 'assert_no_model_access(' in src
 
 
 def test_module_never_names_a_models_dir_artifact():
