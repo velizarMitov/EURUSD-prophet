@@ -18,12 +18,23 @@ sys.path.insert(0, BASE_DIR)
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 from src.inference import PredictionService
+from src.retrain_log import archive_previous
+from src.artifact_provenance import ProvenanceMonitor
 
 with open(os.path.join(BASE_DIR, 'config.json')) as f:
     CONFIG = json.load(f)
 
 app = FastAPI(title="EURUSD Multi-Task Production Predictor API")
 service = PredictionService(BASE_DIR, CONFIG)
+
+# Served-vs-declared digest check (src/artifact_provenance.py). Runs once here so
+# the console says so at startup, again after every hot-reload, and on demand at
+# GET /api/provenance for the dashboard banner. The 2026-09-11 retrain served
+# undeclared artifacts for eight days with no surface anywhere saying so.
+provenance = ProvenanceMonitor(BASE_DIR)
+_startup_provenance = provenance.status()
+if _startup_provenance.get("undeclared"):
+    print("PROVENANCE: " + str(_startup_provenance.get("summary")), file=sys.stderr)
 
 
 @app.post("/api/predict")
@@ -215,6 +226,9 @@ def start_retrain():
 
     os.makedirs(os.path.dirname(RETRAIN_LOG), exist_ok=True)
     started_at = time.time()
+    # The "w" below is load-bearing (one run per file; see _marker_returncode),
+    # so the previous run's record is moved aside first rather than lost.
+    archive_previous(RETRAIN_LOG)
     logf = open(RETRAIN_LOG, "w", encoding="utf-8")
     try:
         proc = subprocess.Popen(
@@ -263,7 +277,9 @@ def retrain_status():
         if not _retrain["reloaded"]:
             service = PredictionService(BASE_DIR, CONFIG)   # reload new artifacts in-place
             _retrain["reloaded"] = True
+            provenance.invalidate()
         payload["models_ready"] = service.models_ready
+        payload["provenance"] = provenance.status()
         return payload
 
     if state == "failed":
@@ -277,6 +293,13 @@ def retrain_status():
                          "(server restarted, or the process was killed/hung). "
                          "Artifacts may be from a partial run -- verify before trusting them.")
     return payload
+
+
+@app.get("/api/provenance")
+def provenance_status():
+    """Which served models/ artifacts differ from the fixture-pinned declared
+    set, and for how long. Informational: it never blocks a prediction."""
+    return provenance.status()
 
 
 @app.get("/history", response_class=HTMLResponse)

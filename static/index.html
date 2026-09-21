@@ -32,6 +32,12 @@
         .retrain-status.done { border-left-color: #27ae60; background: #eafaf1; }
         .retrain-status.failed { border-left-color: #e74c3c; background: #fdedec; }
         .retrain-status pre { margin: 0.5rem 0 0; font-size: 0.75rem; white-space: pre-wrap; max-height: 140px; overflow-y: auto; color: #555; background: rgba(0,0,0,0.03); padding: 0.5rem; border-radius: 3px; }
+        /* Served-vs-declared artifact banner (GET /api/provenance). Amber, not red:
+           every legitimate retrain shows this until it is committed with RETRAIN:,
+           so it must read as a standing fact, not an alarm. */
+        .provenance-banner { display: none; margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 4px; font-size: 0.85rem; line-height: 1.45; border-left: 4px solid #d68910; background: #fef5e7; color: #7e5109; }
+        .provenance-banner.active { display: block; }
+        .provenance-banner ul { margin: 0.4rem 0 0; padding-left: 1.2rem; font-family: monospace; font-size: 0.75rem; }
         .links { margin-top: 1rem; text-align: center; font-size: 0.85rem; }
         .links a { color: #2980b9; text-decoration: none; }
         /* ── Dual-variant comparison layout ─────────────────────────────── */
@@ -56,6 +62,7 @@
     <div class="container">
         <h1>EURUSD Directional Extrapolator</h1>
         <p class="sub">Fully autonomous — knows today's date itself, fetches live market data (MT5, falling back to Yahoo Finance), and runs <b>two model variants side by side</b>: a price-only baseline and an experimental with-macro-features variant (each a GBM + LSTM committee), plus the auxiliary H1→Daily intraday ensemble (XGBoost, Random Forest, SVM, LSTM). No manual input, no date picker.</p>
+        <div id="provenanceBanner" class="provenance-banner"></div>
 
         <button id="predictBtn" onclick="fetchAndPredict()">Fetch Live Market Data &amp; Predict Tomorrow</button>
         <div id="spinner" class="spinner"></div>
@@ -420,6 +427,7 @@
                 } else if (s.state === 'completed') {
                     box.className = 'retrain-status active done';
                     box.innerHTML = `✅ Retraining complete in ${mins} min. New models loaded (models_ready=${s.models_ready}).${tail}`;
+                    renderProvenance(s.provenance);
                     stopRetrainPolling();
                 } else if (s.state === 'failed') {
                     box.className = 'retrain-status active failed';
@@ -443,6 +451,31 @@
             btn.disabled = false;
             btn.textContent = '🔁 Retrain Models (runs in background)';
         }
+
+        // ── Served-vs-declared artifacts ─────────────────────────────────────
+        // On 2026-09-11 a retrain rewrote 18 artifacts under models/ and the
+        // dashboard showed nothing for eight days. This banner reads the digest
+        // check at /api/provenance: served files that differ from the
+        // fixture-pinned declared set, and for how long. Wording is
+        // "undeclared for N days" — a fact to act on, not an error.
+        function renderProvenance(p) {
+            const box = document.getElementById('provenanceBanner');
+            if (!box || !p) return;
+            if (!p.available || !p.undeclared) { box.className = 'provenance-banner'; box.innerHTML = ''; return; }
+            const esc = (t) => String(t).replace(/</g, '&lt;');
+            const rows = (p.diverged || []).map(d => `<li>${esc(d.path)} — on disk ${esc(d.on_disk)}, declared ${esc(d.declared)}, written ${esc(d.modified_at)}</li>`)
+                .concat((p.missing || []).map(m => `<li>${esc(m)} — pinned but missing from disk</li>`))
+                .concat((p.conflicting || []).map(c => `<li>${esc(c)} — pinned inconsistently across fixtures</li>`));
+            box.className = 'provenance-banner active';
+            box.innerHTML = `<b>Undeclared artifacts in service.</b> ${esc(p.summary || '')}. ` +
+                `Declare them with a <code>RETRAIN:</code> commit that re-pins <code>tests/fixtures/*_protected_sha256.json</code>, or restore <code>models/</code> from the branch.` +
+                `<ul>${rows.join('')}</ul>`;
+        }
+        async function refreshProvenance() {
+            try { renderProvenance(await (await fetch('/api/provenance')).json()); }
+            catch (e) { /* informational only; never block the dashboard */ }
+        }
+        window.addEventListener('load', refreshProvenance);
 
         // ── H1 NEXT-BAR DIRECTION ────────────────────────────────────────────
         // STALENESS IS THE POINT HERE. The daily prediction stays valid all day;
