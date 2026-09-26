@@ -1,0 +1,3066 @@
+# EURUSD Prophet — Complete Project Handover (v2)
+
+**Snapshot.** Repository `C:\Users\test\Desktop\eurusdprophet`, branch `density-forecasting`,
+HEAD `b8dbac2` (2026-09-23 09:12 +03:00). Compiled on 2026-09-23 by Claude (Cowork) from a
+full read of the code, data files, hypothesis registries, forward ledgers, project documents
+and git history, plus answers the owner gave in the same session.
+
+**Supersedes** `Claude outputs/EURUSDPROPHET_HANDOVER.md` (dated 2026-09-21), which is left
+untouched. Several of its open questions are answered here; where the two disagree, this one
+was re-checked against the files.
+
+**What this is.** A complete *description* of the project for a new agent whose job is to
+think about **new trading strategies**. It is not a plan. It gives no recommendations, except
+in the places explicitly labelled as observations.
+
+**Layout**
+
+- **Part A** (sections 0–14) — the project as it stands on 2026-09-23, verified against the
+  files.
+- **Part B** — `ARCHITECTURE_DOCS.md` reproduced **verbatim** (1,892 lines, last edited
+  2026-07-28), preceded by a list of which parts of it are now out of date.
+
+**Provenance markers.** Unmarked text inherits the marker of its section heading.
+
+| Marker | Meaning |
+|---|---|
+| `[FILE]` | Read directly from code, data, registry CSVs or git during this session |
+| `[COMPUTED]` | My own arithmetic on committed files. The method is stated so it can be re-run |
+| `[OWNER]` | Stated by the owner in this session (2026-09-23) |
+| `[DOC]` | Stated in a project document and not independently re-checked by me |
+| `[INFERRED]` | My reasoning from the above. Treat as a hypothesis, not a fact |
+| `[UNKNOWN]` | Not established — collected in §13 |
+
+---
+
+## 0. The short version
+
+1. **What it is** `[FILE]`. A local Windows FastAPI app (`api.py`, dashboard at
+   `http://127.0.0.1:8000`). On button presses it pulls live EUR/USD data (MetaTrader 5 →
+   yfinance → bundled CSV) and FRED macro data, and serves several forecasts side by side:
+   next-day direction/return from two daily model variants, next-day realised volatility, an
+   H1→daily ensemble, an H1 technical-indicator LSTM, an H1 next-bar direction model, and a
+   24-hour volatility forecast from an external foundation model (Kronos). Every forecast is
+   logged and scored in **simulated** forward ledgers. **There is no order-execution code
+   anywhere in the repository.**
+2. **How real money is used** `[OWNER]`. The owner trades **manually, at their own
+   discretion**, using the signals as inputs: the daily consensus, the H1 next-bar direction,
+   the TI-LSTM H1, and the volatility forecasts for position size / stop placement. The
+   repository holds **no record of the real trades or real P&L** `[FILE]`.
+3. **The only directional edge confirmed out of sample** `[FILE]` is H1 next-bar direction
+   (XGBoost on 15 price/time features): one-shot test block 52.96% vs 49.85% for the
+   train-majority baseline (+3.10 pp, block-bootstrap CI [+1.14, +4.97] pp, McNemar
+   p = 1.7e-05), with the same sign replicated on AUD/USD and CHF/USD (GBP/USD positive but
+   not significant). Its companion *magnitude* model failed. The model actually **served** is
+   a full-history refit with **no** out-of-sample validation of its own. Its forward ledger:
+   89 settled bars, gross hit rate 50.6%, **−106.9 net pips** at 1.5 pips per trade.
+4. **Daily direction is at chance** everywhere it was tested (test ROC-AUC 0.51–0.53;
+   walk-forward over 24 windows at chance). Forward simulated ledgers: baseline
+   **−349.5 pips** over 37 trades, with_macro **−554.9 pips** over 45 trades. Both are below
+   "always long" on the same days `[COMPUTED]`.
+5. **TI-LSTM H1** failed its own pre-registered test (DROP) and is served by an explicit owner
+   override. Its forward ledger is the only positive one: **+318.4 net pips over 39 trades**
+   (always long on the same days: +99.4) `[COMPUTED]`. 39 trades cannot separate skill from
+   luck.
+6. **Volatility** `[FILE]`. The served 5-seed LSTM ensemble beats GARCH(1,1) historically, but
+   a **10-parameter calendar model (GARCH × day-of-week)** beats the ensemble on both
+   validation and test (test ΔMAE +0.0262, CI [0.0223, 0.0300]). The calendar model is **not
+   served**. Over the 39 forward days the served volatility forecast had MAE 0.161, against
+   0.146 for a constant `[COMPUTED]`.
+7. **Kronos volatility** (external, zero-shot): the event "next 24h more volatile than the last
+   24h" was discriminated with AUC 0.689 [0.645, 0.731] on 519 clean-window samples `[FILE]`.
+   Forward, 37 settled calls: AUC 0.66 raw / 0.68 calibrated `[COMPUTED]`. The Kronos
+   *direction* channel was measured dead three ways and retired `[FILE]`.
+8. **Research volume** `[FILE]`. 17 hypothesis registries, 61 registry rows. The positives are
+   H_dir.1/.4/.5, the volatility and calendar results, one Kronos incremental-information
+   result and one marginal LTC result. The four macro features are "KEEP-provisional" without
+   clearing the bar. Everything else is DROP, underpowered or unspent.
+9. **Methodology** `[FILE]`. Validation-slice arbiter; a Bonferroni bar per family; test
+   blocks treated as one-shot (both the daily and the H1 test blocks are now spent); forward
+   ledgers as the primary arbiter; SHA-256 pins on model artifacts; a commit hook that refuses
+   undeclared retrains.
+10. **A train/serve difference the project docs do not record** `[COMPUTED]`/`[INFERRED]`,
+    §11.1. The daily training data contain a short broker **Sunday bar** in almost every week,
+    so in training "Friday's next day" is Friday → that Sunday bar. Serving strips Sunday bars
+    and treats Friday's next day as Monday. This is the likely origin of the "Friday effect"
+    that the volatility and calendar work turned up.
+11. **Repository state** `[FILE]`. The working tree is `density-forecasting`, 33 commits ahead of
+    `main` (not merged) and 4 commits not pushed. All 44 SHA-pinned model artifacts match their
+    pins, so nothing undeclared is being served.
+12. **Owner's frame for new strategies** `[OWNER]`. The owner ticked both "EUR/USD only" and
+    "other pairs too". The likeliest reading is EUR/USD first, with other pairs allowed; confirm
+    if it matters. Intraday (H1/M15) is allowed. "Automated execution is OK" was **not**
+    ticked, so assume manual execution by the owner.
+
+---
+
+## 1. Owner, purpose, and how real money is involved
+
+- **Origin** `[FILE]`. A SoftUni machine-learning / deep-learning final-exam project (README,
+  `SUBMISSION_SELF_ASSESSMENT.md`, `AI_DEVELOPMENT_EXAM.md`). First submission 2026-07-23; a
+  second submission is documented. `CLAUDE.md`: *"The exam is passed; a false-positive feature
+  is now live capital risk."* The git remote is `https://github.com/velizarMitov/EURUSD-prophet`
+  (the owner's GitHub account; all 201 commits are the owner's).
+- **Real-money phase** `[FILE]`. From 2026-07-06 all new claims are governed by a "Production
+  Methodology" written because of real-money risk (§10).
+- **How the owner trades** `[OWNER]`. Manually, at their own discretion; the signals are inputs,
+  not instructions. Signals used: (a) daily consensus (baseline and/or with_macro); (b) H1
+  next-bar direction (`/api/h1-direction`); (c) TI-LSTM H1; (d) volatility forecasts (5-seed LSTM
+  and/or Kronos) for size / stop.
+- **What the repository does not contain** `[FILE]`. No broker or order code, no position sizing
+  in the serving path, no stop-loss logic, no record of executed trades or real P&L. The code's
+  own docstrings say so repeatedly: *"SIMULATED ONLY. There is no broker, no order execution, no
+  position sizing, no stop-loss anywhere here"* (`src/paper_trading.py`). All P&L in the repo is
+  simulated, one unit per position, with a 1.5-pip round trip.
+- **Broker and feed** `[FILE]`. Price data come from an MT5 terminal logged in to
+  `ActivTradesEU-Server` (ActivTrades EU). Server clock is CET/CEST (UTC+1 / UTC+2). `.env` holds
+  `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER` (all set) and `FRED_API_KEY` (set); the values were
+  not read. Whether the real-money account is this ActivTrades account is `[UNKNOWN]`.
+- **Measured spreads on that feed** `[FILE: results/curl/m1_coverage.csv]`. Median M1 spread,
+  2018-08 → 2026-08: EURUSD 5 points = 0.46 bp (≈0.5 pip one way); GBPUSD 0.66 bp; EURJPY
+  0.80 bp; EURGBP 1.03 bp; GBPJPY 1.31 bp. `IMPROVEMENT_LOG.md` uses 0.92 bp as the EURUSD
+  round trip. The ledgers assume 1.5 pips per round trip (`config.json → paper_trading.spread_pips`).
+- **Owner's constraints for new strategies** `[OWNER]`: see item 12 of §0.
+
+---
+
+## 2. Timeline `[FILE]` (git + dated docs)
+
+| Date | Event |
+|---|---|
+| 2026-06-17 | Initial commit |
+| 2026-06-19..23 | Research notebook work. The Gradio frontend and `app.py` are removed (06-23) and FastAPI becomes the single entry point |
+| 2026-07-05 | Three more FRED features (27 columns); transaction-cost backtest; GBM probability calibration evaluated and not adopted |
+| 2026-07-06 | Production Methodology: validation arbiter, Bonferroni registry, forward paper ledger. Dual variants baseline / with_macro |
+| 2026-07-07 | 5-seed volatility ensemble shipped. H1 2–2 tie bug fixed |
+| 2026-07-17..26 | FOMC, COT, Fibonacci, VIX and volatility-forecast ADD-tests (all DROP). TI-LSTM experiment (DROP) and owner-override ship (07-18). Harmonic patterns, fractal breakout, vol-scaled sizing overlay, walk-forward report |
+| 2026-07-23 | First exam submission |
+| 2026-07-28..30 | Pooled H1 (DROP). H1 next-bar direction family: H_dir.1 KEEP on validation; test block read 2026-07-30 10:52 UTC → KEEP; served full-history model trained 2026-07-30 18:11 UTC. Divergence, H1 multi-day reversion, G10 macro panel, tier-A macro |
+| 2026-07-31..08-11 | Kronos external-model programme: direction retired, volatility channel served |
+| 2026-08-04 | CHF data hole found; CHF retired from active use; `src/mt5_coverage.py` guard |
+| 2026-08-07 | Volatility re-verification: the edge is a Friday / calendar effect |
+| 2026-08-08..10 | Curl (discrete-Hodge) instrument work, synthetic only. LTC/spiking families (negative). Calendar model H_cal.1 |
+| 2026-08-15 | `f2645a0`: undeclared retrain (30 artifacts) under a "Refactor…" title. This is also where `main` stops |
+| 2026-08-18 | Density family pre-registered, then DROP. Yıldırım et al. replication |
+| 2026-08-19 | Commit hook (`RETRAIN:` declaration); fixture re-baseline; input-data checksum guard |
+| 2026-09-11 06:45 | Dashboard retrain button pressed: 18 artifacts rewritten and served undeclared for 8 days |
+| 2026-09-19..21 | Retrain declared (`4cc7920`); volatility artifacts reverted (`0419645`); metalabel family (zero comparisons spent); retrain-log archive and provenance banner (`0dad2f0`); hidden-retrain list corrected (`cd3fa98`) |
+| 2026-09-23 | `b8dbac2` (HEAD): serving caches and logs committed |
+
+---
+
+## 3. Environment and how to run `[FILE]`
+
+- **Machine**: Windows / PowerShell. `.venv` on Python **3.13.5**. GPU: NVIDIA **RTX 4070
+  Laptop**. XGBoost and torch use CUDA. TensorFlow runs on **CPU** (no TF GPU on native
+  Windows), so the daily and volatility LSTMs train on CPU. JAX is CPU-only on Windows.
+- **Key versions in `.venv`**: tensorflow 2.21.0, keras 3.14.1, xgboost 3.3.0,
+  scikit-learn 1.9.0, torch 2.11.0+cu128, jax 0.11.0, MetaTrader5 5.0.5735, pandas 2.3.3,
+  numpy 2.2.6, arch 8.0.0, yfinance 1.4.1, fastapi 0.138.0.
+- **Run the app**: `start.bat` (frees port 8000, opens the browser), or `python api.py`, or
+  `python -m uvicorn api:app --reload`.
+- **Retrain**: dashboard button → `POST /api/retrain` → `_train_pipeline.py` as a subprocess.
+  The last run took 1,639.7 s (2026-09-11). On success the server **hot-reloads the new
+  artifacts with no commit involved**.
+- **Tests**: `python -m pytest -q`. `README.md` / `HOW_TO_RUN.md` claim 621 passing (written
+  2026-09-21). I counted 588 `def test_` functions in 22 files; parametrisation raises the
+  collected count. **I did not run the suite.** By my reading, one test fails at HEAD — see §11.3.
+  `CLAUDE.md` still says "~19 tests".
+- **Commit guard**: `git config core.hooksPath .githooks` — enabled in this clone.
+- **Optional stacks**: `requirements-kronos.txt` (torch, Hugging Face weights, upstream Kronos
+  pinned at commit `67b630e…`, cloned into `src/external/kronos/upstream/`, which is gitignored);
+  `requirements-ltc.txt` (JAX, Equinox, diffrax, optax).
+- **`verify_installation.py`**: re-fits the calendar model from the committed CSVs and checks
+  validation MAE 0.162 and test MAE 0.192 (± 0.002). It never trains the production models.
+- **Docker**: `python:3.11-slim`, MT5 removed; serves via yfinance and the bundled CSV.
+- **MLflow**: experiment `EURUSD_Prediction`; `mlruns/` + `mlflow.db` (both gitignored).
+
+---
+
+## 4. Repository map `[FILE]`
+
+### 4.1 Top level
+
+| Path | What it is |
+|---|---|
+| `api.py` | FastAPI app: every endpoint, the retrain supervisor, the provenance monitor |
+| `_train_pipeline.py` | Sole producer of the daily per-variant artifacts, the volatility ensemble and the H1→daily ensemble. Spawns the TI-LSTM retrain as a subprocess |
+| `config.json` | Split fractions, variants, FRED series, paper-ledger config and spread, GBM/LSTM/H1 hyperparameters |
+| `static/index.html` | The dashboard — the only frontend |
+| `start.bat`, `Dockerfile`, `verify_installation.py` | Launch and check |
+| `CLAUDE.md` | Rules for coding agents (partly stale, §11.2) |
+| `ARCHITECTURE_DOCS.md` | Deep reference as of 2026-07-28 (Part B) |
+| `IMPROVEMENT_LOG.md` | Dated research journal up to 2026-08-10 (2,193 lines) |
+| `DATA.md` | Data provenance, frozen vs rolling inputs, reproducibility tolerances (updated 2026-09-19) |
+| `CHANGELOG_SINCE_2026-07-23.md`, `SUBMISSION_SELF_ASSESSMENT.md`, `AI_DEVELOPMENT_EXAM.md` | Exam documents |
+| `RESEARCH_FRONTIER_IDEAS.md` | Three unconventional research directions (brainstorm) |
+| `CURL_EXPERIMENT_PLAN.md` | Pre-registration draft for the curl study |
+| `README.md`, `HOW_TO_RUN.md` | Setup |
+| `models/` | 57 files: 44 SHA-pinned serving artifacts, the calendar JSON, the Kronos calibration JSON, 11 untracked `notebook_demo/` files |
+| `results/` | Data caches, hypothesis registries, forward ledgers, outputs of every study |
+| `tests/` | 22 test files plus `fixtures/` (SHA pins and re-baseline records) |
+| `notebooks/` | `00_final_report` (the exam report), `01_data_preparation` (research, 22 sections), `02_h1_intraday_regression`, `03_h1_ensemble_results` |
+| `.githooks/` | `commit-msg` + `check_retrain_declaration.py` |
+| `.github/skills/` | 7 agent skill notes from the exam phase (methodology, GBM theory, bias–variance, …) |
+| `.dev/` (gitignored) | Task briefs for curl, LTC and the final report |
+| `mit-deep-learning-book-pdf-master/` | Third-party book PDFs, unused |
+| `Claude outputs/` (untracked) | The previous handover |
+
+### 4.2 `src/` — the serving path
+
+| Module | Role |
+|---|---|
+| `inference.py` | `PredictionService`: loads every artifact once with per-family readiness gates; `predict()`, `predict_h1_direction()`, `predict_kronos_volatility()`, the consensus logic |
+| `features.py` | Daily feature contract (`FEATURE_COLUMNS` 27, `PRICE_FEATURE_COLUMNS` 23), lag PCA, macro merge, targets |
+| `live_data.py` | MT5 → yfinance → cache chains for D1/H1/M15; `drop_incomplete_bars` (D1) and `drop_incomplete_h1_bars`; the sticky H1 feed-clock offset |
+| `macro_data.py` | FRED API → FRED public CSV → on-disk cache → `None`, per feature |
+| `h1_features.py` | H1→daily features (11 flat + 24×5 tensor) and the H1 next-bar direction features (15) |
+| `tracking.py` | `results/prediction_log.csv` schema and `/history` scoring |
+| `paper_trading.py` | Daily simulated ledgers (baseline, with_macro, ti_h1) |
+| `h1_direction_serving.py` | H1 direction call log, ledger, `/h1-direction` view |
+| `volatility.py` | Volatility family (experiments + frozen-ensemble helpers + constants used by serving) |
+| `ti_lstm_h1_experimental.py` | TI-LSTM: indicators, training entry, inference-sample builder |
+| `mt5_coverage.py` | Detects silently holed MT5 history (interior gaps, monthly density) and syncs the symbol before fetching |
+| `triple_barrier.py` | Triple-barrier labels; its EWMA-std helper is also a feature of the H1 direction model |
+| `artifact_provenance.py` | `GET /api/provenance`: served `models/` files vs the SHA-pinned declared set |
+| `retrain_log.py` | Archives each `results/retrain.log` before the next run truncates it |
+| `external/kronos/*` | Kronos loader (pinned HF revisions), path sampling, volatility serving and ledger, retired direction ledger, upstream vendoring |
+| `train_h1_direction.py` | Sole writer of `models/h1_direction/` (not called by `_train_pipeline.py`) |
+
+### 4.3 `src/` — research modules (none is imported by the serving path unless listed above)
+
+| Module(s) | Study |
+|---|---|
+| `ablation.py` | Validation-only feature ADD/ablation harness with the Bonferroni registry |
+| `backtest.py`, `vol_scaled_backtest.py` | Cost backtest of the daily GBM signal; volatility-scaled sizing overlay on the ledgers |
+| `walk_forward_validation.py` | 24-window walk-forward of the fixed daily configuration |
+| `calibration_audit.py` | Calibration of the production direction heads and of the 0.52 guard |
+| `calendar_volatility.py`, `calendar_paired_bootstrap.py` | The GARCH × day-of-week model (H_cal.1) and its paired test |
+| `density_model.py` | MDN density forecasting (H_den.1/.2) |
+| `metalabel.py` | Meta-labelling power analysis (C0/C1/C2) — fits nothing by design |
+| `h1_direction_model.py`, `h1_direction_final.py`, `h1_direction_diagnostics.py`, `h1_newyork_time.py`, `h1_movement_profile.py` | H1 next-bar direction family, its one-shot test, diagnostics, broker→New York time, hourly movement profile |
+| `h1_multiday_reversion.py` | 24-bar mean reversion (H_md) |
+| `pooled_h1_data.py`, `pooled_h1_model.py`, `h1_horizon_feasibility.py` | Pooled 4-pair H1 triple-barrier family; label-geometry scan |
+| `harmonic_patterns.py`, `harmonic_event_check.py`, `harmonic_m15_check.py`, `zigzag_swings.py` | XABCD harmonic patterns on H1/M15 |
+| `divergence.py`, `divergence_check.py`, `divergence_horizon.py` | RSI/MACD/Stochastic divergence on M15 |
+| `fibonacci_fractals.py`, `fractal_breakout_driftcheck.py` | Fibonacci/fractal features; breakout drift study |
+| `cot_data.py`, `cot_weekly_check.py` | CFTC COT features; weekly COT family |
+| `vix_features.py`, `fomc_calendar.py` | VIX and FOMC candidate features |
+| `macro_panel_data.py`, `macro_panel_model.py`, `macro_tier_a.py` | G10 monthly macro panel; tier-A walk-forward carry test |
+| `ltc_spiking_arch.py`, `ltc_data.py`, `ltc_experiment.py`, `spiking_readout.py` | Liquid time-constant + spiking readout (JAX) |
+| `curl_stress.py`, `curl_mt5.py`, `curl_mt5_fetch.py`, `curl_null_simulation.py` | Discrete-Hodge curl on the currency graph (instrument work) |
+| `yildirim_replication.py` | Replication of Yıldırım, Toroslu & Fiore (2021) |
+| `dl_model_report.py` | Model card for the trained networks |
+
+---
+
+## 5. Data
+
+### 5.1 What exists `[FILE]`
+
+Row counts are from the files at HEAD. Spans are as recorded in `DATA.md` or the fixture
+`tests/fixtures/input_data_protected_sha256.json`, re-checked where noted.
+
+| File | Rows | Span | Class / use |
+|---|---:|---|---|
+| `results/eurusd_features.csv` | 15,760 | 1971-01-11 → 2026-08-10 | FROZEN (SHA-pinned). Daily OHLCV + tick_volume; the pre-1999 part is a synthetic DEM proxy. The code reads only OHLCV (legacy feature columns are ignored). Modelling uses the euro era (1999+): 8,606 rows, 8,605 after the target shift |
+| `results/eurusd_h1.csv` | **60,167** at HEAD (`DATA.md` says 60,136 — §11.3) | 2017-01-20 02:00 → 2026-09-22 05:00 | ROLLING operational cache. Rewritten by the app on every successful H1 pull; feeds the H1→daily ensemble and the TI-LSTM |
+| `results/eurusd_m15.csv` | 350,000 | 2012-06-25 21:30 → 2026-07-24 22:45 | FROZEN. Harmonic M15 and divergence studies |
+| `results/pooled_h1/{EURUSD,GBPUSD,AUDUSD}_h1.csv` | 70,000 each | 2015-04-27 20:00 → 2026-07-28 15:00 | FROZEN. Research data of the H1 direction, H1 multi-day and pooled families; fallback for the H1 direction and Kronos serving paths |
+| `results/pooled_h1/EURUSD_h1_newyork.csv`, `EURUSD_m15_newyork.csv` | 70,000 / 350,000 | same spans, re-stamped to New York time | FROZEN. Carries `server_timestamp`, `ny_hour`, `fx_day_hour`, DST-mismatch flags |
+| `results/pooled_h1/retired/{USDCHF,CHFUSD}_h1.csv` | 70,000 | 2015-03-16 → 2026-07-28 | Retired: 42.8-day hole 2026-06-15 → 2026-07-28 (`results/DATA_STATUS.md`) |
+| `results/external_kronos/rankic/raw/*_h1.csv` | 19 pairs × 25,000 | 2022-07-27 → 2026-08-03 | H1 cross-section over 8 currencies (EUR, USD, GBP, JPY, AUD, NZD, CAD, CHF), fetched with the Market-Watch sync fix |
+| `results/curl/raw/*_M1.parquet` (untracked, local only, ~290 MB) | ~2.98 M each | 2018-08-08 → 2026-08-07 | M1 for EURUSD, EURJPY, EURGBP, GBPUSD, GBPJPY, USDJPY. Only the coverage report `results/curl/m1_coverage.csv` is committed |
+| FRED caches: `yield_differential.csv`, `policy_rate_differential.csv`, `inflation_differential.csv`, `usd_index.csv`, `vix.csv` | — | long history | Rewritten (merge, never truncate) by serving and training |
+| `results/cot_positioning.csv`, `results/fomc_dates.csv` | — | FOMC: 240 scheduled statement days 1998-02-04 → 2027-12-08 | Candidate features (both DROP) |
+| `results/macro_panel/*`, `results/macro_tier_a/series_cache/*` | — | monthly G10 FRED series | Macro-panel and tier-A families |
+
+FRED series `[FILE: config.json]`: `DGS10` (US 10Y), `IRLTLT01DEM156N` (DE 10Y, monthly),
+`DFF` (effective fed funds), `ECBDFR` (ECB deposit rate), `CPIAUCSL` (US CPI),
+`CP0000DEM086NEST` (DE HICP), `DTWEXBGS` (broad USD index, from 2006), `VIXCLS`.
+COT: CFTC Socrata dataset `gpe5-46if`, markets "EURO FX" and "USD INDEX".
+
+### 5.2 Clock and timezone facts `[FILE]`
+
+- The broker server runs **CET/CEST (Europe/Berlin)**, UTC+1 in winter and UTC+2 in summer
+  (`src/h1_newyork_time.py`, established from 596 week openings). Server midnight = 18:00
+  New York. Server hour 23 = 17:00–18:00 NY, the FX rollover hour.
+- **D1 bars** are parsed tz-naive, so the date is the broker-server calendar date.
+- **H1/M15 bars** carry a `+00:00` tag, but it is a **label, not a conversion**: the numbers
+  are broker-server hours (`src/live_data.py` and `src/h1_newyork_time.py` docstrings, with
+  live evidence). `DATA.md §2` says instead that "all committed files are converted to UTC".
+  The code comments are the ones backed by measurement.
+- The H1 feed's weekly open is Sunday 22:00/23:00 server time (`H1_WEEKLY_OPEN_HOUR = 22`).
+  The serving path infers the server offset from the feed and keeps it "sticky" in
+  `results/h1_feed_offset.json` (currently +2).
+- **The daily data contain a short Sunday bar almost every week** `[COMPUTED]`. In the euro-era
+  rows of `results/eurusd_features.csv`: Mon 1,439, Tue 1,436, Wed 1,439, Thu 1,437, Fri 1,434,
+  Sat 0, **Sun 1,421** (1999-01-10 → 2026-08-09). Consequences are in §11.1.
+
+### 5.3 Frozen vs rolling policy `[FILE: DATA.md, tests/test_input_data_provenance.py]`
+
+- FROZEN inputs are SHA-256 pinned; a moved digest fails the suite.
+- The ROLLING cache (`results/eurusd_h1.csv`) is not byte-pinned. It carries a provenance stamp
+  (digest, rows, span, stamped at `e77a4eb`) plus structural checks (UTC-tagged, strictly
+  increasing, sane OHLC, more than 50,000 rows). `DATA.md` §1 must state its current row count.
+- Documented rewrites of the rolling cache: `f2645a0` (2026-08-15, retrain), `c638f8d`
+  (2026-08-18, +56 bars), `4cc7920`/`e77a4eb` (2026-09-19, re-stamped at 60,136 rows; the
+  fixed-size MT5 window slid forward and dropped ~30 days of leading history).
+- **Not in `DATA.md`'s rewrite table** `[FILE: git]`: `6f5e9b5` (2026-08-20, "Refactor code
+  structure…") committed the rolling cache cut down to **48 rows** (2026-08-18 10:00 →
+  2026-08-20 09:00). It was back to 60,121 rows at `4cc7920`. The mechanism was not
+  investigated.
+
+### 5.4 Data-quality incidents recorded `[FILE]`
+
+- **CHF hole** (2026-08-04). An MT5 symbol not selected in Market Watch returns a partially
+  synced history; `copy_rates_from_pos` then reaches further back to fill the requested bar
+  count, so a 42.8-day hole hides behind a correct row count and a correct last timestamp.
+  Guard: `src/mt5_coverage.py` (sync the symbol before fetching; interior-gap and monthly-density
+  checks). The H_dir.5 CHF result was measured on intact data and stands.
+- **Macro cache truncation** (fixed): a live FRED fetch used to overwrite 54 years of cache with
+  a narrow window. Caches are now merged.
+- **H1 inference stale-cache bug** (fixed 2026-07-10): the H1 panel re-served the same session
+  for days. `refresh_h1_frame` is now live-first with a staleness gate.
+- **Sunday D1 bar investigation** (2026-07-28): no leak found in serving; `drop_incomplete_bars`
+  hardened to strip tz tags.
+- **Zero-return H1 bars**: 0.646% of the feature-valid EURUSD H1 bars (451 of 69,800) have
+  exactly zero next-bar return. This is quote discreteness (longest identical-close run is
+  3 bars), not a stale feed. They are dropped in the H1 direction family.
+
+---
+
+## 6. The production system (what runs when the buttons are pressed) `[FILE]`
+
+### 6.1 Endpoints (`api.py`)
+
+| Endpoint | What it does |
+|---|---|
+| `GET /` | Dashboard (`static/index.html`) |
+| `POST /api/predict` | Daily run: both variants + volatility + H1→daily ensemble + TI-LSTM. **Also appends the day's row to `results/prediction_log.csv`**, so the daily ledgers grow only when someone presses Predict |
+| `GET /history` | Prediction-vs-actual table, scored live against realised closes |
+| `GET /paper-trading`, `GET /api/paper-trading` | Rebuilds and returns the three daily simulated ledgers (rewrites their CSVs on each view) |
+| `GET /api/h1-direction`, `GET /h1-direction` | On-demand H1 next-bar direction (logged on every call) and its ledger |
+| `GET /api/kronos-volatility`, `GET /kronos-volatility` | On-demand Kronos 24h volatility and its forward record |
+| `GET /api/kronos-direction`, `GET /kronos-direction` | **Retired** — returns `available: false` with the reason |
+| `POST /api/retrain`, `GET /api/retrain/status` | Background retrain; on success, hot-reload of all artifacts |
+| `GET /api/provenance` | Served `models/` artifacts vs the SHA-pinned declared set |
+
+### 6.2 Daily direction/return — two variants, one committee each
+
+**Data flow for `POST /api/predict`.**
+
+1. Fetch D1 bars: MT5 → yfinance → bundled CSV. The fetch size is 250 bars (or
+   200 + time_steps if larger), plus the Sundays in the window, plus one forming bar.
+2. `drop_incomplete_bars` keeps **only fully closed Mon–Fri bars**; today's forming bar and
+   Saturday/Sunday bars are removed.
+3. If the live pull is thin, back-fill earlier rows from the bundled history (`+history_backfill`).
+4. Fetch the four FRED features over the same window and merge them as-of (ffill of past values
+   only).
+5. `compute_features` → 27 columns; drop warm-up rows.
+6. For each variant, select its columns, apply its own lag PCA and its own `global_scaler`, then
+   run GBM (last row) and LSTM (last 20 rows).
+7. `as_of_date` = last complete bar. `forecasting_date` = next trading day (Fri/Sat → Monday).
+
+**Features (`src/features.py`).** 27 columns: `open, high, low, close, log_return, SMA_21,
+SMA_50, SMA_100, SMA_200, volatility_20, bar_dynamics, return_lag_1..3, dynamics_lag_1..3,
+day_sin, day_cos, month_sin, month_cos, ATR_14, BB_width, yield_differential_delta,
+usd_index_return, policy_rate_differential, inflation_differential`. `baseline` =
+`PRICE_FEATURE_COLUMNS`, the first 23 (no macro). `with_macro` = all 27. The 6 lag columns are
+standardised and PCA-reduced (95% variance) before modelling. `tick_volume` is deliberately
+excluded.
+
+**Targets.**
+- `target_return` = (close[t+1] − close[t]) / close[t] × 100 (percent, simple return).
+- `target_direction` = 1 if `target_return` > 0.
+- `target_volatility_pct` = |ln(close[t+1] / close[t])| × 100.
+
+**Models per variant** (`models/<variant>/`, 7 files each):
+
+| Model | Spec |
+|---|---|
+| `best_gbm_eurusd.pkl` | XGBClassifier. GridSearchCV over n_estimators {100, 200}, learning_rate {0.01, 0.05, 0.1}, max_depth {3, 5}, subsample {0.5, 0.8, 1.0}; TimeSeriesSplit(5); scored on ROC-AUC |
+| `best_gbm_regressor_eurusd.pkl` | XGBRegressor `reg:pseudohubererror`, same grid, scored on MAE |
+| `lstm_multitask_eurusd.keras` | Keras functional API: Input(20, n) → LSTM(64) → Dropout(0.3) → two heads, return (linear) and direction (sigmoid); loss weights 1/1; early stopping patience 10 |
+| `lag_scaler.pkl`, `lag_pca.pkl`, `global_scaler.pkl`, `lstm_time_steps.pkl` | Preprocessing (fit on [0:80%]) |
+
+**Splits** (8,605 rows):
+- The GBM trains on `[0:80%]`.
+- The LSTM trains on `[0:70%]` and early-stops on `[70:80%]`.
+- Both report on the test block `[80:100%]`.
+- The validation slice `[70:80%]` is **inside** the GBM's training data.
+
+**Tuned GBM settings as of the 2026-09-11 run** (`results/retrain.log`):
+- baseline classifier: depth 5, 200 trees, lr 0.01, subsample 0.5. CV AUC 0.529; train AUC
+  0.80 vs test AUC 0.528.
+- with_macro classifier: depth 3, 100 trees, lr 0.01, subsample 1.0.
+
+**Consensus** (`compute_consensus`):
+- If GBM and LSTM agree, their confidences are averaged. If the average is below
+  **0.52**, the call becomes **"MIXED / LOW CONFIDENCE"**, which the ledger books as flat.
+- If they disagree, the higher-confidence model is taken. No threshold is applied on that
+  branch.
+- `variant_agreement` compares the two variants' consensus directions.
+
+**Response** also carries `bar_used` (OHLC, the macro levels and their sources) and
+`data_source`.
+
+### 6.3 Next-day realised volatility (served) — `models/volatility/`
+
+- Five seeds (42–46) of a three-head multi-task LSTM: return, direction and volatility heads.
+  Only the volatility head is served; the prediction is the mean over the five seeds.
+- Price-only. It has its own lag PCA and scalers, fit on `[0:80%]`.
+- `vol_ready` is all-or-nothing: a partial ensemble is never served.
+- The response carries the GARCH and persistence baselines from `vol_metrics.json`.
+- The dashboard badge reads "✓ validated vs GARCH(1,1)". A caveat naming the better calendar
+  baseline was added to the card body on 2026-09-19 (`9097f04`).
+- `models/volatility/` was reverted on 2026-09-19 (`0419645`) to the seeds that predate the
+  2026-09-11 retrain.
+
+### 6.4 H1→daily auxiliary ensemble — `models/` root (8 files)
+
+- **Input**: H1 bars of the latest **complete** session — a calendar day in the feed's labels,
+  which are server time (§5.2), with at least 12 bars.
+- **Output**: the **next-day** percent return — not the next hour.
+- **Four regressors**:
+  - XGBoost, RandomForest and RBF-SVR on 11 flat daily statistics: `Intraday_Volatility`,
+    `Intraday_Momentum`, `Daily_Range`, `H1_Moving_Average`, `H1_Volume_Mean`,
+    `H1_Return_Skew`, `H1_Max_Abs_Return`, `First_Half_Return`, `Second_Half_Return`,
+    `Trend_vs_SMA504`, `RSI_24`.
+  - A seq-to-vector LSTM on a 24 × 5 tensor: `log_return`, `hl_range`, `co_change`, `volume`,
+    `rsi_24`.
+- **Direction** is the sign of each model's return.
+- **Consensus**: strict majority; a 2–2 split is "MIXED / TIE". The confidence is the share
+  of models on the majority side (not a probability).
+- **Training**: an 80/20 chronological split of about 2,504 daily rows.
+  `results/metalabel/RESULTS.md` says the ensemble trains through 2024-10-09 `[DOC]`.
+- **Test ROC-AUC** in the 2026-09-11 log: XGB 0.5225, RF 0.5179, SVM 0.4975, LSTM 0.5468.
+
+### 6.5 H1 TI-LSTM (observational, owner override) — `models/ti_lstm_h1/`
+
+- **Input**: 24 × 8 tensor of the last complete session.
+- **Indicators**: `pct_b` (Bollinger %B 20/2σ), `macd`, `macd_hist` (MACD 13/34, signal 8),
+  `trend_sma504`, `trend_sma168`, `rsi_24`, `cci_20`, `adx_14`.
+- **Model**: a 2 × 64 LSTM with **next-day** direction and return heads.
+- **Training**: Keras 3 on the torch/CUDA backend, run as a subprocess; the artifact is served
+  under tf.keras.
+- **`ti_metrics.json`**:
+  - verdict DROP; trained through 2023-10-17; 2,499 days;
+  - test AUC 0.5128 vs 0.5283 for the H1 ensemble (ΔAUC −0.015, CI [−0.072, +0.042]);
+  - validation AUC 0.5421.
+- Served since 2026-07-18 by explicit owner decision "for transparent forward observation".
+  The response is labelled `validated: false`.
+
+### 6.6 H1 next-bar direction (observational) — `models/h1_direction/`, `GET /api/h1-direction`
+
+- **Model**: XGBClassifier, fixed hyperparameters — 300 trees, depth 4, lr 0.05, subsample 0.8,
+  colsample 0.8, balanced class weight, no early stopping. Version
+  `h1dir-full-20260728-69349`.
+- **Training data**: **full history** 2015-05-08 → 2026-07-28 (69,349 rows) from
+  `results/pooled_h1/EURUSD_h1.csv`; trained 2026-07-30 18:11 UTC; meta flag
+  `validated_out_of_sample: false`.
+- **15 features**: `logret_{1,2,3,6,12,24}`, `atr14_norm`, `rsi14` (Wilder), `dist_sma50_atr`,
+  `dist_sma200_atr`, `ewma_std_24`, `hour_sin/cos`, `dow_sin/cos`. These are byte-identical to
+  the research features, and a test asserts it.
+- **Serving**:
+  - Fetch up to 2,000 H1 bars (MT5 → yfinance; `cache_path=None`, so the rolling cache is never
+    touched), falling back to the frozen pooled file.
+  - Infer the feed clock and drop the forming hour and early-Sunday bars.
+  - Predict the direction of the **currently forming** hour, reporting `minutes_remaining` and
+    a status of `open` / `already_closed` / `market_closed` / `clock_unconfirmed`.
+- **Logging**: every call goes to `results/h1_direction_log.csv`. The ledger
+  (`results/paper_trading_log_h1_direction.csv`) settles the first call per forecast bar
+  against the realised H1 close, at 1.5 pips.
+- The module states that roughly **1,000** settled observations are needed before the ledger
+  says anything.
+- `src/train_h1_direction.py` is the only writer of this directory. `_train_pipeline.py` does
+  not retrain it.
+
+### 6.7 Kronos (external foundation model, observational) — `GET /api/kronos-volatility`
+
+**Model and run settings**
+- Kronos-**mini** (4.1M params), HF revision pinned; tokenizer `Kronos-Tokenizer-2k`; upstream
+  source pinned at commit `67b630e…`.
+- Weights load lazily on the first call.
+- Context 512 closed H1 bars; `pred_len` 24; 30 sampled paths; T = 1.0; top_p 0.9.
+
+**What each field is**
+- `pred_vol_pct_24h`: mean realised volatility over the sampled paths. This is the model's own
+  output.
+- `pred_vol_pct_24h_scaled`: the same number divided by **0.6549**. This is the project's
+  correction, not the model's.
+- `p_vol_amp_raw`: the share of paths whose 24-bar RV exceeds the trailing 24-bar RV.
+- `p_vol_amp_calibrated`: an isotonic map fitted on 2024-07-30 → 2026-07-31 (n = 519), clipped
+  to [1/520, 519/520]. This is the project's, not the model's.
+
+**Provenance**
+- Pre-training cutoff is June 2024, so only 2024-07 onward is out of sample.
+- Per its own disclaimer, this served configuration (mini, 24 H1 bars) has never been compared
+  with the project's own volatility ensemble on the same rows. An earlier daily-row comparison
+  of a Kronos quantity against the ensemble does exist: volatility registry #9 (§8.1).
+
+**Logging**: `results/external_kronos/kronos_vol_log.csv`, with the ledger in
+`kronos_vol_ledger.csv`.
+
+**The direction channel was retired**, measured dead three ways:
+- next-bar AUC 0.509;
+- 24-bar AUC 0.517 with Brier skill −0.62;
+- cross-sectional RankIC +0.0199, fully explained by a one-line reversal ranking
+  (orthogonalised CI [−0.00127, +0.01768]).
+
+### 6.8 Logs and ledgers written by serving
+
+**`results/prediction_log.csv`** — one row per `as_of_date`; a same-day re-predict overwrites
+the row.
+- Columns: `as_of_date, forecasting_date, as_of_close, pred_direction, pred_return_pct,
+  pred_confidence, gbm_direction, lstm_direction, logged_at, h1_direction, h1_return_pct,
+  h1_agreement, baseline_direction, baseline_return_pct, baseline_confidence,
+  variant_agreement, ti_h1_direction, ti_h1_return_pct, vol_pred_pct`.
+- `pred_*`, `gbm_*` and `lstm_*` are the **with_macro** committee (kept for lineage).
+  `baseline_*` is the price-only committee.
+- 60 rows, from as_of 2026-06-22 to 2026-09-21. Some trading days have no logged prediction
+  (e.g. 2026-08-21 and 2026-08-24..27, 2026-09-03).
+
+**Daily ledgers** (`src/paper_trading.py`) — rebuilt from the log plus live realised D1 closes.
+- UP → long and DOWN → short, from the as-of close to the close of the forecast day (one
+  trading day; Friday → Monday). MIXED → flat.
+- 1.5 pips charged per taken position.
+- Output files: `paper_trading_log_baseline.csv` (`baseline_direction`),
+  `paper_trading_log_macro.csv` (`pred_direction`), `paper_trading_log_ti_h1.csv`
+  (`ti_h1_direction`).
+- The scorecard reports win rate, cumulative net pips/%, a Sharpe-like ratio (√252) and max
+  drawdown.
+
+**Other logs**: `h1_direction_log.csv` + its ledger, and the Kronos volatility log + ledger —
+all described above.
+
+---
+
+## 7. Retraining, guards and provenance `[FILE]`
+
+**`_train_pipeline.py` sections**
+- 1 load history; 1B FRED.
+- 2 features — 8,605-row shared set.
+- 3–12 `train_variant()` for baseline, then with_macro: PCA, GBM grid, backtest, LSTM.
+- 12B 5-seed volatility ensemble.
+- 12C TI-LSTM subprocess (torch backend).
+- 13–15 H1→daily ensemble: refresh the H1 cache in a subprocess with a timeout, then train.
+
+A socket timeout guards FRED and yfinance hangs, added after a 2026-08-07 stall.
+
+**Retrain supervisor (`api.py`)**
+- Unbuffered child process; the log always ends with `=== RETRAIN EXIT rc=… ===`.
+- State persisted in `results/retrain_state.json`.
+- A log that has not grown for 300 s is reported as "stalled".
+- A second concurrent request gets 409.
+- On success: **hot-reload** of every artifact.
+
+**Retrain-log archive** (`src/retrain_log.py`, 2026-09-21): the previous `results/retrain.log`
+is moved to `results/retrain_logs/` before a new run. Before that, each run truncated the log,
+so 2026-09-11 is the earliest retrain the log can evidence.
+
+**Provenance monitor** (`src/artifact_provenance.py`, 2026-09-21)
+- Hashes the 44 pinned `models/` paths and compares them with the union of
+  `tests/fixtures/*_protected_sha256.json`.
+- The dashboard banner shows "undeclared for N days" when they differ.
+- `[COMPUTED]` today: **44/44 match — nothing undeclared is served.**
+- Unpinned: `models/calendar/calendar_volatility.json`, `models/external_kronos/vol_calibration.json`,
+  and `models/notebook_demo/*` (untracked).
+
+**Commit hook** (`.githooks/commit-msg` → `check_retrain_declaration.py`): refuses any commit
+that stages `models/` unless the message has a `RETRAIN:` line.
+
+**Hidden retrains** `[FILE: CLAUDE.md, hook docstring]`: six commits titled "Refactor code
+structure for improved readability and maintainability" moved production artifacts.
+- `d222ecc` (06-21, 10)
+- `0ece63c` (07-07, 10)
+- `b30599f` (07-25, 18)
+- `a73344e` (08-08, 12)
+- `3def541` (08-08, 17)
+- `f2645a0` (08-15, 30, and it re-read the one-shot volatility test block)
+
+Separately, the 2026-09-11 dashboard retrain moved 18 artifacts (`src/artifact_provenance.py`
+docstring). They sat uncommitted and served for 8 days. According to the previous handover the
+hook refused one commit over them `[DOC]`. The retrain was declared on 2026-09-19 (`4cc7920`),
+and the volatility seeds were reverted (`0419645`).
+
+**Other boundary guards**: byte-pinning fixtures `h1_production_*`, `h_dir_final_*`,
+`kronos_*`, `macro_tier_a_*`, `input_data_*`. The Kronos additive-only test checks that files
+outside the Kronos package only gain lines relative to the pre-Kronos commit `6319df2`; there
+are two documented exemptions. `TestBlockGuard`s in the research modules raise if a spent test
+block is indexed.
+
+---
+
+## 8. Performance — historical and forward
+
+### 8.1 Historical evidence for the served families `[FILE]`
+
+**Daily direction/return — test block `[80:100]`, one-shot report from the 2026-09-11
+retrain** (`results/retrain.log`):
+
+| Model | Accuracy | ROC-AUC | Return MAE (%) |
+|---|---:|---:|---:|
+| baseline GBM | 0.5177 | 0.5282 | 0.3010 |
+| baseline LSTM | 0.5032 | 0.5138 | 0.3065 |
+| with_macro GBM | 0.5073 | 0.5327 | 0.3009 |
+| with_macro LSTM | 0.5073 | 0.5213 | 0.3130 |
+
+- **Regressors vs predicting the mean** `[DOC: ARCHITECTURE_DOCS §4.2.1, older row set]`: the
+  GBM regressor's test MAE (0.2959) equals "always predict the mean" (0.2958). Predicted std is
+  about 100× smaller than realised.
+- **Cost backtest of the GBM direction signal** (1,721 test days; percent returns simply
+  summed; cost charged only when the position flips):
+  - baseline: 621 trades, hit rate 0.5177, gross **−6.88%**, net −12.53% at 1 pip and −18.17%
+    at 2 pips;
+  - with_macro: 441 trades, hit rate 0.5073, gross **+26.30%**, net +22.29% / +18.28%.
+  - Source: `results/backtest_transaction_costs_{baseline,with_macro}.csv`.
+- **Walk-forward** (24 windows of 3-year train / 1-year test, 1999 → 2026-06)
+  `[DOC: ARCHITECTURE_DOCS §3.10]`:
+  - every model's direction accuracy is at chance;
+  - with_macro GBM +1.68 pp vs majority (CI [+0.16, +3.31], p = 0.016, uncorrected, 1 of 4
+    comparisons);
+  - the volatility ensemble did **not** beat GARCH when pooled over the windows.
+- **Calibration audit** `[DOC: CHANGELOG §9; per-subset numbers in results/calibration_audit/]`: the 0.52 guard's
+  accuracy lift is +10.5 pp (baseline) / +7.5 pp (with_macro) on validation — which is
+  in-sample for the GBM — and −0.005 / +0.008 on test. with_macro clears the guard on 40.8% of
+  test days against 22.7% for baseline. The reason is that its heads are more correlated with
+  each other, not more skilful.
+
+**Volatility** — target |next-day log return| × 100:
+
+| | Validation `[70:80]` (arbiter) | Test `[80:100]` (one-shot) |
+|---|---|---|
+| 5-seed ensemble (served) | MAE 0.18594, R² 0.144 | MAE 0.216033, R² 0.116 |
+| GARCH(1,1), train-only fit | 0.2038, R² 0.009 | 0.231172, R² 0.038 |
+| Persistence | 0.2611 | 0.28942 |
+| **Calendar GARCH × DoW (not served)** | **0.16214** | **0.19152**, R² 0.137 |
+
+- **Ship gate**: ensemble vs GARCH ΔMAE CI [0.0111, 0.0242] at α = 0.0167.
+- **Calendar vs frozen ensemble**, paired: test ΔMAE +0.02624, CI [0.02232, 0.02998];
+  validation +0.02705, CI [0.02078, 0.03283] (biased toward the ensemble, which early-stopped on
+  that block).
+- **Calendar parameters** (`models/calendar/calendar_volatility.json`): α 0.0284, β 0.9685,
+  scale 0.5495. Day-of-week factors: Mon 1.291, Tue 1.232, Wed 1.271, Thu 1.354, **Fri 0.275**,
+  Sat 1.0 (no data), Sun 1.058.
+- **Calendar caveats**, stated in its registry row: a numpy variance-targeting GARCH rather than
+  `arch` MLE, and it was built and scored in one pass with no pre-registration.
+- **2026-08-07 re-verification** `[FILE: volatility_hypothesis_log.csv row 3 notes]` (n = 1,712,
+  2020-12-20 → 2026-06-17, frozen models, on the spent test block): the ensemble beats GARCH by
+  ΔMAE +0.01333, CI [0.01039, 0.01612], and is ahead in every year 2021–2026. But the **entire**
+  edge sits in Friday rows (ΔMAE +0.09112). The registry note itself calls the Friday target
+  "the **Fri→Sun** weekend-gap target", averaging 0.0877 against 0.31–0.38 on other days. GARCH
+  is slightly ahead on Mon–Wed, and GARCH × DoW beats the ensemble (0.20521 vs 0.21925).
+- **Reproducibility** `[FILE: DATA.md §8.1]`: ensemble validation MAE varies 0.1845–0.1899
+  between runs at fixed seeds (TF/oneDNN on CPU). The calendar model is deterministic.
+
+**H1 next-bar direction (H_dir family)** — `results/h1_direction_final/report.txt`:
+
+| | n | Model acc | Majority | Δ | Block CI (block = 24) | McNemar p | AUC |
+|---|---:|---:|---:|---:|---|---:|---:|
+| Validation `[70:85]` | 10,378 | 0.5275 | 0.5044 | +2.30 pp | [+0.58, +4.19] | 0.0017 | 0.541 |
+| **Test `[85:100]` (read once 2026-07-30)** | 10,403 | **0.5296** | 0.4985 | **+3.10 pp** | [+1.14, +4.97] | 1.7e-05 | 0.546 |
+
+- **By year** (test): 2024 +2.70 pp, 2025 +2.47 pp, 2026 +4.29 pp.
+- **By New York session** (test, *descriptive only*, the block is spent):
+
+  | Session | n | Δ vs majority |
+  |---|---:|---:|
+  | Asia | 3,467 | −0.26 pp |
+  | London | 2,176 | +4.92 pp |
+  | London/NY overlap | 1,303 | +3.68 pp |
+  | NY-only | 2,156 | +7.98 pp |
+  | Rollover | 1,301 | +0.38 pp |
+
+  On validation the edge was absent in the overlap.
+- **Magnitude regressor H_dir.6**: MAE 0.062415 vs 0.062349 for the baseline → DROP.
+  Predictions shrink toward zero (sd ratio 0.14).
+- **Replications** (validation): GBP/USD +1.16 pp (DROP), AUD/USD +2.05 pp (KEEP),
+  CHF/USD +3.11 pp (KEEP). The four majors are correlated (ρ̄ ≈ 0.54, k_eff ≈ 1.5).
+- **Controls and behaviour**: shuffled-label control 0.5002. Classifier and regressor agree on
+  sign 74.6% of the time. The classifier calls UP 46.1% of the time.
+
+**Other served families** `[FILE]`
+- **TI-LSTM**: test AUC 0.5128, accuracy 0.506 — DROP vs the H1 ensemble.
+- **H1→daily ensemble** (test, 2026-09-11 run): directional AUC XGB 0.5225, RF 0.5179,
+  SVM 0.4975, LSTM 0.5468.
+- **Kronos volatility**, clean window 2024-07-30 → 2026-07-31, n = 519:
+  - amplification AUC 0.689 [0.645, 0.731];
+  - raw Brier 0.363 (worse than the 0.25 constant); calibrated out-of-sample Brier 0.230
+    (n = 260);
+  - correlation of the continuous forecast with realised RV: Kronos 0.459, persistence 0.442,
+    GARCH 0.373. Kronos does not beat persistence (paired CI includes 0); its incremental
+    information over persistence (+0.219) was found post hoc.
+- **Kronos vs the 5-seed ensemble** (volatility registry #9, daily rows, n = 403): the
+  incremental correlation with the ensemble's residual is +0.167, CI [0.035, 0.309] — the
+  pre-declared primary, KEEP. The forecast-improvement secondary includes zero. MAE on those
+  rows: Kronos 0.222, ensemble 0.219, **GARCH 0.212**.
+
+### 8.2 Forward (live, simulated) ledgers `[COMPUTED]`
+
+**How these numbers were computed.** From the committed CSVs at HEAD. Settled forecast dates
+run through 2026-09-18. The same formulas as `src/paper_trading.py::summarize`: 1.5 pips per
+position; Sharpe-like = mean / sd × √252 over taken positions. "Always long" is my benchmark:
+long every settled day of the same ledger, same cost.
+
+| Ledger | Forecast dates | Taken (flat) | Gross hit | Net win | Net pips | Net % | Sharpe-like | Max DD % | Long / Short | Always long, same days |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| baseline (daily) | 07-06 → 09-18 | 37 (12) | 40.5% | 35.1% | **−349.5** | −3.02 | −4.47 | 3.77 | 13 / 24 | +93.0 |
+| with_macro (daily) | 06-23 → 09-18 | 45 (13) | 44.4% | 42.2% | **−554.9** | −4.83 | −6.76 | 5.02 | 12 / 33 | +83.5 |
+| TI-LSTM H1 (daily) | 07-20 → 09-18 | 39 (0) | 61.5% | 56.4% | **+318.4** | +2.76 | +4.17 | 0.78 | 28 / 11 | +99.4 |
+| H1 next-bar (hourly) | 07-30 → 09-18 | 89 | 50.6% | 39.3% | **−106.9** (gross +26.6) | — | — | — | — | — |
+
+- **By month, net pips (taken positions)**:
+  - baseline: Jul +11.9 (16), Aug −271.1 (13), Sep −90.3 (8).
+  - with_macro: Jun −127.2 (5), Jul −132.4 (19), Aug −178.6 (13), Sep −116.7 (8).
+  - TI-LSTM: Jul +68.8 (10), Aug +249.0 (16), Sep +0.6 (13).
+- **Both sides of the TI-LSTM contributed**: long +225.4 pips on 28 trades, short +93.0 on 11.
+- **Signals scored from the prediction log, not ledgers**, same 1.5-pip rule:
+  - H1→daily ensemble consensus: 37 directional calls, gross hit 45.9%, −137.5 net pips.
+  - with_macro GBM head alone: 58 calls, 41.4%, −520.5.
+  - with_macro LSTM head alone: 58 calls, 46.6%, −501.9.
+- **Served volatility forecast, forward** (39 days with both a forecast and a settled
+  outcome):
+  - mean forecast 0.245% against 0.198% realised; MAE 0.161; correlation 0.19;
+  - a constant equal to the realised mean scores MAE 0.146 (in-sample constant, so this favours
+    the constant);
+  - Friday rows (n = 8): forecast 0.179, realised 0.181.
+- **Kronos volatility, forward** (37 settled calls, 2026-08-04 → 09-18):
+  - amplification AUC 0.657 raw / 0.684 calibrated;
+  - Brier 0.251 raw / 0.281 calibrated, against 0.250 for a 0.5 constant — calibration hurt
+    forward;
+  - RV MAE 0.080 raw / 0.105 scaled, persistence 0.106; 46% of windows were "amplified".
+- **Caveats** `[FILE]`:
+  - All samples are tiny. The H1 module itself says about 1,000 settled observations are needed.
+  - Rows settled 2026-09-11 → 09-19 came from then-undeclared artifacts (`e77a4eb` records
+    this).
+  - 6 of the 89 H1 ledger rows came from calls made after the forecast bar had already closed
+    (§11.4).
+  - The daily ledgers contain only days with a logged prediction (§6.8).
+
+---
+
+## 9. Everything that has been tried — hypothesis registries `[FILE]`
+
+**How to read this.** One CSV per family in `results/`. Alpha is 0.05 / family size unless
+noted. The "validation" arbiter is `[70:80%]` for daily families and `[70:85%]` for H1/M15.
+
+| Family (registry) | Question | Verdicts |
+|---|---|---|
+| `feature_hypothesis_log` — daily direction ADD-tests | Do features improve next-day direction? | #1–4 macro (`yield_differential_delta`, `usd_index_return`, `policy_rate_differential`, `inflation_differential`): **KEEP-provisional** (none cleared; smallest p 0.56). #5 FOMC calendar **DROP** (Δacc −2.9 pp, CI entirely < 0). #6 COT **DROP**. #7 Fibonacci/fractal **DROP**. #8 VIX regime **DROP**. #9 volatility-ensemble forecast as a feature **DROP**. A new feature would face 0.05/10 |
+| `volatility_hypothesis_log` | Next-day \|return\|: neural vs GARCH, candidate inputs | #1 dedicated LSTM vs GARCH **CLEARED**. #2 multi-task head vs dedicated **CLEARED**. #3 5-seed MT ensemble vs GARCH **CLEARED** (later: the edge is Friday). #4 RSI_14, #5 %B, #6 FOMC, #7 COT (CI-confirmed worse), #8 VIX as extra inputs: all **DROP**. #9 Kronos incremental information: **KEEP on the primary**, secondary includes 0 |
+| `calendar_hypothesis_log` | GARCH × day-of-week vs 5-seed ensemble | H_cal.1 **CLEARED** (test ΔMAE +0.0262). Caveats: not pre-registered; numpy GARCH |
+| `density_hypothesis_log` (pre-registered at `7524cab` before any code) | MDN density vs Student-t on the calendar scale (CRPS) | H_den.1 **DROP** (Δ −0.00045, CI [−0.0028, +0.0019]). H_den.2 **NOT-RUN** (precondition failed; alpha unspent). The MDN does beat GARCH + t and the unconditional baseline |
+| `h1_direction_hypothesis_log` (α 0.05/7 after restatement) | Next-H1-bar direction | H_dir.1 GBM vs majority **KEEP** (validation and test). H_dir.2 LSTM vs GBM **DROP**. H_dir.3 GBPUSD **DROP**. H_dir.4 AUDUSD **KEEP**. H_dir.5 CHFUSD **KEEP**. H_dir.6 magnitude regressor **DROP**. H_dir.7 cross-currency lags **DROP** |
+| `h1_multiday_hypothesis_log` | 24-bar mean reversion on H1 | H_md.1 trivial rule vs majority **DROP** (+0.10 pp). H_md.2 GBM vs the rule **DROP**. Break-even accuracy at 1.5 pips: 52.26%. The motivating variance ratio (VR 0.925 at q = 24) was computed on data that included the test block — disclosed |
+| `pooled_h1_hypothesis_log` | Pooling 4 majors (triple-barrier, H = 120) vs EURUSD alone | H_pool.1 GBM **DROP**, H_pool.2 LSTM **DROP**. ρ̄ = 0.537, k_eff 1.53, label uniqueness 0.008 |
+| `harmonic_pattern_hypothesis_log` | XABCD patterns → triple-barrier outcome (H1 fractal, H1 ZigZag, M15 ZigZag) | H1.1–H1.6 all **DROP** |
+| `divergence_hypothesis_log` | RSI/MACD/Stochastic divergence on M15 | H_div.1–6 all **DROP**. Horizons 4 → 96 bars were tried, and the family is **closed** by pre-commitment |
+| `fractal_breakout_driftcheck_hypothesis_log` | Continuation 2/3/5 days after a fractal breakout | **DROP** (all horizons slightly negative) |
+| `cot_weekly_hypothesis_log` | COT at a weekly horizon | #1 **DROP**. #2 contrarian extremes **INCONCLUSIVE** (one-sided tails) |
+| `macro_panel_hypothesis_log` | G10 monthly macro direction | **REGISTERED-UNSPENT** — stopped by a power calculation (MDE 20.8 pp; ALFRED first-print data only from 2013) |
+| `macro_tier_a_hypothesis_log` | Carry rule and logistic, walk-forward, G10 monthly from 1976 | H_tA.1 carry vs majority **DROP**: +2.79 pp, McNemar p = 0.015 (< 0.025), but the month-block CI [−0.86, +7.10] pp includes 0, and KEEP needs both. H_tA.2 logistic vs carry **DROP** |
+| `ti_lstm_h1_hypothesis_log` | TI-LSTM vs the H1 ensemble | **DROP** (served anyway by owner override) |
+| `ltc_hypothesis_log` | Liquid time-constant (CfC) + spiking abstention | H_ltc.1 **CLEARED — marginal, fragile, mechanism unsupported**. H_ltc.2 learned clock tracks tick rate **DROP** |
+| `spiking_readout_hypothesis_log` | Trained LIF readout vs a fixed sigma threshold | H_spk.1 **DROP**. Observation: a day-of-week × hour lookup table beats both the readout and the GARCH × DoW benchmark |
+| `metalabel_hypothesis_log` (pre-registered at `6082fe5`) | Does model disagreement flag reliable calls? | C0 **UNDERPOWERED** (3 pp would need ~605 years of daily data). C1 **INFEASIBLE-AS-SPECIFIED**. C2 **UNDERPOWERED**. **Zero comparisons spent** |
+
+**Studies outside the registries** `[FILE]`
+- Ch.11 capacity diagnostic: mild overfit above a chance floor; more epochs or layers are
+  refuted.
+- Probability calibration: evaluated, not adopted.
+- Transaction-cost backtest.
+- Walk-forward (24 windows).
+- Vol-scaled sizing overlay on the ledgers: PRELIMINARY; n = 10 / 17 at the time; the bootstrap
+  refused to run.
+- H1 label-geometry feasibility scan: short horizons, H ≤ 48, are geometrically viable.
+- H1 movement profile by New York hour (§14.1).
+- H_dir diagnostics (hourly, temporal, New York time).
+- Yıldırım et al. (2021) replication: zero alpha; the paper's 77–84% "hybrid" did not
+  reproduce — 45–57% across the arms and scales here, with the measurable leaks worth only a
+  few pp.
+- Kronos programme: `pred_len` = 1 results superseded; `pred24`; RankIC cross-section;
+  volatility vs the ensemble.
+- Curl (discrete-Hodge) instrument work:
+  - validated on synthetic data only; no hypothesis registered;
+  - the real M1 data (6 pairs) have been pulled and coverage-audited;
+  - no committed output of the real-data "day-1" run under `results/curl/` `[UNKNOWN]` whether
+    it was run. `results/curl_selftest/` came with the module's first commit.
+
+---
+
+## 10. Methodology rules in force `[FILE: CLAUDE.md, ARCHITECTURE_DOCS, registries]`
+
+1. **The test blocks are spent.**
+   - Daily `[80:100]`: re-read many times. The volatility one-shot test figure in
+     `vol_metrics.json` alone was rewritten on nine commits between 2026-07-07 and 2026-08-15
+     (`SUBMISSION_SELF_ASSESSMENT.md`), and again by the 2026-09-11 retrain (later reverted).
+   - H1 `[85:100]`: read once, 2026-07-30 10:52 UTC.
+   - Feature search runs **only** on the validation slice via `src/ablation.py` (fit on `[0:70]`).
+2. **Bonferroni per family**, α = 0.05 / family size, counting every hypothesis ever spent in
+   that family. Next bars: daily direction features 0.05/10; volatility 0.05/10; H_dir 0.05/8.
+3. **Forward ledgers are the primary production arbiter.** The docs say "months" of forward
+   data are needed. The code says roughly 1,000 settled observations for the H1 model.
+4. **Every KEEP needs a CI that excludes 0** *and* p < α. Other rules:
+   - one pre-registered primary comparison governs;
+   - corroborating comparisons are never a second path to KEEP (the "anti-cherry-pick" rule);
+   - a model that beats a trivial baseline but not a simpler model is not a KEEP.
+5. **Controls and power**:
+   - shuffled-label leakage controls;
+   - purge and embargo at split boundaries (H1: purge 1, embargo 24);
+   - label-uniqueness accounting for overlapping labels;
+   - power / minimum-detectable-effect analysis **before** spending alpha;
+   - pre-registration committed before the code for the newer families (density, metalabel).
+6. **Bootstrap conventions** — paired resampling with 2,000 resamples and seed 42 throughout,
+   but the block length differs by family:
+   - i.i.d. for the daily feature ADD-tests (`src/ablation.py`) and the volatility-family tests
+     (`src/volatility.py`);
+   - block 5 for the daily density and calendar tests;
+   - block 24 bars for H1 direction (the measured design effect is only about 1.0–1.25,
+     because the direction sign has no autocorrelation: Ljung–Box lag 24, p = 0.115);
+   - longer blocks where labels overlap (H_md 96, pooled 120, divergence ~190 bars, M15
+     harmonics 20 events);
+   - refuse (return NaN) when n ≤ block length;
+   - exact McNemar for paired classifiers.
+7. **Standing rule** (spiking family, 2026-08-10): *"a calendar lookup table is the first
+   benchmark any new architecture faces, not the last."*
+8. **Economic floor** used in the metalabel family: 3 pp of accuracy. At the current bar,
+   resolving 3 pp needs about 7,634 observations per cell.
+9. **Invariants** (`CLAUDE.md`):
+   - one `global_scaler` per variant;
+   - the target is in percent natively, and `×100` appears only in `features.py`;
+   - one unified chronological split from `config.json`;
+   - no look-ahead: `shift(-1)` targets, past-only ffill, train-only fits, `TimeSeriesSplit`
+     only.
+10. **Execution boundary** written into the code and docs: *"do not add broker /
+    order-execution / position-sizing / stop-loss code; real execution is a separate
+    risk-management conversation, only after a ledger shows a supported edge."*
+11. **Retrain rule**: any commit touching `models/` needs a `RETRAIN:` line. Never `--no-verify`.
+
+**Splits, exactly**
+- **Daily** (`src/ablation.py`, 8,605 rows):
+  - train `[0:6023]` = 1999-01-04 → 2018-05-01;
+  - validation `[6023:6884]` = 2018-05-02 → 2021-02-01 (n = 861);
+  - test `[6884:8605]` (n = 1,721).
+- **H1** (`src/h1_direction_model.py`, 69,349 labelled rows from the frozen EURUSD file):
+  - train `[0:48544]` (48,543 after purge; starts 2015-05-08 03:00);
+  - validation `[48544:58946]` = 2023-03-16 04:00 → 2024-11-19 04:00 (10,378 after embargo);
+  - test 2024-11-19 05:00 → 2026-07-28 14:00 (10,403).
+
+---
+
+## 11. Defects, inconsistencies and observations
+
+### 11.1 Daily data: the broker's Sunday bar vs the serving path (the train/serve difference is not recorded in the project docs)
+
+**Facts**
+- **Training rows include Sundays** `[COMPUTED]`. The euro-era rows of
+  `results/eurusd_features.csv` contain 1,421 Sunday bars (1999-01-10 → 2026-08-09) and no
+  Saturday bars.
+- **Friday's "next day" is almost always Sunday** `[COMPUTED]`. For 1,415 of 1,434 Fridays the
+  next row is the Sunday bar. Mean |next-row log return| by weekday: Mon 0.424%, Tue 0.432%,
+  Wed 0.452%, Thu 0.450%, **Fri 0.120%**, Sun 0.374%.
+- **What the Sunday bar is** `[FILE]` + `[INFERRED]`. `DATA.md §2` says the FX week opens at
+  server hour 23. The `src/live_data.py` comment on `H1_WEEKLY_OPEN_HOUR` says the H1 cache has
+  Sunday bars only at server hours 22 (34 bars) and 23 (579 bars). A D1 bar ends at server
+  midnight. So the D1 Sunday bar covers only the first one or two hours of the FX week, and a
+  Friday row's target spans Friday close → the close of that short Sunday bar: the weekend gap
+  plus about one hour.
+- **Training never drops Sundays** `[FILE]`. Nothing in `_train_pipeline.py`, `src/features.py`,
+  `src/volatility.py`, `src/ablation.py` or `src/calendar_volatility.py` removes them. The daily
+  models, the volatility ensemble, the calendar model and the density family are all trained on
+  the Mon–Fri + Sun row set; `day_sin`/`day_cos` include dow = 6.
+- **Serving always drops them** `[FILE]`. `src/live_data.py::drop_incomplete_bars` keeps only
+  Mon–Fri bars, both for live features and for the realised closes that score the ledgers. The
+  forecast for a Friday is labelled Monday and scored Friday close → Monday close.
+- **The docs disagree with each other** `[FILE]`:
+  - `drop_incomplete_bars`'s docstring says the Sunday bar is one "the yfinance-derived training
+    data never contained" — contradicted by the data;
+  - `volatility_hypothesis_log.csv` row 3 calls the Friday target "Fri→Sun weekend-gap";
+  - `CHANGELOG_SINCE_2026-07-23.md` §3 calls it "Fri→Mon";
+  - `results/yildirim_replication/REPLICATION.md` (§4, item 14) records the Sunday bars
+    explicitly.
+
+**Inferred** `[INFERRED]`
+- Around weekends the live feature rows (`log_return`, the lags, SMA windows, and the day
+  encoding, which never shows dow = 6 live) are built from a different row sequence than the
+  training rows.
+- The Friday target the models learned (weekend gap plus one hour) is not the Friday → Monday
+  move the ledgers score.
+- The "Friday effect" behind the volatility re-verification and the calendar model's Friday
+  factor 0.275 plausibly reflects this bar construction rather than a market property of
+  Friday → Monday. The forward sample is too small to show it either way: 8 Friday rows,
+  forecast 0.179% vs realised 0.181%.
+
+### 11.2 Stale or conflicting documentation `[FILE]`
+
+- `CLAUDE.md`:
+  - "served behind two frontends" — the Gradio frontend was removed on 2026-06-23; there is one;
+  - "~19 tests" — the suite now has 588 test functions;
+  - "0.05/9 ≈ 0.00556" is the bar of the last spent feature hypothesis; a new one faces 0.05/10;
+  - calls the volatility family "the ONLY neural family with a CI-confirmed edge" without the
+    calendar caveat (§8.1).
+- `ARCHITECTURE_DOCS.md` was last edited 2026-07-28, before the H1 direction serving, Kronos,
+  calendar, density, metalabel, LTC/spiking and provenance work. The section-by-section list is
+  in the preface to Part B.
+- `DATA.md §2` says committed files are converted to UTC. The code (with live evidence) says the
+  H1/M15 `+00:00` tags are broker-server hours (§5.2).
+- `results/external_kronos/SUPERSEDED_BY_CONFIGURATION.md` says the loader still uses
+  `PRED_LEN = 1` and serves direction. The loader now has `PRED_LEN = 24`, and direction is
+  retired.
+- `src/calendar_paired_bootstrap.py:57`: `BLOCK_LEN = 5  # volatility family convention`. But
+  `src/volatility.py::bootstrap_delta` is an i.i.d. bootstrap; the volatility family never had a
+  block length.
+- `src/h1_direction_model.py`:
+  - `arbiter(...)` defaults to `alpha = FAMILY_ALPHA = 0.025` (`FAMILY_SIZE = 2`), and line 1004
+    calls it without an alpha;
+  - the registry's current family alpha is 0.05/7 = 0.007143, and
+    `src/h1_direction_final.py` uses 0.05/6;
+  - anyone reusing `arbiter` must pass `alpha` explicitly. No recorded verdict changes
+    (the restatement is in `results/h1_direction_final/alpha_restatement.csv`).
+- `ARCHITECTURE_DOCS §4.2.1` says all four GBM grid searches picked the minimum-capacity corner.
+  In the 2026-09-11 run the **baseline classifier picked depth 5 with 200 trees** (train AUC 0.80
+  vs test AUC 0.53).
+- `ARCHITECTURE_DOCS §4.2.2`: the Brier numbers (0.25063 raw vs 0.25013 constant) appear only in
+  the docs. No results file records them.
+- `config.json → gbm.huber_alpha` (0.9) is logged but never passed to `XGBRegressor`, which uses
+  its default `huber_slope`. This is documented as open.
+
+### 11.3 The test suite at HEAD — one test should fail `[COMPUTED]`
+
+`tests/test_input_data_provenance.py::test_data_md_row_counts_match_the_files_on_disk` compares
+`DATA.md`'s row counts with the files on disk.
+
+- `DATA.md` says `results/eurusd_h1.csv` has 60,136 rows; the file at HEAD has **60,167**.
+- `b8dbac2` (2026-09-23) committed the refreshed cache without re-stamping. `DATA.md` itself
+  says to re-stamp in the same commit.
+- The rolling cache changes whenever the app fetches H1 data, so this test goes red after
+  normal use until someone re-stamps it.
+- I did not run the suite.
+
+### 11.4 H1 feed-clock offset accepted impossible values `[FILE]` / `[COMPUTED]`
+
+**What happened**
+- `results/h1_feed_offset.json` has 19 history entries since 2026-07-30: a cold start at +2 and
+  18 accepted changes.
+- **Ten of those changes** went to values that cannot be this broker's summer offset: −11, −10,
+  −9 (three times), −8, −7, −2, −1 and +1, each accepted as "clear_of_boundary". Examples:
+  Saturday 2026-08-01 → −9; Saturday 2026-09-19 → −7; and on weekdays 2026-08-12 → −8 and
+  2026-08-13 → −2, each reverting within a second.
+- The code's plausibility band is −12…+14 h. Its docstring says a weekend or stale feed "falls
+  outside the plausible band". In practice a weekend reading within about 12 h of the Friday
+  close falls **inside** the band and is accepted.
+- **14 of 160** calls in `results/h1_direction_log.csv` were labelled `open`, with minutes
+  remaining, although their forecast bar had closed 3–13 hours earlier: 11 of the 16 Saturday
+  calls, plus one call each on 2026-08-12, 08-13 and 08-14.
+- **6 of the 89** ledger rows come from such calls. Their gross total is +13.0 pips; without
+  them, the ledger's gross is +13.6 pips over 83 rows.
+
+**Effect.** The model did not see those bars, so this is not look-ahead. But those "trades"
+could not have been placed in real time.
+
+### 11.5 Other items worth knowing `[FILE]`
+
+- **Commit titles.** Data-only commits are still titled "Refactor code structure for improved
+  readability and maintainability": `5c55590`, `4bcf98e`, `46042c8`, `3479e9c`, `6f5e9b5`.
+  None touched `models/` (the hook enforces that), but the titles do not describe the content.
+  `6f5e9b5` is the one that committed the 48-row cache (§5.3).
+- **Retrain button.** It still hot-reloads new artifacts into serving with no commit. The
+  provenance banner now shows it, but only as information.
+- **Notebook Section 19** still trains the pre-dual single pipeline into root `models/` paths
+  that serving no longer loads. `_train_pipeline.py` is the only real producer.
+- **Consensus guard.** The 0.52 guard applies only when the two heads agree. On disagreement the
+  higher-confidence head is served ungated. On test the guard is inert (§8.1).
+- **Dual heads.** Each model's direction comes from its classifier or direction head and its
+  return from the regression head, so a row can show DOWN with a positive return. Multi-task
+  sign agreement is 0.61–0.72 `[DOC]`.
+- **LTC known defect** (open, documented): the final gauge freeze recentres on the earliest
+  20,000 rows. Any re-run must be a new hypothesis.
+- **Git state.**
+  - `density-forecasting` is 33 commits ahead of `main`; `main` still points at `f2645a0`
+    (2026-08-15).
+  - 4 local commits are not pushed: `01afa59`, `0dad2f0`, `cd3fa98`, `b8dbac2`.
+  - Untracked: `.claude/`, `Claude outputs/`.
+
+---
+
+## 12. What the repository itself lists as open or proposed `[FILE]`
+
+- **GBM overfit gap** (`IMPROVEMENT_LOG` backlog): constrain `max_depth` / `subsample` and
+  re-check train vs test AUC. The 2026-09-11 baseline classifier again shows the gap.
+- **Re-evaluate `yield_differential_delta` on the 1999+ row set.** Its sign flipped relative to
+  1971+.
+- **Port notebook Section 19** to `train_variant()`.
+- **Kronos vs this project's own volatility ensemble** on the same rows at the 24-hour
+  horizon — "never been made on any row".
+- **Curl study**: real-data "day-1" run, then the pre-registered STOP GATE. The recommended
+  primary, drafted in `CURL_EXPERIMENT_PLAN.md §3.2`, is the incremental information of a
+  confound-residualised stress index for next-day volatility beyond the frozen ensemble.
+- **`RESEARCH_FRONTIER_IDEAS.md`**:
+  - Idea 1 (predictive coding / precision-first forecasting, JAX) — not started;
+  - Idea 2 (gauge-equivariant model on the currency graph) — only the instrument work on
+    synthetic data;
+  - Idea 3 (LTC + spiking) — done, negative.
+- **Metalabel C1 proposal**: disagreement between H_dir.1 GBM and H_dir.2 LSTM. The agreement
+  rule is fixed, the cells are 3,585 / 6,793, and the MDE is 3.83 pp. It needs its own
+  registration. The `[0:70%]` refit path is recorded but marked **HOLD / NO GO** by the owner.
+- **H1 label-geometry scan**: 15 pooled cells are viable at horizons ≤ 48 bars (only H = 6–12
+  robustly after cross-sectional correlation). It needs a new pre-registered hypothesis.
+- **COT weekly extremes**: needs a longer, two-sided window.
+- **Vol-scaled sizing overlay**: was preliminary at n = 10 / 17 because the block bootstrap needs
+  about 40 positions. The ledgers now have 37 / 45 / 39 taken positions `[COMPUTED]`; it has
+  not been re-run.
+- **Walk-forward note**: any future scheduled retraining of the volatility family probably needs
+  a longer training window than 3 years.
+- **Density H_den.2**: alpha unspent.
+- **Scheduled retraining and real execution** are explicitly marked as separate, future
+  conversations.
+
+---
+
+## 13. Unknowns — questions only the owner can answer
+
+1. **The real trade record**: which trades were taken, since when, at what size, with what
+   results? Nothing in the repository records them.
+2. **Account**: is it the ActivTrades MT5 account the data come from? Account currency,
+   leverage, typical position size, risk per trade, maximum acceptable drawdown.
+3. **Actual costs**: spread, commission and swap on the real account, against the 1.5-pip round
+   trip the ledgers assume.
+4. **How the signals are combined** in practice: e.g. only when the variants agree? Which hours
+   the H1 signal is used? How the volatility forecast turns into a stop or a size?
+5. **Trading hours** the owner can be at the screen. This matters for H1/M15 ideas and for the
+   London/NY concentration in §8.1.
+6. **Scope**: both "EUR/USD only" and "other pairs too" were ticked. Which applies?
+7. **Branch intent**: should `density-forecasting` be merged into `main` and pushed?
+8. **Curl**: was the real-data curl run ever done?
+9. **Methodology for new work**: must the next agent keep this project's registries and
+   Bonferroni families, or may it start fresh families?
+
+---
+
+## 14. Facts that bear on designing new strategies
+
+### 14.1 Size of moves and cost geometry `[FILE]`
+
+- **Mean |H1 move| by New York hour** (`results/h1_movement_by_ny_hour.csv`, pips):
+  - largest: 07:00 NY 13.0, 09:00 12.8, 08:00 11.4, 02:00 10.9, 10:00 9.4, 03:00 9.1;
+  - smallest: 16:00 NY 2.7 (rollover), 22:00 3.8, 23:00 4.0, 15:00 4.1, 17:00 4.3.
+- **By session** (mean |H1 move|): London/NY overlap 11.2 pips, London 9.2, NY-only 6.3,
+  Asia 6.1, rollover 3.9. The project's session definitions, in New York time: Asia
+  19:00–03:00, London 03:00–08:00, overlap 08:00–11:00, NY-only 11:00–16:00, rollover
+  16:00–19:00.
+- **Typical EURUSD moves** `[FILE: divergence registry notes]`: about 7.3 pips per hour,
+  40.6 per day, 71.8 over three days.
+- **Cost share**: a 1.5-pip round trip is 4.5% of the typical 24-bar move — the shortest horizon
+  under 5% (`h1_multiday` registry). Break-even accuracy at 24 bars with 1.5 pips is 52.26%.
+- **Measured spread** on this feed: EURUSD median 0.46 bp one way (§1).
+
+### 14.2 Arithmetic of the one confirmed directional edge `[COMPUTED]` / `[INFERRED]`
+
+- **Expected gross pips per trade.** If being right is independent of the size of the move, it
+  is roughly (2p − 1) × E|move|.
+- **At the H_dir.1 test values** — p = 0.5296, E|move| = 0.062% ≈ 7 pips — that is about
+  **0.4 pips**. This is below a 1.5-pip round trip, and also below the measured ~1-pip raw
+  spread round trip.
+- **The forward ledger agrees**: +26.6 gross pips over 89 bars = +0.30 pips per bar.
+- **The best descriptive session** (NY-only on the spent test block: p = 0.536, |move| ≈ 6 pips)
+  gives about 0.4–0.5 pips.
+- **This family never computed P&L or costs by design**: its docs say "accuracy is not
+  profitability".
+
+### 14.3 Where the repository found structure, and where it did not `[FILE]`
+
+**Found**
+- Volatility is forecastable: GARCH beats persistence, and the ensemble beats GARCH. Most of
+  the measurable gain is **calendar**: the weekday table (partly the data-construction effect
+  in §11.1) and hour-of-day. A day-of-week × hour table beat every learned "when to trust
+  myself" signal (spiking family).
+- H1 next-bar direction: a small, replicated-in-sign edge, concentrated descriptively in
+  London/NY, not in Asia.
+- Kronos 24-hour volatility amplification: AUC ≈ 0.69 on the clean window; ≈ 0.66–0.68 forward
+  (n = 37).
+- Carry at a monthly horizon: +2.8 pp, not significant (CI includes 0).
+
+**Not found**
+- Daily direction from price, macro, COT, VIX, FOMC or Fibonacci.
+- Chart patterns: harmonic, divergence, fractal breakout.
+- Multi-pair pooling.
+- LSTMs over GBMs.
+- 24-bar mean reversion.
+- Meta-labelling at daily frequency — structurally unanswerable.
+
+### 14.4 Power constraints `[FILE: results/metalabel/RESULTS.md]`
+
+- Resolving 3 pp at α ≈ 0.004 with 80% power needs about 7,634 observations per cell.
+- Daily data cannot supply that: about 605 years would be needed.
+- At H1: about 22,900 validation bars, i.e. a cache of about 25 years, or about 3.7 years of
+  forward hourly forecasts.
+- An effect small enough to be plausible is too small to measure with this data; one large
+  enough to measure is implausible.
+
+### 14.5 Data available for new work `[FILE]`
+
+- Daily EURUSD 1971–2026 (euro era 1999+, with Sunday bars).
+- H1 EURUSD / GBPUSD / AUDUSD 2015–2026 (frozen), plus New York-time versions.
+- H1 rolling cache 2017–2026.
+- M15 EURUSD 2012–2026.
+- M1 for 6 pairs 2018–2026 (local parquet).
+- H1 for 19 pairs across 8 currencies, 2022–2026.
+- FRED rates, inflation, USD index, VIX; the G10 monthly macro panel.
+- CFTC COT; the FOMC calendar.
+- The forward logs.
+
+A live MT5 terminal with symbol sync and coverage guards is available for new pulls.
+
+### 14.6 Observations on the signals the owner uses `[INFERRED]` — descriptive only
+
+- **Daily consensus (either variant).** Historically at chance, and negative forward on both
+  variants — worse than always long on the same days.
+- **H1 next-bar.** The only out-of-sample-confirmed accuracy edge. The served model has no
+  out-of-sample validation of its own. By the arithmetic in §14.2 its expected gross per bar is
+  below the retail cost; the forward ledger is net negative.
+- **TI-LSTM H1.**
+  - Historically at chance (DROP).
+  - Forward it is the one positive ledger: 39 trades, 72% of them long, over a period in which
+    always long made +99 pips. Both its long and its short sides were positive.
+  - 39 trades cannot distinguish skill from chance at any registry bar used here.
+- **Volatility for size / stop.**
+  - The served 5-seed forecast's forward MAE was worse than a constant over 39 days.
+  - The historically best volatility model (the calendar model) is not served.
+  - Kronos discriminates volatility amplification, but its calibrated probability was worse
+    than a constant forward (n = 37).
+
+---
+
+*End of Part A.*
+
+---
+
+# Part B — `ARCHITECTURE_DOCS.md`, verbatim
+
+What follows is `ARCHITECTURE_DOCS.md` reproduced byte-for-byte from HEAD `b8dbac2`: 1,892
+lines, last modified 2026-07-28. It is the project's own deep reference. It is still accurate
+on most mechanics: data flow, features, consensus, fallback chains, the research families up
+to §3.11.1, and the methodology.
+
+Read it with the corrections below. Everything in this table is `[FILE]`, checked on
+2026-09-23.
+
+| Section of ARCHITECTURE_DOCS.md | What is out of date |
+|---|---|
+| §0 Component map | Nothing added after 2026-07-28 is listed: H1 next-bar serving (`src/h1_direction_serving.py`, `/api/h1-direction`), Kronos (`src/external/kronos/`, `/api/kronos-volatility`), the calendar model, density, metalabel, LTC/spiking, the provenance monitor, the retrain-log archive. "Shared by both frontends": there is one frontend |
+| Production Methodology (c) | Names a single `results/paper_trading_log.csv`. It has been replaced by the per-variant ledgers (`_baseline`, `_macro`, `_ti_h1`) plus the H1-direction and Kronos ledgers. "0.05/9" is the bar of the last spent feature hypothesis; a new feature faces 0.05/10 |
+| §1.1–§1.2 | Describe the single-variant load: 7 artifacts at the `models/` root, "24 FEATURE_COLUMNS", `fetch_yield_differential`. Now: per-variant `models/baseline/` and `models/with_macro/`, 23 / 27 columns, `fetch_macro_features` (4 features), plus the volatility, H1, TI, H1-direction and Kronos loads (Part A §6) |
+| §2.1 tz note | Correct that tz-naive D1 reproduces the server calendar date. But the bundled training history **does** contain the broker's Sunday bars and the serving path drops them (Part A §11.1) |
+| §3.5 | "The only neural model family with a CI-confirmed edge" is superseded by the 2026-08-07 re-verification (the edge is all in Friday rows) and by H_cal.1 (a 10-parameter calendar model beats the ensemble on validation and test). The served artifacts were reverted to their pre-2026-09-11 seeds on 2026-09-19 |
+| §3.6 | Still accurate. The TI artifacts were retrained on 2026-09-11 (declared 2026-09-19) and are trained through 2023-10-17 |
+| §3.9 | Preliminary (n = 10 / 17 at the time). The ledgers now hold 37 / 45 / 39 positions; the overlay has not been re-run |
+| §4.2 | The "retrained production heads" metrics come from an older retrain; current values are in Part A §8.1 |
+| §4.2.1 | "All four GBM grid searches picked the minimum-capacity corner" no longer holds for the baseline classifier (depth 5, 200 trees in the 2026-09-11 run). The MAE 0.2959 vs 0.2958 comparison is from the older 1971+ row set |
+| §4.2.2 | The Brier numbers are not recorded in any results file |
+| §4.4 item 2, §4.6 | "19 passed" / a 3-file test inventory. Now 22 test files and 588 test functions (README claims 621 collected) |
+| §4.7 | The backtest numbers (3,103 test days, +29.08% gross) predate the euro-era row set. Current CSVs (1,721 test days): baseline gross −6.88%, with_macro gross +26.30% (Part A §8.1) |
+| §5.1 | Shows root-level daily artifacts, which now live in `models/<variant>/`. Missing: `models/volatility/`, `models/ti_lstm_h1/`, `models/h1_direction/`, `models/calendar/`, `models/external_kronos/` |
+| §5.3 | Single `paper_trading_log.csv` → the per-variant ledgers |
+| §5.4 | The response schema lacks `volatility_forecast` and `ti_h1_forecast`. The routing table lacks `/api/h1-direction`, `/api/kronos-volatility`, `/api/kronos-direction` (retired), `/api/provenance` and `/api/retrain/status` |
+
+---
+
+<!-- ===================== BEGIN VERBATIM ARCHITECTURE_DOCS.md ===================== -->
+
+# EURUSD Predictor — System Architecture & Pipeline Report
+
+> **Scope:** Complete architectural blueprint of the EURUSD Machine Learning
+> project as it exists in the current tree. Documents data flow, prediction
+> generation, training, validation, and every known failure point.
+>
+> **Audience:** MLOps / engineering. Every claim below is traceable to a
+> specific file and line; nothing is aspirational.
+
+---
+
+## 0. Component Map (orientation)
+
+| Layer | File | Role |
+|---|---|---|
+| Research / training | `notebooks/01_data_preparation.ipynb` | 61-cell research notebook (Sections 1–20). Mirrors the standalone trainer. |
+| Standalone trainer | `_train_pipeline.py` | `train_variant()` trains BOTH model variants (baseline price-only + with_macro) in one run; writes `models/<variant>/` + MLflow. |
+| Inference core | `src/inference.py` | `PredictionService` — loads BOTH variants' artifacts once, serves both committees + `variant_agreement` per prediction. **Shared by both frontends.** |
+| Feature engineering | `src/features.py` | The 27-column `FEATURE_COLUMNS` contract + per-variant subsets (`variant_feature_columns`), PCA on lag block, macro merge. |
+| Auxiliary intraday feature engineering | `src/h1_features.py` | H1→Daily feature module for the auxiliary ensemble (§3.4) — flattened daily stats + 24h tensor, both including `Trend_vs_SMA504`/`RSI_24`. Independent of `src/features.py`. |
+| Live market data | `src/live_data.py` | MT5 → yfinance fallback chain for OHLCV (also `fetch_h1_market_data` for the H1 stream). |
+| Macro data | `src/macro_data.py` | FRED API → FRED public CSV → on-disk cache fallback chain. |
+| COT positioning data | `src/cot_data.py` | CFTC "Traders in Financial Futures" Socrata API → cache fallback chain; availability-date look-ahead logic + trailing-window z-scores. **Tested candidate — DROPPED in both families (§4.3.2), not served.** |
+| Web app (single entry point) | `api.py` | FastAPI server: serves `static/index.html` at `/`, `POST /api/predict`, `GET /history`, `POST /api/retrain`. Port 8000. |
+| Feature-ablation harness | `src/ablation.py` | Validation-only KEEP/DROP arbiter + Bonferroni-corrected significance bar (see *Production Methodology*). |
+| Forward paper-trading | `src/paper_trading.py` | Simulated cost-net P&L ledger from the prediction log; the primary going-forward arbiter. |
+| Config | `config.json` | All hyperparameters + paths. Single source of truth. |
+| Artifacts | `models/`, `results/`, `mlruns/`, `mlflow.db` | Serialized models, diagnostics, experiment tracking. |
+
+The web layer is a **single entry point** (`api.py`) on top of one shared
+`PredictionService`. All prediction logic lives in `src/` — `api.py` is only the
+HTTP/dashboard layer.
+
+---
+
+## Production Methodology (post-defense) — governs all new feature/model claims
+
+The academic phase is over (defended, graded); the system now **trades real
+money**. A false positive here is live capital risk, not a lost exam point, so
+the methodology bar is raised for everything from **2026-07-06** forward. Three
+rules override the older validation narrative below wherever they conflict:
+
+**(a) The historical test block `[80%:100%]` is SPENT for feature search.**
+Feature KEEP/DROP decisions were iteratively scored against that same fixed
+~1,700-row block (the original `yield_differential` + the three macro features).
+Reusing one held-out block as a repeated search criterion is data-snooping — with
+enough features tried, one crosses a naive 0.05 bar by chance. From now on every
+feature ablation is decided on the **validation slice `[70%:80%]`** via
+`src/ablation.py` (PCA/scaler/model fit on `[0:70%]` only; the test block is
+never indexed there). The test block reverts to a **one-shot final report**
+produced by `_train_pipeline.py`, never a knob. Re-running the four
+already-tested features on the clean validation arbiter
+(`results/feature_ablation_validation.csv`) leaves **all four KEEP-provisional** —
+the test-block "positive point estimates" do not survive the move.
+
+**(b) Every KEEP must clear a Bonferroni-corrected bar, not a flat 0.05.**
+`results/feature_hypothesis_log.csv` is the running family count of every feature
+hypothesis ever spent (seeded retroactively with the 4 already tried). The bar in
+force is `alpha = 0.05 / family_size` (currently **0.05 / 9 ≈ 0.00556** — the 4
+original macro features, the 2026-07-17 `fomc_calendar_block` ADD-test (rejected:
+Δacc 95% CI [−0.0549, −0.0035], McNemar p=0.0261), the 2026-07-20
+`cot_positioning_block` ADD-test (rejected: Δacc CI [−0.0234, +0.0175],
+p=0.8264), the 2026-07-26 `fibonacci_retracement_block` ADD-test (rejected:
+Δacc CI [−0.0187, +0.0257], p=0.8376), the 2026-07-26 `vix_regime_block`
+ADD-test (rejected: Δacc CI [−0.0327, +0.0105], p=0.3584), and the 2026-07-26
+`volatility_forecast_block` ADD-test (rejected: Δacc CI [−0.0304, +0.0105],
+p=0.4282)), printed in the header of every `src/ablation.py` report so it can
+never be silently forgotten. A genuinely new feature grows the family and
+tightens the bar for all. At the current bar all four macro features stay
+**KEEP-provisional** (smallest McNemar p = 0.56, ~100× the bar); the five
+ADD-test bundles are outright DROPs.
+
+The Fibonacci/fractal work also **built but did not spend** a hypothesis #8
+(`dist_to_nearest_fib_extension_pct`, a 3-point extension/projection in
+`src/fibonacci_fractals.py`): its pre-registered contingency runs #8 only if #7
+clears its bar, and #7 is DROP, so #8 stays a dormant, unit-tested module with no
+Bonferroni slot spent.
+
+**(c) The forward paper-trading ledger is the primary production-worthiness
+signal — not historical ablation.** `src/paper_trading.py` accumulates a
+simulated, cost-net position ledger (`results/paper_trading_log.csv`, surfaced at
+`/paper-trading` and `/api/paper-trading`) from each day's live committee call as
+new sessions settle. Whether the system deserves real capital should be judged by
+this ledger showing a **genuine, cost-net edge over months** (win rate, Sharpe-
+like, cumulative net pips, max drawdown), not by any further re-analysis of the
+spent test block. It is **simulated only** — there is deliberately no broker,
+order-execution, position-sizing, or stop-loss code anywhere; real execution is a
+separate, larger risk-management conversation that should happen only *after* this
+ledger demonstrates a supported edge.
+
+See `IMPROVEMENT_LOG.md` → "Production methodology hardening" for the commit trail.
+
+---
+
+## Dual-Variant Architecture (baseline vs with_macro)
+
+A direct consequence of the Production Methodology above: the four FRED macro
+features are **statistically unproven** (all KEEP-provisional under the
+Bonferroni-corrected validation bar), so instead of betting the single
+production model on them, the system trains and serves **two complete model
+families side by side** and lets forward evidence arbitrate:
+
+| Variant | Feature set | FRED dependency | Artifacts |
+|---|---|---|---|
+| `baseline` | `PRICE_FEATURE_COLUMNS` — 23 price-derived columns, **zero macro features** | none (immune to FRED outages by construction) | `models/baseline/` |
+| `with_macro` | full 27-column `FEATURE_COLUMNS` (adds `yield_differential_delta`, `usd_index_return`, `policy_rate_differential`, `inflation_differential`) | FRED API → public CSV → cache fallback | `models/with_macro/` |
+
+Design rules (enforced by code + tests):
+
+- **One training body.** `_train_pipeline.py::train_variant()` is the single
+  parametrized trainer; the run loops over `config.json → variants`. Never
+  duplicate the training logic per variant.
+- **Identical rows, different columns.** Both variants train on the SAME
+  euro-era engineered row set (the macro merge's 1999+ truncation), so the
+  comparison isolates the feature set itself, not a training-span difference.
+  Same unified 70/80/100 chronological split, same percent targets.
+- **Fully self-contained artifact sets.** Each variant owns its own
+  `lag_scaler`/`lag_pca`/`global_scaler`/GBM heads/LSTM under
+  `models/<variant>/` — the lag block is currently identical across variants,
+  but separate fits are kept deliberately to rule out any cross-variant
+  coupling. Never mix one variant's scaler with another's model.
+  (`test_smoke.py` asserts all 14 daily artifacts.)
+- **Independent serving gates.** `PredictionService` exposes `baseline_ready` /
+  `macro_ready`; a missing or corrupt variant degrades to an `error` note in
+  its response block while the other variant keeps serving.
+- **Every prediction returns both.** `POST /api/predict` →
+  `{ baseline: {gbm,lstm,consensus}, with_macro: {...}, variant_agreement }`.
+  `variant_agreement=false` is the most informative single signal on the
+  dashboard: it means the unproven macro block is *actually changing the
+  decision* that day. The UI labels the macro panel **experimental/unproven**
+  (with the Bonferroni context in the tooltip) — the two variants are NOT
+  presented as equally validated.
+- **Two forward ledgers.** `results/paper_trading_log_baseline.csv` and
+  `results/paper_trading_log_macro.csv` (config: `paper_trading.ledgers`)
+  accumulate separately from the same prediction log — the macro ledger drives
+  off the historical `pred_*` columns (continuous lineage back through the
+  pre-dual era), the baseline ledger off the new `baseline_*` columns
+  (accumulating from the first dual prediction). Whichever variant nets better
+  cost-adjusted P&L over a meaningful forward window is the honest winner.
+- The **H1→Daily ensemble** is price-only by construction, trains once, stays
+  at `models/` root, and is shared by both variants' responses.
+
+---
+
+## 1. End-to-End Execution Cycle
+
+### 1.1 Process initialization (once, at startup)
+
+`api.py` constructs `PredictionService(BASE_DIR, CONFIG)` once at startup.
+The constructor (`src/inference.py:21-71`) **eagerly deserializes every artifact
+exactly once**, each in an independent `try/except` that appends to
+`self.load_errors` rather than failing fast:
+
+1. **PCA pair** — `lag_scaler.pkl`, `lag_pca.pkl`
+2. **Global scaler** — `global_scaler.pkl` (a single StandardScaler shared by both model families)
+3. **GBM pair** — `best_gbm_eurusd.pkl` (classifier), `best_gbm_regressor_eurusd.pkl`
+4. **LSTM pair** — `lstm_multitask_eurusd.keras`, `lstm_time_steps.pkl`
+5. **Historical context** — `results/eurusd_features.csv` via `load_history()`
+
+Readiness gates are then computed:
+- `pca_ready` = both PCA artifacts present
+- `scaler_ready` = the single `global_scaler.pkl` present
+- `gbm_ready` = `pca_ready` **and** `scaler_ready` **and** both GBM models present
+- `lstm_ready` = `pca_ready` **and** `scaler_ready` **and** LSTM model + time_steps present
+- `models_ready` = `(gbm_ready or lstm_ready)` **and** history loaded
+
+> **Design consequence:** the service degrades gracefully. A missing LSTM file
+> still leaves a servable GBM-only pipeline (and vice versa). `api.py` gates
+> on `models_ready` (returns `503` if false).
+
+### 1.2 Per-request lifecycle (the "today → t+1" cycle)
+
+Triggered by `POST /api/predict` (`api.py`), which calls `service.predict()`
+(`src/inference.py`):
+
+```
+predict()
+  └─ _resolve_latest_window(time_steps=max(lstm_time_steps,1))   # the data pipeline
+        ├─ fetch_live_market_data()      # OHLCV: MT5 → yfinance → history fallback
+        ├─ fetch_yield_differential()    # macro: FRED api → FRED public → cache
+        ├─ merge_macro_features()        # tz-align + ffill yield_differential
+        ├─ compute_features()            # 24 FEATURE_COLUMNS
+        ├─ dropna(subset=FEATURE_COLUMNS)# drop warm-up rows, KEEP latest bar
+        └─ apply_lag_pca()               # 6 lag cols → k principal components
+  ├─ _predict_gbm(window.iloc[-1])       # if gbm_ready  — single latest row
+  ├─ _predict_lstm(window.tail(steps))   # if lstm_ready — (time_steps, n_feat) window
+  └─ compute_consensus(predictions)      # committee aggregation
+```
+
+**"Today" is never supplied by the caller.** It is inferred as the most recent
+bar returned by whichever live source answers first (`src/inference.py:73-91`).
+The forecast target is mechanically `as_of_date + 1 day` (`src/inference.py:125`).
+
+### 1.3 How the date drives the macro (FRED) fetch
+
+After OHLCV is resolved, `_resolve_latest_window` calls
+`fetch_yield_differential(ohlcv_df.index.min(), ohlcv_df.index.max(), ...)`
+(`src/inference.py:92-97`). The **start/end of the FRED request are derived from
+the live price index**, so the macro window always matches the price window of
+the current run. The fallback chain is in §2.2.
+
+---
+
+## 2. Data Ingestion & Processing Flow
+
+### 2.1 OHLCV ingestion — `src/live_data.py`
+
+`fetch_live_market_data(mt5_symbol, yf_symbol, bars)` (`src/live_data.py:58`)
+is a strict fallback chain:
+
+| Tier | Function | Source | tz | Returns on failure |
+|---|---|---|---|---|
+| 1 | `_fetch_from_mt5` | MT5 `copy_rates_from_pos(... TIMEFRAME_D1 ...)` | tz-naive | `None` (import error, no terminal, empty) |
+| 2 | `_fetch_from_yfinance` | `yf.Ticker(symbol).history(...)` | tz-stripped to naive | `None` |
+| 3 | *(caller)* | `history_df.tail(bars)` bundled CSV | — | label `"history_fallback"` |
+
+Tier 3 is applied **by the caller** in `src/inference.py:88-90` when no live
+source returns ≥ `200 + time_steps` bars (the SMA_200 + LSTM-window warm-up
+floor). `bars_needed = max(live_fetch_bars=250, 200 + time_steps)`.
+
+> **tz convention (D1 is deliberately tz-naive, not accidentally):** D1
+> (`_fetch_from_mt5`), `history_df`, and the yfinance D1 fallback are all
+> tz-naive by design — MT5's raw epoch already bakes the broker server's own
+> wall-clock date directly into the value (verified live + across four years
+> of DST transitions, see §4.4 item 3), so tz-naive parsing reproduces the
+> correct server calendar date exactly. H1/M15 tag the same raw values as UTC
+> for their own intraday-grouping needs — a label, not a genuine conversion.
+> `drop_incomplete_bars` (the one choke point both `_resolve_latest_window`
+> and `tracking._actual_closes` call through) strips any tz tag off both its
+> index and `now` before comparing, so a tz-aware caller can never crash or
+> silently shift the resolved calendar date.
+
+> **Note on `tick_volume`:** loaded and surfaced to the UI for display, but
+> **deliberately excluded from `FEATURE_COLUMNS`** (`src/features.py:14-19`).
+> MT5 tick-volume is a broker tick count, not traded volume, and decades of
+> placeholder `1`s in the 1971-era history contaminated the fitted scaler,
+> causing the LSTM to extrapolate 8σ out on live volume. It never reaches a model.
+
+### 2.2 Macro ingestion — `src/macro_data.py`
+
+`fetch_yield_differential(start, end, series_ids, cache_path)`
+(`src/macro_data.py:62`) computes the **US 10Y − DE 10Y bond-yield differential**
+(`DGS10` − `IRLTLT01DEM156N`). Fallback chain:
+
+| Tier | Function | Requires | Source label |
+|---|---|---|---|
+| 1 | `_fetch_via_fredapi` | `FRED_API_KEY` (≠ placeholder) | `FRED_api` |
+| 2 | `_fetch_via_pandas_datareader` | nothing (public CSV) | `FRED_public` |
+| 3 | on-disk `results/yield_differential.csv` | prior cache | `cache` |
+| — | none reachable → `(None, None)` | — | `unavailable` → caller defaults to `0.0` |
+
+**Series alignment (`_combine`, `src/macro_data.py:11-31`):** the two series are
+concatenated, the index is coerced to **UTC**, sorted, and **forward-filled**
+(the monthly German series is carried forward onto the daily US index). ffill
+only ever carries a *past* value forward — never a future value backward — so
+**no look-ahead** is introduced. The spread is `us10y − de10y`.
+
+> **Cache-write behavior (recently hardened):** on a successful live fetch the
+> result is now **merged onto the existing cache** and de-duplicated
+> (`keep='last'`) before writing (`src/macro_data.py:80-101`), rather than
+> overwriting it outright. See §4.4 — this fixed a defect that previously
+> truncated 54 years of cached history down to whatever narrow window the
+> current price fetch happened to cover.
+
+### 2.3 Merge & timezone alignment — `merge_macro_features`
+
+`src/features.py:123-142`: left-joins `yield_differential` (the raw US10Y−DE10Y
+**level**) onto the OHLCV index. The OHLCV index is localized/converted to UTC for
+the join, the differential is `ffill()`-ed across weekend FX bars and bond
+holidays, then the **original index is restored**. Zero look-ahead regardless of
+calendar offset. This function is unchanged by §4.3's feature revision below — it
+still produces the raw level, used for the dashboard's human-readable display;
+the model-facing transform (`yield_differential_delta`) is derived downstream in
+`compute_features` (§2.4), not here.
+
+### 2.4 Feature transformation — `compute_features`
+
+`compute_features` produces the canonical **27 `FEATURE_COLUMNS`**
+(`src/features.py`):
+
+| Group | Columns | Math |
+|---|---|---|
+| Raw price | `open, high, low, close` | passthrough |
+| Stationarity | `log_return` | `ln(close / close.shift(1))` |
+| Trend | `SMA_21, SMA_50, SMA_100, SMA_200` | rolling means |
+| Volatility | `volatility_20` | rolling std of log_return |
+| Bar shape | `bar_dynamics` | `(high − low) / open` (0-open → NaN guard) |
+| Autoregressive lags | `return_lag_1..3`, `dynamics_lag_1..3` | shifted log_return / bar_dynamics |
+| Cyclical time | `day_sin, day_cos, month_sin, month_cos` | sin/cos encoding (wrap-around preserved) |
+| Range | `ATR_14` | True Range, 14-period EWM (`com=13`) |
+| Bands | `BB_width` | `4·std / mid` (normalized Bollinger width) |
+| Exogenous macro — yield | `yield_differential_delta` | `yield_differential.diff(1)` — raw level (pre-merged) stationarized like `log_return`; see §4.3 |
+| Exogenous macro — USD | `usd_index_return` | `ln(usd_index / usd_index.shift(1))` on the merged DTWEXBGS level. RETURN not level (the level is ~57% EUR-weighted, near-collinear with EUR/USD). DTWEXBGS starts 2006 → pre-2006 rows get a flat **0** (fillna) so they are not truncated; see §2.6 |
+| Exogenous macro — rates | `policy_rate_differential` | DFF (effective fed funds) − ECBDFR (ECB deposit rate), passthrough level; see §2.6 |
+| Exogenous macro — inflation | `inflation_differential` | US CPI YoY% (CPIAUCSL) − DE HICP YoY% (CP0000DEM086NEST), computed in `macro_data`, passthrough; see §2.6 |
+
+**Critical live-edge property:** `compute_features` does **not** compute targets
+and does **not** `dropna`, so the most-recent bar (which has no future bar to
+form a target) **survives**. `add_advanced_features` (`src/features.py:108-120`)
+is the *training-only* variant that additionally builds `target_return` /
+`target_direction` and drops NaNs.
+
+### 2.5 Where the deserialized `StandardScaler` + `PCA` are applied (unified 80% split)
+
+Both preprocessing components are fit on the **identical unified train block —
+the first 80%** of history (`train_fraction = 0.80`), and the held-out
+`[80%:100%]` test block is seen by neither fit. This removes the prior
+"non-obvious coupling" where the PCA was fit on 70% while the GBM split at 80%.
+
+| Stage | Object | Fitted in training on | Applied at inference in |
+|---|---|---|---|
+| Lag dim-reduction | `lag_scaler` + `lag_pca` | unified **0–80%** train block | `apply_lag_pca()` |
+| Global feature scaling | `global_scaler` (one StandardScaler) | unified **0–80%** train block | `_predict_gbm` **and** `_predict_lstm` |
+
+`apply_lag_pca` (`src/features.py:181-194`) drops the 6 raw `LAG_COLUMNS` and
+appends `lag_pca_1..k`. `model_input_columns` (`src/features.py:197-200`)
+re-derives the exact post-PCA column order so training and inference never
+diverge. **A single `global_scaler` now serves BOTH model families** — the
+former separate `scaler_gb` / `scaler_lstm` are gone. The LSTM's early-stopping
+validation slice `[70%:80%]` sits *inside* the scaler/PCA fit window, but the
+final test block `[80%:100%]` does not, so reported test metrics stay
+leakage-free.
+
+### 2.6 Macro feature expansion (four FRED features, generalized fetcher)
+
+`src/macro_data.py` was generalized so the API → public-CSV → cache fallback
+chain (§2.2) is written **once** in `fetch_fred_feature` and reused by every macro
+feature; `fetch_macro_features` fans out to all four and returns one UTC frame
+(`fetch_yield_differential` is kept as a thin backward-compatible wrapper). Each
+feature has its **own** cache file under `results/` so a thin live fetch of one
+never truncates another's longer cached history.
+
+| Model feature | FRED series | Live start | Notes |
+|---|---|---|---|
+| `yield_differential_delta` | DGS10, IRLTLT01DEM156N | 1970 | existing (§4.3) |
+| `usd_index_return` | DTWEXBGS | 2006 | log-return; the Fed discontinued the pre-2006 trade-weighted indices (DTWEXM ends 2019), so no live series reaches earlier — pre-2006 rows get a flat 0 return rather than truncating history |
+| `policy_rate_differential` | DFF − ECBDFR | 1999 | DFF (effective fed funds, from 1970) chosen over DFEDTARU (2008) so the binding floor is the euro's own 1999 start, not 2008 |
+| `inflation_differential` | CPIAUCSL YoY − CP0000DEM086NEST YoY | 1997 | CP0000DEM086NEST (Eurostat HICP DE, live) replaces DEUCPIALLMINMEI (stale since 2025-03). YoY needs 12 prior months, so the fetcher pulls `yoy_lookback_days=420` extra so the feature is defined at the live edge |
+
+**History consequence (deliberate).** Requiring the differentials non-NaN makes
+`ECBDFR` (1999-01) the binding floor, so `add_advanced_features` now truncates
+training to the **real euro era (1999+, ~8,560 rows)** and drops the ~28 years of
+**synthetic pre-euro DEM-proxy** bars the 24-column model trained on (EUR/USD did
+not exist before 1999; those bars are a backfilled proxy). This is a data-quality
+improvement but shifts every split boundary, so 1999+ metrics are **not**
+comparable row-for-row with the old 1971+ ones — the old 24-col/1971+ baseline is
+preserved in `results/comparison_table.csv`. `add_advanced_features` drops NaN
+only on `FEATURE_COLUMNS + targets` (not on the intermediate merged levels
+`usd_index`/`yield_differential`), so `usd_index`'s 2006 start does not drag the
+floor to 2006. LSTM splits stay healthy at the 1999+ size (train ≈ 5,830 seq,
+val ≈ 816, test ≈ 1,653).
+
+**No look-ahead.** `merge_macro_features` aligns each macro series onto the price
+index by as-of forward-fill (reindex onto the union, `ffill`, select the OHLCV
+dates), so a monthly CPI print propagates onto every later daily bar — even when
+the month-start lands on a non-trading day — and never a future value backward.
+Guarded by `test_*_no_lookahead_*` for all four macro features. See §4.3.1 for the
+(provisional, not-significant) ablation of the three added features.
+
+---
+
+## 3. Prediction Logic & Model Architecture
+
+### 3.1 GBM dual pipeline (tree ensemble)
+
+`_predict_gbm` (`src/inference.py:129-146`) consumes **one flat PCA-reduced row**
+(`window.iloc[-1]`), scales it with the single `global_scaler`, and runs two heads:
+
+- **Classifier** `best_gbm_eurusd.pkl` — `xgb.XGBClassifier`, tuned for
+  `roc_auc`. Emits `predict_proba` → `direction` (UP/DOWN) + `confidence`.
+- **Regressor** `best_gbm_regressor_eurusd.pkl` — `XGBRegressor(objective='reg:pseudohubererror')`,
+  tuned for MAE. Emits `predicted_return` **natively in percent** — the regressor
+  is now trained on the percent target produced by `src/features.py`, so there is
+  **no `*100` rescaling** at inference.
+
+  **Why a Huber-family loss, not squared error (ESL §10.6):** daily EUR/USD
+  returns are a long-tailed, occasionally outlier-prone target (quiet noise most
+  days, occasional large jumps around macro releases) — exactly the scenario ESL
+  cites as squared-error's weak point ("its performance severely degrades for
+  long-tailed error distributions and especially for grossly mis-measured
+  y-values"). A Huber-family loss trades squared-error's sensitivity near zero for
+  a linear (robust) penalty on large residuals.
+
+  **Known doc/config drift on `huber_alpha`:** `config.json → gbm.huber_alpha`
+  (`0.9`) is logged to MLflow as a record of intent but is **never passed to the
+  `XGBRegressor` constructor** — it does not control anything at training time.
+  sklearn's `GradientBoostingRegressor(loss='huber', alpha=0.9)` (which the name
+  and the `0.9` value evoke) would set its `δ` threshold *adaptively per boosting
+  iteration* to the 90th-percentile of current absolute residuals — but this repo
+  trains `xgb.XGBRegressor`, whose pseudo-Huber objective instead exposes a fixed
+  `huber_slope` hyperparameter (default `1.0`, unset here), not an adaptive
+  quantile. In short: the `huber_alpha` name and value currently describe a
+  mechanism (sklearn's adaptive-quantile Huber) that is **not the one actually
+  running** (XGBoost's fixed-slope pseudo-Huber). This is a documentation/naming
+  gap, not a correctness bug — training still proceeds with a sensible default —
+  but wiring `huber_slope=CONFIG['gbm']['huber_alpha']` explicitly (or renaming the
+  config key to avoid the implied sklearn semantics) is an open follow-up.
+
+### 3.2 Multi-Task LSTM (sequence model)
+
+Built with the Keras Functional API (`_train_pipeline.py:230-243`,
+mirrored in notebook Section 19b):
+
+```
+Input(time_steps=20, n_features)
+   └─ LSTM(units=64, name="shared_lstm_trunk")     # shared trunk
+        └─ Dropout(0.3)
+             ├─ Dense(1, linear,  name="return_output")     # head 1: % return
+             └─ Dense(1, sigmoid, name="direction_output")  # head 2: UP prob
+```
+
+`_predict_lstm` (`src/inference.py:148-170`) consumes a **`(20, n_features)`
+sliding window**, scales with the **same `global_scaler`** the GBM uses,
+reshapes to `(1, 20, n_features)`, and returns both heads. The return head
+outputs **percent natively**, exactly like the GBM regressor — both heads are
+trained on the percent target from `src/features.py`, so neither path applies a
+`*100`. The former GBM-fraction / LSTM-percent asymmetry is **resolved**; see
+§4.5.1.
+
+> **Why percent units?** Fractional log-returns (std ≈ 0.006) give MSE ≈ 3e-5,
+> five orders of magnitude below the direction head's BCE (≈ 0.69). At the old
+> loss weights the shared trunk got almost no gradient for the return head
+> (observed: −11% predicted returns with the wrong sign). Producing the target
+> natively in percent (in `src/features.py`, the single source of truth)
+> rebalances the two losses so `loss_weights` can stay `1.0 / 1.0`.
+
+### 3.3 Committee Consensus (with low-confidence guard)
+
+`compute_consensus` (`src/inference.py`), static method, gated by the class
+constant `CONFIDENCE_THRESHOLD = 0.52`:
+
+- **Agreement** (both heads same direction): average the two confidences and
+  the two predicted returns — **unless** that averaged confidence is strictly
+  below `CONFIDENCE_THRESHOLD`. In that case the unanimous-but-coin-flip call is
+  **downgraded**: `agreement` is overridden to `False` and the consensus
+  `direction` becomes the literal flag **`"MIXED / LOW CONFIDENCE"`**. Because
+  the direction heads sit near chance (ROC-AUC ≈ 0.50), this stops a coin-flip
+  agreement from being advertised as a confident ensemble call.
+- **Disagreement:** defer to the **higher-confidence** model and set
+  `agreement=False` so the UI can flag it — rather than silently averaging
+  across opposite-signed predictions.
+
+The response dict carries `as_of_date`, `forecasting_date`, `data_source`,
+`bar_used` (incl. `macro_source`), the per-model blocks, and `consensus`.
+
+### 3.4 Auxiliary H1→Daily Ensemble (XGBoost / RandomForest / SVM / LSTM)
+
+A second, **fully independent** predictor sits alongside the daily GBM+LSTM
+committee above. It answers the same next-day question from a different data
+source — hourly (H1) OHLCV collapsed into daily statistics — rather than from the
+daily bar history `src/features.py` consumes. It is additive: it never touches
+the 7 canonical daily artifacts, has its own readiness gate, and degrades
+independently if its data or models are unavailable.
+
+**Data & features — `src/h1_features.py`:** two load paths share one UTC-indexed
+H1 OHLCV stream. TRAINING uses the cache-first `load_h1_frame` (safe because
+`_train_pipeline.py` explicitly refreshes the cache beforehand). INFERENCE uses
+`refresh_h1_frame` — live-first with a **mandatory staleness gate**: the cache is
+served untouched when its last COMPLETE session (the same `MIN_HOURS ≥ 12` rule
+`aggregate_daily_features` applies) already is the expected latest weekday
+session; only a genuinely behind cache triggers
+`src/live_data.py::fetch_h1_market_data` (MT5 → yfinance → cache). A live pull
+thin in history is merged onto the cached rows (dedup by index, live wins) and
+the merged frame rewritten to the cache, so the SMA504/RSI trailing warm-ups
+never silently truncate (the H1 analogue of the daily SMA_200 warm-up handling,
+§4.5.1); a fully failed live chain degrades to the stale cache. The chosen path
+is reported as `"live"` / `"cache"` / `"live+history_backfill"`. (Historical
+bug: inference originally used cache-first `load_h1_frame`, so the served H1
+day froze at the last retrain's cache write — pinned by
+`test_h1_inference_refreshes_stale_cache_live_first` and
+`test_h1_staleness_gate_skips_live_fetch_when_cache_current`.) Two aligned representations are built from it, sharing one daily
+index and one `shift(-1)` next-day target (`build_daily_target`, percent, same
+no-look-ahead contract as `src/features.py`):
+
+| Representation | Shape | Consumers | Columns |
+|---|---|---|---|
+| Flattened daily stats | `(n_days, 11)` | XGBoost / RandomForest / SVM | `Intraday_Volatility`, `Intraday_Momentum`, `Daily_Range`, `H1_Moving_Average`, `H1_Volume_Mean`, `H1_Return_Skew`, `H1_Max_Abs_Return`, `First_Half_Return`, `Second_Half_Return`, `Trend_vs_SMA504`, `RSI_24` |
+| 24h tensor | `(n_days, 24, 5)` | LSTM (seq2vec) | `log_return`, `hl_range`, `co_change`, `volume`, `rsi_24` per hour |
+
+`Trend_vs_SMA504` (`close / SMA504 − 1`, a 504-H1-bar ≈ 21-trading-day trend
+baseline) and `RSI_24`/`rsi_24` (a 24-period RSI, i.e. one trading day of hourly
+momentum) are computed on the **continuous hourly stream** with trailing-only
+windows (`_rsi`, `_enrich_hourly`), so they carry cross-day context without
+violating the no-look-ahead invariant — verified by
+`test_h1_features_do_not_depend_on_future_days`.
+
+**Training — `_train_pipeline.py` Section 13:** additive to the daily pipeline;
+refreshes the H1 cache (`fetch_h1_market_data`, live → existing-cache fallback) and
+retrains all four models on a chronological 80/20 split of the flattened dataset,
+scored with `TimeSeriesSplit`, mirroring the daily invariants (§ above) but on its
+own split and its own scalers (`h1_feature_scaler.pkl`, `h1_lstm_scaler.pkl` — kept
+fully separate from the daily `global_scaler.pkl`).
+
+**Serving — `src/inference.py`:** `PredictionService` loads the 8 H1 artifacts
+(`h1_xgb_regressor.pkl`, `h1_rf_regressor.pkl`, `h1_svm_regressor.pkl`,
+`h1_feature_scaler.pkl`, `h1_lstm_scaler.pkl`, `h1_feature_columns.pkl`,
+`h1_lstm_config.pkl`, `h1_lstm.keras`) independently of the daily 7, gated by
+`h1_ready` (all 8 present). `predict()` only attempts `_predict_h1()` if
+`h1_ready`; any failure there (thin H1 feed, feature-shape mismatch after a
+feature-set change not yet retrained, etc.) is caught and surfaced as
+`response['h1_error']` — it **never** fails the daily prediction. `_predict_h1`
+runs on the latest **complete** trading day (`build_h1_inference_sample` drops the
+still-forming current UTC day), and each of the four models is a **return-only
+regressor** — direction is derived from the sign of the predicted return, there is
+no calibrated probability.
+
+`compute_h1_consensus` (static method) aggregates the four regressors
+independently of the daily committee's `compute_consensus`, but with the SAME
+vote-based design: direction is the **strict** majority sign; an exact 2–2 vote
+has no majority and is labeled **`MIXED / TIE`** (mirroring the daily
+`MIXED / LOW CONFIDENCE` honesty — never an arbitrarily crowned side).
+`confidence` is the **fraction of models on the majority side** (a genuine
+[0.5, 1.0] agreement measure — **not** a calibrated probability, unlike the daily
+consensus's `confidence`; exactly 0.5 on a tie). `predicted_return_pct` is the
+mean over the **majority-side models only**, so the number is sign-consistent
+with the direction label by construction (an H1 model's direction IS the sign of
+its return, so a full-panel mean can contradict a 3–1 vote whenever the
+minority's magnitude dominates); on a tie it is the full-panel mean, reported as
+context with no directional claim. `agreement=True` only on a unanimous sign.
+
+> **Fixed bug (2026-07-07):** the original implementation broke 2–2 ties with
+> `up >= down` (arbitrary "UP") while displaying the full-panel mean return —
+> the live dashboard showed *"UP — 50% model agreement"* over a **negative**
+> −0.0131% average. Regression-guarded by
+> `test_compute_h1_consensus_exact_tie_is_mixed_not_arbitrary_up`.
+
+```jsonc
+"h1": {
+  "as_of_date": "YYYY-MM-DD",
+  "data_source": "live | cache | live+history_backfill",  // refresh_h1_frame's chosen path
+  "predictions": {
+    "h1_xgboost":       { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_random_forest":  { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_svm":            { "direction": "UP|DOWN", "predicted_return_pct": float },
+    "h1_lstm":           { "direction": "UP|DOWN", "predicted_return_pct": float }
+  },
+  "consensus": { "direction": "UP|DOWN|MIXED / TIE", "agreement": bool, "confidence": 0.5-1.0, "predicted_return_pct": float, "n_models": 4 }
+}
+// or, on any failure: "h1_error": "<message>"
+// A MIXED / TIE consensus (exact 2-2 vote) is NOT scored by /history and takes
+// no position anywhere -- same no-directional-claim handling as the daily MIXED.
+```
+
+`src/tracking.py::log_prediction` also logs the H1 consensus (`h1_direction`,
+`h1_return_pct`, `h1_agreement`) alongside the daily forecast, and
+`build_history_html` scores it against the same realised close in its own
+"H1 ensemble" column with its own hit-rate — independent of the daily
+committee's hit-rate. The static UI (`static/index.html`) renders the H1 block as
+a separate "Auxiliary Intraday Ensemble" section below the daily cards.
+
+### 3.5 Next-Day Realized Volatility (5-seed multi-task LSTM ensemble)
+
+A **genuinely different prediction task** from direction/return: the target is
+`target_volatility_pct = |next-day log return| × 100` (`src/features.py`, same
+`shift(-1)` convention and percent unit as `target_return`). Unlike next-day
+direction (near-efficient, ROC-AUC ≈ 0.50, §4.2.1), **volatility clustering is a
+well-established FX stylized fact** — and this is, accordingly, the only neural
+model family in the project with a CI-confirmed edge over its honest baseline.
+
+**Methodology (`src/volatility.py`, entirely under the post-defense Production
+Methodology):**
+
+- **Mandatory baselines first.** A GARCH(1,1) (`arch` package) with parameters
+  fit on the train block ONLY, rolled forward with FIXED parameters
+  (`ARCHModel.fix`) so every validation/test forecast uses only past data —
+  plus a naive persistence baseline (today's |return| = tomorrow's forecast).
+  GARCH's conditional σ is converted to an E|r| point forecast via the
+  folded-normal factor √(2/π). On validation: GARCH MAE 0.2038% / R² +0.009;
+  persistence MAE 0.2611% / R² −0.842.
+- **Validation-only arbiter.** All decisions on `[70%:80%]`; the experiment's
+  LSTMs fit on `[0:63%]` with `[63%:70%]` as the early-stopping tail so the
+  arbiter is genuinely held out of everything the experiment fits (stricter
+  than the production LSTM convention, because here validation IS the arbiter).
+- **Its own hypothesis family** (`results/volatility_hypothesis_log.csv`) —
+  continuous R²/MAE metrics, separate from the 4-feature direction/return
+  family; the Bonferroni bar tightened as it grew: 0.05 → 0.025 → 0.0167,
+  then (family re-opened 2026-07-17 with two pre-declared candidate INPUT
+  features, judged at the final-family bar 0.05/5 = 0.01) → 0.01.
+  Hypotheses 4–5 — `RSI_14` (daily 14-period RSI, the H1 `_rsi` formula) and
+  `BB_percent_b` (%B from the same 20-day mean/σ as `BB_width`), each added
+  alone to the 5-seed ensemble's input set vs a same-seeds base ensemble —
+  were both **null results (DROP)**: ΔMAE CI99 [−0.0022, +0.0001] for RSI_14
+  and [−0.0025, −0.0004] for %B (the latter CI-confirmed *worse* on MAE).
+  Hypothesis 6 (bar → 0.05/6 = 0.0083) — the `fomc_calendar_block` bundle
+  (`is_fomc_day`/`days_to_next_fomc`/`days_since_last_fomc` from the
+  scheduled-meetings calendar `results/fomc_dates.csv`, built by
+  `src/fomc_calendar.py` from the official Fed pages; three views of one
+  calendar fact = ONE hypothesis slot) — also a **null result (DROP)** despite
+  the strong mechanistic prior: ΔMAE CI99.2 [−0.0024, +0.0016], ΔR²
+  [−0.0207, +0.0174] (`results/volatility_candidate_fomc.csv`); the same
+  bundle also failed the direction/return family's bar (its hypothesis #5).
+  The candidate constructors live in
+  `src/volatility.py::add_volatility_candidate_features` and
+  `src/fomc_calendar.py::add_fomc_features` (candidate-only — guarded out of
+  the direction/return `FEATURE_COLUMNS` by a unit test); the production
+  input set remains unchanged. Hypothesis 7 (bar → 0.05/7 = 0.0071) —
+  `cot_positioning_block` (`cot_eur_zscore`/`cot_usdindex_zscore`, see §4.3) —
+  was a **null result (DROP)**, this time CI-confirmed *worse*: ΔMAE
+  [−0.0091, −0.0045] entirely < 0, ΔR² −0.025, frac(ΔMAE>0)=0.000. Hypothesis 8
+  (bar → 0.05/8 = 0.00625) tested `vix_regime_block` (`vix_zscore` +
+  `vix_change_pct`, `src/vix_features.py` — reused byte-for-byte from the
+  direction/return VIX hypothesis, including its conservative D-1 availability
+  convention; see §4.3) on the SAME candidate-input methodology
+  (`python -m src.volatility candidates vix`): base ensemble MAE 0.185044% /
+  R² +0.1452 vs +VIX MAE 0.187440% / R² +0.1466 — another **null result
+  (DROP)**: ΔMAE −0.002396% CI [−0.006231, +0.001763] (includes 0), ΔR² +0.0014
+  CI [−0.0444, +0.0426] (includes 0), frac(ΔMAE>0)=0.044
+  (`results/volatility_candidate_vix.csv`). Motivated by a stronger prior than
+  the direction-family test (equity-vol → FX-vol spillover is better
+  established than equity-vol → FX direction), but the price-only 5-seed
+  ensemble already carries whatever signal exists. Any future volatility
+  hypothesis faces 0.05/9 ≈ 0.0056.
+- **Training-noise honesty.** Single-seed runs exposed TF/oneDNN CPU
+  nondeterminism of the same order as the deltas under test (identical-seed
+  dedicated-model MAE moved 0.190→0.197 between runs). Bootstrap CIs capture
+  row-sampling noise only, so the ship candidate was pre-registered as the
+  **seed-ensemble** (mean over seeds 42–46) of the 3-head multi-task
+  architecture (which beat the dedicated single-head model head-to-head at
+  the tightened bar — sharing the trunk with return/direction HELPS the
+  volatility head).
+- **The pre-registered ship gate cleared decisively**
+  (`results/volatility_seed_ensemble.csv`): MT 5-seed ensemble MAE 0.1859% /
+  R² +0.144 vs GARCH 0.2038% / +0.009; ΔMAE CI98.33 [+0.0111, +0.0242],
+  ΔR² CI [+0.080, +0.183], frac(ΔMAE>0)=1.000 — every individual seed also
+  beat GARCH. One-shot test-block report (never a search knob): ensemble
+  MAE 0.2188% / R² +0.110 vs GARCH 0.2326% / +0.036 — the edge generalizes.
+
+**Production artifacts** (`models/volatility/`, produced by
+`train_production_volatility_model` inside `_train_pipeline.py` §12B):
+5 × `volatility_lstm_seed{42..46}.keras` + its own `lag_scaler/lag_pca/
+global_scaler` (fit `[0:80%]`) + `lstm_time_steps.pkl` + `vol_metrics.json`
+(one-shot test report + the validation ship-gate evidence, consumed by
+serving for honest framing). **Price-only by nature** — ONE family, no
+baseline/with_macro duplication; GARCH and volatility consume no macro columns.
+
+**Serving:** `PredictionService` loads the family behind its own `vol_ready`
+gate; because the VALIDATED object is the full 5-seed mean, a partial ensemble
+refuses to serve (all-or-nothing load). `predict()` adds a
+`volatility_forecast` block — `predicted_vol_pct` (the seed-averaged
+volatility head; the ensemble's return/direction heads are training
+scaffolding and are discarded) plus `vs_garch_baseline` /
+`vs_persistence_baseline` / `test_report_one_shot` context from
+`vol_metrics.json`. The UI renders it as a direction-free "expected movement
+magnitude" card labeled `✓ validated vs GARCH(1,1)` — the framing matches
+exactly what the rigorous test found, no more.
+
+### 3.6 H1 TI-LSTM (observational — NOT validated; in production by owner override)
+
+**Status warning for every future reader: this model's presence in production
+is NOT validation.** The H1-native technical-indicator LSTM
+(`src/ti_lstm_h1_experimental.py`: %B-20, MACD 13/34 with 8-SMA signal, trend
+vs SMA-504/168, RSI-24, CCI-20, ADX-14 over the last complete session's 24
+hourly bars; next-day direction/return heads) **FAILED its pre-registered
+hypothesis bar** (`results/ti_lstm_h1_hypothesis_log.csv`: DROP — one-shot
+test AUC 0.5128 vs the existing H1 ensemble's 0.5283, ΔAUC −0.015
+CI95 [−0.072, +0.042], point estimate negative). By **explicit owner decision
+(2026-07-18)** it was wired into serving anyway, for transparent forward
+observation via its own paper-trading ledger — overriding, for this one
+model, the "only ship what clears the bar" rule. Honesty contract: the
+`ti_h1_forecast` response block carries `validated: false` + the verbatim
+test numbers; the UI card is amber-warning-framed ("⚠ Not Validated — No
+Demonstrated Edge"), deliberately NOT the volatility card's validated badge
+nor the macro panel's "nominally positive" framing.
+
+Mechanics: artifacts in `models/ti_lstm_h1/` (2×64, seed 42 — the Keras 3
+**torch/CUDA** backend was verified bit-deterministic); `ti_h1_ready`
+all-or-nothing gate mirrors `vol_ready`; the `.keras` file is
+backend-portable, so serving loads it under tf.keras with **no torch
+dependency**. Retraining runs as a SUBPROCESS (`_train_pipeline.py` §12C) —
+mandatory, because KERAS_BACKEND freezes at the first keras import and the
+pipeline process already imported tf.keras. Its forward ledger is
+`results/paper_trading_log_ti_h1.csv` (config `paper_trading.ledgers.ti_h1`,
+driven by the `ti_h1_direction` prediction-log column).
+
+### 3.7 H1/M15 harmonic-pattern event-conditional model (research-only, VERDICT: DROP, all 6 sub-hypotheses)
+
+A different kind of question from every other family in this project: not
+"what's the next-bar direction/return/volatility for every bar", but "does
+price behave differently in the ~120 H1 bars (~5 days) AFTER a classical
+XABCD harmonic-pattern reversal signal completes" — an EVENT-CONDITIONAL
+model, evaluated only on bars where that event actually happens. Its own
+hypothesis family (`results/harmonic_pattern_hypothesis_log.csv`, first
+budget alpha=0.05, split across two sub-hypotheses run together, alpha=0.025
+each); none of the daily/volatility/weekly-COT logs are touched.
+
+**Scope honesty note.** The task that introduced this family originally
+assumed `src/harmonic_patterns.py` (XABCD ratio scoring) already existed and
+should be reused unchanged. A full-repo search confirmed it did not; this was
+flagged to the owner before writing any code, and the owner confirmed
+building it fresh. `src/harmonic_patterns.py` is therefore explicitly NEW,
+UNVALIDATED code (its own module docstring says so) — unlike this project's
+other "reused unchanged" components, it has no prior track record. The one
+thing genuinely reused unchanged is the fractal/swing PRIMITIVES it calls:
+`src.fibonacci_fractals.detect_fractals` / `_push_swing` / `CONFIRMATION_LAG`
+— the same look-ahead-safe building blocks the daily fibonacci-retracement
+candidate already used (§4.3), fed H1 high/low instead of daily.
+
+**Pattern detection (`src/harmonic_patterns.py`).** An XABCD pattern is 5
+alternating confirmed swing points (X→A→B→C→D) scored against 4 published
+Fibonacci ratio templates (Gartley / Bat / Butterfly / Crab — NOT tuned
+against this project's data): `r_AB=|AB|/|XA|`, `r_BC=|BC|/|AB|`,
+`r_CD=|CD|/|BC|`, `r_AD=|AD|/|XA|`; `best_fit_score` is the best-template
+match in [0,1]; `direction` is +1 bullish (D is a LOW) / −1 bearish (D is a
+HIGH) — the sign follows directly from D's fractal kind. Because D is itself
+a fractal, the WHOLE pattern inherits the same confirmation lag: nothing
+about it is knowable before `D_idx + CONFIRMATION_LAG` (2 bars) —
+`confirmed_at_idx`. Event filter (pre-registered): `best_fit_score >= 0.5`.
+On `results/eurusd_h1.csv` (60,000 H1 bars): **14,144 raw completions, 4,161
+clearing the filter.**
+
+**Triple-barrier labeling (`src/triple_barrier.py`, Lopez de Prado, "Advances
+in Financial Machine Learning" ch.3 — event-source-agnostic, not
+harmonic-specific).** `r_ewma_std` = EWMA std of H1 log returns, span=24;
+`horizon_vol = r_ewma_std * sqrt(120)` — square-root-of-time scaled to the
+120-bar holding horizon. **This replaced an earlier plain-ATR draft per owner
+review**: ATR measures per-bar range, not the dispersion an entry should
+expect over its full multi-bar holding period — the wrong volatility unit for
+a fixed-horizon barrier. `entry` = close at `confirmed_at_idx`; `target =
+entry * exp(direction * 1.5 * horizon_vol)`; `stop = entry *
+exp(-direction * 1.0 * horizon_vol)`; time barrier = 120 bars fixed.
+Same-bar target+stop ambiguity (OHLC cannot resolve true intrabar order) ties
+toward the STOP (conservative). Time-barrier resolution requires the signed
+move to clear the transaction cost — **explicit pip→price conversion**:
+`config.json` `paper_trading.spread_pips = 1.5`; EURUSD 1 pip = 0.0001
+(`src.paper_trading.PIP_SIZE`) → **1.5 × 0.0001 = 0.00015** raw price units —
+mirroring how `paper_trading.py` already nets cost rather than scoring a bare
+`sign(>0)`. Events within 120 bars of history's end are EXCLUDED, never
+padded: 14 of 4,161, leaving a **final 4,147-event labeled dataset** (label-1
+rate 45.3%).
+
+**Two sequentially-scaled sub-hypotheses (`src/harmonic_event_check.py`),
+identical event subset / chronological 70/15/15 split (2,902/622/623, test
+reserved) / identical 8 features (`r_AB, r_BC, r_CD, r_AD, best_fit_score,
+direction, swing_duration_bars, norm_amplitude` — the last normalized by the
+SAME `horizon_vol` already computed at the event) / `class_weight='balanced'`
+on both models (the closer 1.0x stop is geometrically more likely to be
+touched before the farther 1.5x target under a pure random walk, independent
+of any real edge — unbalanced, either model could trivially collapse to the
+majority class and become indistinguishable from its own baseline) /
+`random_state=42`:**
+
+| hypothesis | comparison | val acc (challenger / reference) | Δacc | 97.5% CI | McNemar p | verdict |
+|---|---|---|---|---|---|---|
+| H1.1 LogisticRegression | vs train-majority baseline | 0.4936 / 0.5305 | −0.0370 | [−0.1061, +0.0322] | 0.2671 | **DROP** |
+| H1.2 MLP (PRIMARY) | vs H1.1's own val predictions | 0.4678 / 0.4936 | −0.0257 | [−0.0643, +0.0145] | 0.1812 | **DROP** |
+
+**H1.2 is raw PyTorch, deliberately not Keras** (unlike every other neural
+model in this project — the volatility LSTM ensemble, H1 LSTM, even the
+"torch backend" H1 TI-LSTM still goes through Keras 3's `Model` API, §3.6).
+Owner review flagged that only a raw-PyTorch implementation can demonstrate
+two correctness pitfalls Keras hides automatically, so `train_h1_2_mlp`
+guards against both explicitly: **(1)** PyTorch does not auto-toggle Dropout
+between train/eval like Keras's `.fit()`/`.predict()` — `model.train()`
+before every training batch, `model.eval()` + `torch.no_grad()` before every
+validation-loss check and the final prediction (skipping this leaves Dropout
+active during validation with no error, silently corrupting both the
+early-stopping signal and the reported accuracy). **(2)** the architecture
+keeps an explicit `Sigmoid` output, so the loss must be `BCELoss` (not
+`BCEWithLogitsLoss`), and plain `BCELoss` has no `pos_weight` — class
+balancing uses an explicit per-sample weight tensor
+(`weight[i] = class_weight[y[i]]`) rebuilt each batch and passed to
+`BCELoss(weight=...)`; the validation loss driving early stopping is
+deliberately UNWEIGHTED, matching Keras's own actual default. CPU-only by
+choice (this project's other neural models' determinism convention, even
+though CUDA happens to be available here); L2=1e-3 via Adam's `weight_decay`
+(the standard PyTorch idiom — not numerically identical to Keras's
+loss-added `kernel_regularizer=l2`, same strength, different mechanism,
+stated honestly rather than glossed over). **The whole pre-registered
+hypothesis was re-run once, in full, after this correctness fix** (not
+post-hoc tuning of a hyperparameter): H1.1 reproduced identically (unaffected
+— still scikit-learn); H1.2's numbers moved (Δacc +0.0177 → −0.0257) but the
+verdict did not: **still DROP**. The table above is the final, corrected run.
+
+H1.2's PRIMARY reference is H1.1's own predictions on the IDENTICAL
+validation rows (not a fresh baseline) — the real "is the extra non-linear
+capacity worth it" question, and ALONE governs its verdict; MLP-vs-majority
+(also negative here: Δacc −0.0627, McNemar p=0.0882) is corroborating context
+only, never a second path to KEEP (the anti-cherry-pick rule, matching
+`src.cot_weekly_check`'s Spearman-primary / logistic-corroborating
+precedent). The non-event random-sample baseline (b) — same triple-barrier
+scheme, equal-sized random sample of non-event bars, random direction — is
+purely descriptive (label-1 rate 0.4608, n=4,147): close to the event
+dataset's own 45.3%, consistent with the target/stop geometric distance
+asymmetry (1.5x vs 1.0x) dominating the label distribution rather than any
+harmonic signal.
+
+**Verdict: DROP for both.** No model, serving, or API change — moot given
+both DROPped, but stated explicitly per this project's convention: even a
+clear KEEP here would have been a research finding first, a shipping
+discussion second, never automatic. Registered as
+`harmonic_pattern_hypothesis_log.csv` n=1/n=2. Power caveat: 622 validation
+events is a small-n family; both DROPs are correspondingly weak (not strong)
+evidence of absence. 13 new unit tests cover exact-Gartley scoring, the
+confirmation-lag guard, no-look-ahead truncation-equivalence, all 4
+triple-barrier outcomes, the `sqrt(120)` scaling math end-to-end, and a
+swap-test proving H1.2's primary comparison is a genuine row-for-row
+comparison against whatever predictions are supplied — never a hidden
+independent baseline.
+
+**ZigZag swing basis — H1.3/H1.4, SAME family, VERDICT: DROP for both.**
+An alternative swing-point SOURCE, not a new event universe: every other
+step (event filter, triple-barrier labeling, 8 features, 70/15/15 split,
+`class_weight='balanced'`, LogReg + PyTorch MLP) is byte-identical to
+H1.1/H1.2 — only what feeds `score_xabcd` changes. Family grown 2→4, bar
+tightened to alpha = 0.05/4 = **0.0125** each (computed DYNAMICALLY at run
+time from the current log's distinct hypothesis count — matching
+`src.ablation.run`'s convention — rather than a hardcoded constant; H1.1/H1.2's
+already-logged alpha of 0.025 is never retroactively rewritten).
+
+*Why try a second basis.* A Williams fractal's 5-bar window is FIXED-LENGTH
+regardless of volatility; on H1 bars specifically this likely flags a lot of
+noisy MICRO-swings unrepresentative of genuine harmonic structure. A ZigZag
+whose reversal threshold ADAPTS to current volatility (`threshold[t] = 1.5 *
+ATR(14)[t]` — this project's existing 1.5x multiplier convention, ATR reusing
+`src.features.py`'s exact `ATR_14` formula) targets cleaner, more meaningful
+swings: a pivot confirms only once price has genuinely reversed by a
+volatility-relative amount. On the real data this produced markedly fewer,
+presumably higher-quality swings: 6,969 raw completions (vs 14,144) → 2,307
+clearing the filter (vs 4,161) → 2,303 labeled events (vs 4,147).
+
+*Elevated look-ahead risk, stated honestly, and mitigated.* A Williams
+fractal's confirmation lag is FIXED (2 bars) — trivial to reason about. A
+ZigZag pivot's lag (`reveal_bar - idx`) is VARIABLE and UNBOUNDED, a
+genuinely easier algorithm to get wrong in a way that REPAINTS (the classic
+bug: scan the whole series for extrema first, then threshold — using full
+hindsight). `src/zigzag_swings.py` processes bars STRICTLY IN ORDER, one at a
+time — no whole-array extrema scan anywhere (the only vectorized step, ATR
+itself, is purely causal, so vectorizing that specific recurrence introduces
+no look-ahead); every pivot carries both `idx` and `reveal_bar` (the
+variable-length analogue of `CONFIRMATION_LAG`). Guarded by the
+**highest-priority test set in this whole family**: a pivot demonstrably
+invisible before its own `reveal_bar`, and — the core repainting guard — a
+confirmed pivot's `(idx, level, reveal_bar)` provably IDENTICAL whether
+computed causally up to its own `reveal_bar` or with arbitrarily more future
+bars appended afterward, plus a threshold-sensitivity check (no reversal ->
+zero pivots). New `src.harmonic_patterns.detect_harmonic_events_from_pivots`
+reuses `score_xabcd` UNCHANGED — an event's `confirmed_at_idx` is its own D
+pivot's `reveal_bar`, not `D_idx + CONFIRMATION_LAG`.
+
+| hypothesis | comparison | val acc (challenger / reference) | Δacc | 98.8% CI | McNemar p | verdict |
+|---|---|---|---|---|---|---|
+| H1.3 LogisticRegression | vs train-majority baseline | 0.5130 / 0.5043 | +0.0087 | [−0.0928, +0.1072] | 0.8856 | **DROP** |
+| H1.4 MLP (PRIMARY) | vs H1.3's own val predictions | 0.5362 / 0.5130 | +0.0232 | [−0.0276, +0.0768] | 0.3497 | **DROP** |
+
+Non-event random-sample baseline (b): label-1 rate 0.4637 (n=2,303) — same
+target/stop geometric-distance-asymmetry pattern as the fractal run.
+Registered as `harmonic_pattern_hypothesis_log.csv` n=3/n=4; no model,
+serving, or API change. 7 new unit tests (reveal-lag invisibility, the
+repainting guard, threshold-sensitivity zero-pivots, an ATR-formula equality
+check against `src.features`, strict H/L alternation, `score_xabcd` reuse
+with a variable `confirmed_at_idx`, and a swing-source routing check). A
+materially different, cleaner swing basis on the SAME idea still finding
+nothing is modest further evidence (not proof) that the null is about the
+harmonic-pattern hypothesis itself, not an artifact of the fractal window's
+noise.
+
+**M15 timeframe — H1.5/H1.6, SAME family, VERDICT: DROP for both.** The
+IDENTICAL question asked on a FINER timeframe — SAME family log (n=4 → n=6),
+bar tightens to `0.05/6 ≈ 0.0083`, no budget reset. `src/harmonic_m15_check.py`
+reuses `build_event_dataset`/`train_h1_1_logistic`/`train_h1_2_mlp`/
+`predict_h1_2_mlp`/`_chronological_split`/`_upsert_log` from
+`src.harmonic_event_check` UNCHANGED — `build_event_dataset` is already
+timeframe-agnostic, so the M15 frame is passed straight into its existing
+`h1=` parameter. Swing basis: ZigZag ONLY (a 5-bar Williams-fractal window
+spans only 75 minutes at M15 — not worth 2 more slots re-confirming an
+even-worse-expected result).
+
+*STEP 0, verified before building*: new `src.live_data.fetch_m15_market_data`
+— MT5 ONLY (`copy_rates_from_pos(..., mt5.TIMEFRAME_M15, ...)`, same
+bar-count API as the H1 fetch; NOT tick-level; deliberately no yfinance
+fallback for this timeframe, cache remains the offline fallback). This
+broker's terminal retains M15 history to 1971; **350,000 bars** were fetched
+(`results/eurusd_m15.csv`), spanning **2012-06-25 → 2026-07-24 (~14.1
+years)** — MORE calendar span than H1.1-H1.4's own ~9.7-year source, so the
+depth check passed cleanly.
+
+*Constants RE-DERIVED* (same real-world meaning, not H1's numbers
+copy-pasted): ZigZag `k=1.5*ATR(14 bars)` unchanged (scale-invariant); EWMA
+span = **96 M15 bars** (24h×4, "~1 day"); horizon = **480 M15 bars** (120 H1
+bars×4, "~5 trading days"); target/stop (1.5x/1.0x) and `best_fit_score>=0.5`
+unchanged (timeframe-independent); cost = same absolute 1.5 pips, NOT
+relaxed.
+
+*Two tradeoffs flagged BEFORE building, both confirmed with real numbers*:
+(1) **Transaction-cost drag** — mean ATR(14) = 7.41 pips at M15 vs 14.14
+pips at H1, so the fixed 1.5-pip cost is **20.2%** of a typical M15 bar
+range vs **10.6%** at H1. (2) **Autocorrelation/clustering** — validation
+event gaps: median 18.0 M15 bars, IQR [9.0, 33.0], i.e. BELOW the 20-event
+block length used for the bootstrap. Mitigated via a NEW
+`bootstrap_delta_and_mcnemar_block` (moving-block/circular, block length =
+20 EVENTS, not bars) replacing the i.i.d. bootstrap H1.1-H1.4 used, for this
+run only — H1.1-H1.4's already-logged numbers are never retroactively
+re-analyzed under the new method. This was not a formality: H1.5's naive
+McNemar p=0.0005 looked sharp, but the block-bootstrap CI straddled zero —
+exactly the overconfidence the clustering guard exists to catch.
+
+| hypothesis | comparison | val acc (challenger / reference) | Δacc | block-bootstrap CI (99.17%) | McNemar p | verdict |
+|---|---|---|---|---|---|---|
+| H1.5 LogisticRegression | vs train-majority baseline | 0.4944 / 0.5471 | −0.0527 | [−0.1317, +0.0326] | 0.0005 | **DROP** |
+| H1.6 MLP (PRIMARY) | vs H1.5's own val predictions | 0.4986 / 0.4944 | +0.0042 | [−0.0059, +0.0151] | 0.3135 | **DROP** |
+
+42,373 raw XABCD events → 14,334 filtered → 14,309 labeled (25 excluded,
+insufficient history); split train=10,016/val=2,146/test=2,147. Registered
+as hypotheses #5/#6 (n=5/n=6); rows 1-4 unchanged at their original alphas.
+9 new unit tests (M15 fetch chain behavior, the constant re-derivation,
+event-gap diagnostics, block-bootstrap index contiguity and edge-detection,
+the ATR cost-drag diagnostic). 3x the raw events at a finer timeframe still
+finds nothing once clustering is honestly accounted for — further evidence
+the null is about the hypothesis, not H1's bar granularity.
+
+---
+
+### 3.8 Fractal-breakout drift/continuation event-study (research-only, NEW own family, VERDICT: DROP)
+
+A genuinely different question from hypothesis #7 (`results/feature_hypothesis_log.csv`,
+DROPped): #7 tested `fractal_breakout_up`/`fractal_breakout_down` as an INPUT
+FEATURE for the next-single-day direction model. This asks the classic
+breakout-MOMENTUM thesis instead — conditional on a confirmed breakout today,
+does price keep moving in that direction over the next few days? A forward
+multi-day event-study, not a same-day feature-addition test, with its own
+brand-new family log (`results/fractal_breakout_driftcheck_hypothesis_log.csv`,
+`src/fractal_breakout_driftcheck.py`) — `feature_hypothesis_log.csv`,
+`volatility_hypothesis_log.csv`, `cot_weekly_hypothesis_log.csv`, and
+`harmonic_pattern_hypothesis_log.csv` are untouched. Research-only regardless
+of outcome: a KEEP-signal would only TRIGGER designing a proper dedicated
+event-conditional model later (mirroring §3.7's H1 model), never an automatic
+feature/serving change.
+
+`confirmed_high_low_levels()`/`add_fibonacci_features()` (`src.fibonacci_fractals`)
+are reused UNCHANGED on `results/eurusd_features.csv` to get the breakout
+flags — fractal detection is not rebuilt, and its confirmation-lag look-ahead
+guard is already baked in. Event day t = exactly one of
+`fractal_breakout_up[t]`/`fractal_breakout_down[t]` fires (`event_direction =
++1`/`-1`); the rare day both fire (3 times in the full 1971-2026 history) has
+an undefined direction and is excluded, counted separately rather than
+arbitrarily signed. For each event and horizon N in {2, 3, 5}:
+`signed_continuation_N = event_direction * log(close[t+N]/close[t])`.
+
+Same chronological daily split as every other family (`config.json`
+train_fraction=0.80/val_fraction=0.10 -> train[0:70%]/validation[70%:80%]/
+test[80%:100%] RESERVED, identical formula to `src.ablation._canonical_split`).
+*Boundary rule:* a validation-slice event whose forward window would cross
+INTO the reserved test block is excluded for that horizon even though the
+underlying CSV physically has more rows there (this is daily history running
+to the present, not a short series) — `compute_signed_continuation`'s single
+`max_idx` parameter enforces this AND genuine "insufficient forward history"
+at the true end of the series with one rule, so there is only one place this
+look-ahead guard can be gotten wrong (verified: an identical unbounded run
+shows the data really does exist past `val_end` and is deliberately excluded,
+not simply missing).
+
+PRE-REGISTERED test: PRIMARY = mean(signed_continuation_3) over
+validation-slice events, paired bootstrap (2000 resamples), 95% CI;
+KEEP-signal only if entirely > 0. CORROBORATING (context only): the same
+statistic for N=2/N=5 — a null N=3 with a significant N=2 or N=5 is still
+DROP (anti-cherry-pick, same convention as `harmonic_h1_2_mlp_vs_h1_1_primary`).
+alpha = 0.05 (first hypothesis of this family).
+
+Validation-slice raw event counts: breakout_up=260, breakout_down=380
+(both-excluded=0) — a decently powered 640 total.
+
+| horizon | role | n used | mean signed_continuation | 95% CI | verdict contribution |
+|---|---|---|---|---|---|
+| N=2 | corroborating | 638 | −0.000233 | [−0.000771, +0.000343] | straddles 0 |
+| N=3 | **PRIMARY** | 637 | −0.000155 | [−0.000856, +0.000551] | straddles 0 → **DROP** |
+| N=5 | corroborating | 637 | −0.000112 | [−0.001001, +0.000762] | straddles 0 |
+
+All three horizons point mildly negative (reversal, not momentum) but none
+clears the pre-registered bar — a confirmed fractal breakout carries no
+detectable forward drift at 2/3/5-day horizons, consistent with the rest of
+this project's near-efficient-market findings. Logged as
+`fractal_breakout_continuation_3day`, n=1. 5 new unit tests (direction-sign
+construction for both breakout types, both-flags exclusion,
+insufficient-forward-history exclusion, the validation/test split-boundary
+exclusion, and a split-formula equality check against `src.ablation`). No
+model, feature, or serving change.
+
+---
+
+### 3.9 Volatility-scaled position-sizing overlay (research-only retrospective backtest, PRELIMINARY, no production change)
+
+**HARD BOUNDARY, stated up front**: `src/vol_scaled_backtest.py` is a
+DESCRIPTIVE "what-if" report over the already-settled forward paper-trading
+ledgers (`results/paper_trading_log_baseline.csv`,
+`results/paper_trading_log_macro.csv`) — explicitly distinct from BOTH the
+feature-hypothesis families (§ Production Methodology below) AND the live
+paper-trading ledgers themselves (§3.5's sibling, `src/paper_trading.py`).
+`build_ledger`/`summarize`/`build_all_ledgers` and the live logging path are
+completely UNCHANGED (a dedicated unit test diffs the file against git HEAD).
+No execution/position-sizing/broker code was added anywhere. Real capital
+deployment remains a separate, explicit, FUTURE conversation requiring the
+owner's direct approval, exactly as `src/paper_trading.py`'s own docstring
+already states.
+
+Reuses `load_frozen_volatility_ensemble`/`batch_predict_frozen_ensemble_vol_pct`
+(`src/volatility.py`, the SAME frozen-artifact batch-inference idiom already
+established for direction/return hypothesis #9) UNCHANGED — pure inference,
+no retraining. Since `results/eurusd_features.csv`'s tail predates the
+ledgers' recent dates, price history for this report is aggregated straight
+from `results/eurusd_h1.csv` (H1 → daily OHLCV), used ONLY for this
+retrospective report.
+
+*Pre-registered sizing formula*: `trailing_ref_vol[t]` = CAUSAL
+`pandas.rolling(window=252, min_periods=1).median()` of `predicted_vol_pct`
+(expanding until 252 days exist, rolling 252-day median thereafter);
+`vol_weight[t] = trailing_ref_vol[t] / predicted_vol_pct[t]`, clipped to
+`[0.25, 4.0]`; `weighted_net_return_pct[t] = net_return_pct[t] *
+vol_weight[t]` — only the SIZE of the already-realized P&L changes, never the
+direction call. Compared per variant: cumulative net return, Sharpe-like
+ratio (identical formula to `src.paper_trading.summarize`), and max drawdown,
+original vs vol-scaled — logged to its own new
+`results/vol_scaled_sizing_backtest.csv` (not a hypothesis-log family; this
+isn't a classification-accuracy claim), via a moving-BLOCK (circular)
+bootstrap (block length 20 trading days, 2000 resamples) on the Sharpe-like
+delta.
+
+*A correctness fix caught during smoke-testing, worth stating plainly*: with
+`n <= block_len` (exactly this project's current sample sizes), a "block" as
+long as the whole series is just a cyclic rotation of every value once —
+mean/std (hence Sharpe) are invariant to that rotation, so every resample
+gives an IDENTICAL delta and the naive CI collapses to a single point — a
+razor-thin, falsely "significant" interval that is really just an artifact of
+too little data relative to the pre-registered block length.
+`bootstrap_delta_sharpe` explicitly refuses (returns NaN) rather than
+silently clamping the block length down to fit.
+
+*Real results (2026-07-26)*: settled+matched positions — **baseline n=10,
+with_macro n=17** — both far below the ~40-position threshold for a
+meaningful block bootstrap, and both trigger the `n<=block_len`
+degenerate-refusal above. Reported honestly as **PRELIMINARY/DIRECTIONAL
+ONLY, not a KEEP/DROP decision**. Directional read (context only): baseline's
+vol-scaled curve showed a smaller loss and a slightly lower max drawdown;
+with_macro's vol-scaled curve showed a very slightly larger loss AND a very
+slightly higher max drawdown — the two variants point in DIFFERENT
+directions on drawdown, underscoring why this is not yet a decision either
+way. `vol_weight` ranged ~0.82–1.48 for both variants — reported explicitly
+so the actual sizing variation isn't buried in the aggregate numbers. 7 new
+unit tests (causal truncation-equivalence, the expanding→rolling transition,
+clip bounds at both ends plus a defensive zero-predicted-vol case, the
+degenerate-short-sample bootstrap refusal, a never-fits guard mirroring
+hypothesis #9's own, and a direct git-diff check that `src/paper_trading.py`
+is untouched). No model, feature, serving, or execution change.
+
+---
+
+### 3.10 Walk-forward validation report (research-only robustness check, no production change)
+
+**HARD BOUNDARY**: `src/walk_forward_validation.py` is entirely SEPARATE
+from production — it does NOT modify `_train_pipeline.py`, `src/inference.py`,
+`config.json`, or any file under `models/` (a dedicated unit test hashes every
+such file before/after a real run). Logged to its own new
+`results/walk_forward_validation.csv` (per-window detail) +
+`results/walk_forward_validation_summary.csv` (cross-window aggregate) —
+every hypothesis-log family is untouched, since nothing is being added or
+re-tuned. This answers "would our EXISTING, already-fixed configuration have
+worked robustly over time," never "should we change anything" — scheduled
+production retraining, if ever built, is a separate, subsequent,
+explicitly-approved conversation.
+
+**VALIDATION, not OPTIMIZATION**: no hyperparameter is searched, widened, or
+narrowed per window and no feature is added/removed — the GBM `param_grid`,
+LSTM architecture, and every `config.json` value are read AS-IS on every
+window. Re-selecting hyperparameters per window would be walk-forward
+OPTIMIZATION and would reintroduce the exact data-snooping risk the
+Production Methodology exists to prevent.
+
+**Why reusing the historically-reserved test-block date range is sound
+here** (and nowhere else in this project): no NEW keep/drop decision is made
+from this exercise (the configuration is already fixed before this report
+runs), and each window's model trains ONLY on data strictly before that
+window's own test period — causality holds at every window, no exceptions.
+
+**Scheme**: 3-year trailing train / 1-year step+test, sliding across the
+FULL euro-era history (1999-01-04 → 2026-06-17, 8,560 rows) → **24 windows**
+(a real, computed count). Direction/return duplicates
+`_train_pipeline.py::train_variant()`'s exact GBM param_grid+GridSearchCV/
+TimeSeriesSplit + LSTM architecture (that file cannot be imported here — it
+trains and persists real production artifacts as a MODULE-LEVEL side effect
+of import); volatility duplicates the exact 5-seed (42-46) 3-head ensemble +
+train-only-fit GARCH(1,1) (`train_production_volatility_model` similarly
+hardcodes writing to `models/volatility/`, so only its side-effect-free
+building blocks are reused, and the 5-seed loop is reimplemented in-memory).
+The window's 3-year train block plays production's `[0:80%]` fit role in
+full; the LSTM's early-stopping tail is the SAME 12.5% proportion
+(`val_fraction/train_fraction`) production carves from its own fit block,
+applied here to the window instead of the whole 27-year series.
+
+**A real engineering finding, stated plainly**: the assumption that GPU is
+always faster was WRONG for this workload. `_train_pipeline.py` enables CUDA
+XGBoost because it pays off on the ~6,850-row production block; measured
+directly on this module's ~935-row per-window training slices, CPU
+GridSearchCV finished in ~10s vs ~326s on CUDA for the SAME window (>30x
+slower on GPU — fixed per-call CUDA overhead dominates at this row count).
+`XGB_DEVICE='cpu'` is forced here — a compute-backend choice, not a change
+to the pre-registered search space. Window 1 measured **44.0s** real,
+extrapolating to **17.6 minutes for all 24 windows** — comfortably
+practical, so the full sweep ran for real rather than being stopped or
+silently coarsened.
+
+**Real results (2026-07-26, all 24 windows)**:
+
+| pooled comparison | n_pooled | acc | vs majority | Δacc | block-bootstrap CI | McNemar p | verdict |
+|---|---|---|---|---|---|---|---|
+| baseline GBM | 7,483 | 0.5001 | 0.4887 | +0.0114 | [-0.0013, +0.0239] | 0.097 | not cleared |
+| baseline LSTM | 7,003 | 0.4945 | 0.4899 | +0.0046 | [-0.0123, +0.0201] | 0.588 | not cleared |
+| with_macro GBM | 7,483 | 0.5055 | 0.4887 | +0.0168 | [+0.0016, +0.0331] | 0.016 | **CLEARED** |
+| with_macro LSTM | 7,003 | 0.4979 | 0.4899 | +0.0080 | [-0.0116, +0.0258] | 0.345 | not cleared |
+
+Direction accuracy sits at chance for every model/variant, confirming this
+project's core efficient-market finding HOLDS UP across 24 independent
+re-training cycles, not just the one static split. The with_macro GBM's
+pooled CI clears a flat 5% bar, but that is 1-of-4 uncorrected comparisons
+(this report has no Bonferroni family — it is not a KEEP/DROP test), well
+within chance alone; reported as descriptive context, NOT new evidence for
+the macro features (their status remains KEEP-provisional, arbitrated by the
+forward paper-trading ledgers).
+
+**Time-trend**: direction accuracy/AUC show no significant drift (|rho| <
+0.3, p > 0.15). Return MAE and all three volatility MAEs show a significant
+NEGATIVE trend (rho ≈ -0.48 to -0.58, p < 0.02) — read honestly as likely
+reflecting secular DECLINING EURUSD realized volatility over the sample
+(2008/2011/2015 were choppier than recent years), not model improvement.
+
+**Volatility ensemble vs GARCH — the most important honest finding**:
+pooled across all 24 windows, the 5-seed ensemble did **NOT** beat
+train-only-fit GARCH(1,1) (mean R² -0.04 GARCH vs -0.28 ensemble; dMAE CI
+[-0.048, -0.020] favoring GARCH) — the OPPOSITE of the production ship
+gate's one-shot result. Leading honest explanation: a 3-year rolling window
+is far thinner than production's actual training volume (`[0:80%]` of the
+full ~21-27 year history every time it retrains, never a 3-year rolling
+slice) — an LSTM ensemble is more data-hungry than a 2-parameter GARCH(1,1),
+so this plausibly reflects insufficient training data at this window length
+for the neural approach, not a forward-generalization failure. Exactly the
+kind of finding this report exists to surface; worth a note for any FUTURE
+scheduled-retraining conversation (likely wanting a longer training window
+for the volatility family specifically) — this pass does not act on it.
+
+4 new unit tests (rolling-schedule spec match, per-window causality,
+cross-window no-later-leakage scoping, dynamic file-hash integrity check
+across `models/`+`_train_pipeline.py`+`src/inference.py`+`config.json`).
+Full suite green (134 tests). No model, feature, or serving change.
+
+### 3.11 Pooled multi-instrument H1 (research-only hypothesis family, VERDICT: BOTH DROP)
+
+**Research-only, production untouched.** `src/pooled_h1_data.py` +
+`src/pooled_h1_model.py`, writing only to `results/pooled_h1/` and
+`results/pooled_h1_hypothesis_log.csv`. A NEW hypothesis family (family size 2,
+Bonferroni **alpha = 0.05/2 = 0.025**), independent of every other family. The
+protected set (`models/`, `_train_pipeline.py`, `src/inference.py`,
+`src/features.py`, `src/paper_trading.py`, `config.json`,
+`results/eurusd_h1.csv`) is byte-identical before/after a run (sha256 test).
+
+**Tests, strictly comparatively:** does one architecture trained on 4 pooled
+correlated majors beat the IDENTICAL architecture on EURUSD alone, BOTH scored
+on the SAME EURUSD validation rows? This is the literature's stated remedy for
+a fixed-history single instrument (raise the effective sample by pooling).
+
+**Quote-convention alignment (pre-registered):** USDCHF (USD/XXX) is inverted
+to CHFUSD (`close=1/close`, `high=1/low`, `low=1/high` — the high/low SWAP is
+mandatory, its omission is the classic silent high<low bug) so all four pairs
+share the "USD in the denominator" convention. Confirmed sign flip
+`corr(CHFUSD,EURUSD)` −0.739 → +0.739. Raw USDCHF and inverted CHFUSD both kept
+on disk.
+
+**Design:** fresh pair-agnostic, scale-free features (log-return lags
+{1,2,3,6,12,24}, ATR/close, RSI, (close−SMA50)/ATR, (close−SMA200)/ATR,
+EWMA(24) return std, hour & day-of-week sin/cos — NO price level, NO tick
+volume, NO symbol id; built fresh, NOT via `src/features.py`). Target reuses
+`src/triple_barrier.py` unchanged (horizon_vol=EWMA_std(24)·√120, ×1.5/×1.0
+barriers, cost-aware at 1.5 pips, long every bar). GLOBAL chronological split
+(identical dates all four pairs) train[0:70]/val[70:85]/test[85:100]; test
+RESERVED. Mandatory PURGE (train labels crossing the boundary) + EMBARGO (first
+120 val bars) — new to the project because here every bar is a sample with a
+120-bar forward label. Shared window 2015-05-08 → 2026-06-08 (68,943 bars).
+
+**Honest effective-sample accounting (led with, before any accuracy):** raw
+pooled 192,560 rows vs EURUSD 48,140 (4×), but average pairwise return
+correlation **rho_bar=0.537 → k_eff=1.53** (≈53% more effective sample, not
+300%) and **mean label uniqueness 0.0083** (≈1/120; overlapping labels make raw
+counts hugely overstate information).
+
+**Device:** CUDA available and used (RTX 4070 Laptop; XGBoost `device='cuda'`,
+PyTorch `device=cuda`), printed loudly at run start; seed 42, GPU bitwise
+determinism not guaranteed (accepted).
+
+**Arbiter (moving-block circular bootstrap over time, block=120; paired Δacc CI
+at α=0.025; exact McNemar; KEEP iff CI>0 AND p<0.025):**
+
+| Hypothesis | acc pooled | acc EURUSD | Δacc | Δacc CI | McNemar p | Verdict |
+|---|---|---|---|---|---|---|
+| H_pool.1 GBM | 0.4775 | 0.4767 | +0.0009 | [−0.029, +0.033] | 0.872 | **DROP** |
+| H_pool.2 LSTM | 0.4759 | 0.4809 | −0.0050 | [−0.021, +0.009] | 0.100 | **DROP** |
+
+**Both DROP.** Pooling did not beat single-instrument EURUSD; the LSTM pooled
+arm was marginally worse. Consistent with the accounting: k_eff≈1.5 and label
+uniqueness≈0.008 already implied "4× rows" is mostly illusory here (one shared
+USD factor), so there was little new signal for pooling to add. NOT a universal
+claim about pooling — a null on THIS 4-major set, horizon, and label design, on
+the EURUSD validation slice. Any future pursuit is a forward-testing
+conversation, not a production change. 12 new unit tests (see IMPROVEMENT_LOG
+"Pooled multi-instrument H1"); full suite green (154 tests).
+
+### 3.11.1 H1 label-geometry feasibility scan (design calc, not a hypothesis test)
+
+Follow-up to §3.11. `src/h1_horizon_feasibility.py` +
+`results/h1_horizon_feasibility.csv`. Pure LABEL GEOMETRY over a (horizon ×
+target-multiplier) grid on the train slice only — NO model, NO predictive
+metric, NO hypothesis log, NO alpha consumed; reuses `src/triple_barrier.py` and
+the cached pooled CSVs unchanged. Asks whether any (H, m) cell gives both enough
+independent labels AND a target barrier wide enough to survive a 1.5-pip cost.
+Anchor gate PASSED: nominal-horizon uniqueness 0.008285 reproduces the pooled
+program's logged 0.008275 (the scan otherwise uses ACTUAL resolution times t1,
+which give 0.0113 at (120,1.5) since ~52% of labels resolve early). **Finding:
+the H1 triple-barrier approach is NOT closed on arithmetic — the original H=120
+barriers were simply too wide** (median resolution ≈ H, ~half of labels run to
+the time barrier, independence crushed to 2,164). 15 pooled cells are VIABLE at
+short horizons (H ≤ 48; pooled n_independent 5k–46k, cost never > 12.6%).
+Caveats: `n_independent` is temporal-only — cross-sectional correlation
+(rho_bar≈0.54) discounts pooled independence so only H=6–12 survive robustly;
+and feasibility ≠ a demonstrated edge (that needs a new pre-registered
+hypothesis). 7 unit tests; full suite green (161 tests). See IMPROVEMENT_LOG
+"H1 label-geometry feasibility scan".
+
+---
+
+## 4. Testing, Validation & Error Diagnostics
+
+### 4.1 Cross-validation strategy
+
+**`TimeSeriesSplit`** (never random K-fold) is used everywhere a temporal model
+is tuned:
+- GBM: `TimeSeriesSplit(n_splits=cv_splits=5)` inside `GridSearchCV`
+  (`_train_pipeline.py:106-126`), classifier scored on `roc_auc`, regressor on
+  `neg_mean_absolute_error`.
+- All train/val/test splits are **chronological fractions** from `config.json`
+  (`train_fraction=0.80`, `val_fraction=0.10`): the GBM trains on `[0:80%]`, the
+  LSTM on `[0:70%]` with `[70%:80%]` reserved for early-stopping, and **both**
+  test on the identical held-out `[80%:100%]`. No shuffling.
+
+### 4.2 Validation metrics & where they live
+
+| Metric | Model | Logged to |
+|---|---|---|
+| `direction_accuracy`, `direction_roc_auc` | GBM & LSTM | MLflow (`_train_pipeline.py:154,287`) |
+| `return_mse`, `return_mae` | GBM & LSTM | MLflow (both heads in **percent** units — directly comparable) |
+| Learning curves, confusion matrices, residuals, ACF/PACF | notebook | `results/*.png` |
+| Multi-model CV table | notebook | `results/comparison_table.csv` |
+| FRED ablation | notebook §2C | `results/2C_fred_ablation.csv` |
+
+**Honest performance reality (from committed artifacts):**
+
+- `results/comparison_table.csv`: every model sits at **ROC-AUC ≈ 0.51–0.52**,
+  accuracy ≈ 0.51 — i.e. **marginally above chance**. Tuned XGBoost hold-out
+  accuracy is **0.499** (below chance). This is consistent with the efficient-
+  market difficulty of daily FX direction and should be communicated as such,
+  not oversold.
+- The retrained production heads (unified 80% split, percent target) score on
+  the held-out test block: **GBM** Direction Acc = 0.5011, ROC-AUC = 0.5024,
+  Return MAE = 0.296%; **LSTM** Direction Acc = 0.5018, ROC-AUC = 0.4997,
+  Return MAE = 0.304%. The two return heads are now on the **same percent scale**
+  (MAE ≈ 0.30% each) and directly comparable, but the **direction heads still do
+  not beat a coin flip** — the low-confidence consensus guard (§3.3) exists
+  precisely for this.
+
+### 4.2.1 The Efficient Market Reality
+
+A recurring question is *"why are the predicted returns such tiny fractions of
+a percent (e.g. `-0.0225%`)?"* The answer is that this is **mathematically
+correct behaviour, not a defect** — and the test block proves it numerically.
+
+**The "Predict the Mean" baseline.** EUR/USD daily returns are, to a very good
+approximation, a **random walk**: their unconditional mean is ≈ 0 and a typical
+day moves ± one standard deviation. On the held-out test block:
+
+| Quantity | Value |
+|---|---|
+| Actual next-day return — mean | **+0.0060%** (≈ zero) |
+| Actual next-day return — std | **0.5846%** (the typical daily move) |
+| GBM regressor — predicted mean | **+0.0062%** (≈ the unconditional mean) |
+| GBM regressor — predicted std | **0.0057%** (≈ **100× tighter** than reality) |
+| `corr(prediction, actual)` | **≈ 0.000** (essentially no signal) |
+
+The decisive comparison is the MAE:
+
+| Predictor | Test MAE |
+|---|---|
+| Trivial **"predict the mean"** baseline (`ŷ = mean(y)`) | **0.2958%** |
+| The trained **GBM regressor** | **0.2959%** |
+
+The GBM is **indistinguishable from — in fact a hair worse than — a constant
+that always predicts the historical average**. This is the empirical signature
+of an efficient market: there is almost no day-ahead signal in the price/feature
+history to extract, so no estimator can do materially better than the mean.
+
+**Why Huber loss makes the predictions hug zero — by design.** The GBM regressor
+uses `loss='huber'` (`alpha=0.9`), a robust loss that behaves like MSE near the
+centre and like MAE in the tails. On a noisy target with no learnable signal,
+the loss-minimising output is the conditional mean, and Huber's tail-robustness
+**actively shrinks predictions toward that mean** to avoid overfitting to
+individual noisy moves. The ~100× collapse in predicted std is exactly this
+shrinkage working as intended — it is the model declining to fabricate
+confident forecasts it cannot justify.
+
+**Conclusion — a feature of mathematical honesty, not a bug.** The micro-percent
+outputs are the system *correctly* reporting that day-ahead EUR/USD returns are
+near-unpredictable. A model that emitted large, swinging return forecasts on
+this target would be **overfitting noise and lying about its certainty**. The
+practical implication (also noted in §4.5): `predicted_return_pct` should be read
+as near-noise, not as a tradeable magnitude.
+
+**Corroborating evidence — the Ch.11 train-vs-test capacity diagnostic
+(2026-07-17, `results/train_vs_test_diagnostic.csv`).** The Practical
+Methodology question "would more capacity (epochs/layers) help?" was answered
+empirically against the served artifacts, so it does not need re-asking:
+
+| model | variant | ROC-AUC train | ROC-AUC test | return R² train | return R² test |
+|---|---|---|---|---|---|
+| GBM | baseline | 0.6157 | 0.5220 | +0.023 | −0.002 |
+| GBM | with_macro | 0.6166 | 0.5218 | +0.025 | −0.002 |
+| LSTM | baseline | 0.5575 | 0.5046 | +0.024 | −0.007 |
+| LSTM | with_macro | 0.5697 | 0.5302 | +0.031 | −0.032 |
+
+The pattern is a **mild overfit above a Bayes floor at chance**: every model
+already fits +0.04–0.09 AUC (and ~2–3% of return variance) of pure noise
+in-sample that generalizes to exactly nothing out-of-sample. Three
+independent facts close the question. (1) Larger capacity was already offered
+and **rejected by validation**: all four GBM grid searches picked the
+minimum-capacity corner (`n_estimators=100, max_depth=3, lr=0.01`), and LSTM
+early stopping (patience=10 of a 100-epoch cap) halted at epoch 14/13 with
+best weights from epoch ~4 — "more epochs" is mechanically a no-op. (2) The
+Ch.11 tiny-dataset check passed: a fresh production-architecture LSTM drove
+training loss to ~0 on a 5-row slice (direction 5/5, return MAE 0.037% vs
+target scale ~0.37%), ruling out a training-loop/loss/scaling defect. (3) The
+train-side gap means the Ch.11 remedy direction is *more regularization*, but
+harder regularization can only converge train toward 0.50 too — it cannot
+lift test above the floor. **Conclusion: scaling epochs/layers on the
+direction/return models is evidence-refuted; only genuinely new information
+(different features via the forward ledgers, or a different target as with
+the volatility family §3.5) can move test performance.** (Note when comparing
+splits: train MAE 0.39–0.41% vs test 0.30% reflects the train era's larger
+target dispersion, not underfitting — R² is the comparable number.)
+
+### 4.2.2 Probability calibration — evaluated, not adopted
+
+A natural follow-up question: is the GBM classifier's `predict_proba` a genuinely
+**calibrated** probability, or just a raw score `compute_consensus`'s
+`CONFIDENCE_THRESHOLD=0.52` guard (§3.3) treats as one? This was tested directly —
+wrapping the tuned classifier in `sklearn.calibration.CalibratedClassifierCV`
+(Platt/sigmoid scaling, `TimeSeriesSplit` folds, same held-out test block) — and
+**deliberately not adopted**, for the same reason §4.2.1's Huber shrinkage is a
+feature rather than a defect: there is essentially no calibration gap to close on
+this target.
+
+| Predictor | Brier score (test) |
+|---|---|
+| Trivial **"always predict the base rate"** baseline (train-set mean, `ŷ = 0.4892`) | **0.25013** |
+| Raw tuned GBM `predict_proba` (uncalibrated) | 0.25063 (**worse** than the trivial baseline) |
+| + `CalibratedClassifierCV(method='sigmoid')` | 0.25025 |
+| + `CalibratedClassifierCV(method='isotonic')` | 0.25038 |
+
+The raw classifier's probabilities are, by Brier score, *indistinguishable from —
+in fact microscopically worse than* — a constant that always predicts the
+training-set base rate. Both calibration variants pull the score closer to that
+same trivial baseline (which is literally what Platt/isotonic scaling does when a
+model carries near-zero real signal), but the "improvement" is entirely calibration
+correctly discounting a classifier that has nothing to calibrate. This is the
+classification-side twin of §4.2.1's `MAE 0.2959% vs baseline 0.2958%` regression
+finding — the same efficient-market conclusion, now confirmed via a second, unrelated
+metric (Brier score vs baseline) and a second, unrelated model family test (binary
+calibration vs regression shrinkage).
+
+**Why it was not shipped despite the (tiny) Brier improvement:** sigmoid calibration
+collapses the predicted-probability range from `[0.333, 0.672]` (raw) to
+`[0.461, 0.513]` — under `CONFIDENCE_THRESHOLD=0.52`, this means the GBM head would
+almost **never** cross the confidence guard again, silently changing
+`compute_consensus`'s real-world behavior (near-permanent `MIXED / LOW CONFIDENCE`)
+for a Brier gain of `0.00050 → 0.00012` (both already within noise of the trivial
+baseline). Isotonic keeps a wider range (`[0.395, 0.610]`) but the same
+near-baseline Brier finding holds. Adopting calibration here would trade a real,
+visible behavior change for a statistically negligible accuracy-of-belief gain —
+the same "honest shrinkage over confident-looking noise" principle §4.2.1 already
+establishes, just evaluated and rejected on the classification side instead of
+silently assumed. If a future retrain shows the raw classifier's ROC-AUC pull away
+from chance, this decision should be revisited.
+
+### 4.3 FRED feature — raw level was net-negative; the stationarized delta flips it positive
+
+`results/2C_fred_ablation.csv` (methodology: notebook §2C's quick GBM classifier,
+no grid search, same chronological 80/20 split, `WITHOUT` vs `WITH` the feature):
+
+| Variant | Accuracy | ROC-AUC |
+|---|---|---|
+| WITHOUT the FRED feature | 0.5040 | 0.5071 |
+| WITH `yield_differential` (raw level — **superseded**) | 0.5002 | 0.5050 |
+| Δ (raw-level FRED effect) | **−0.0039** | **−0.0021** |
+| WITH `yield_differential_delta` (diff(1) — **current production feature**) | 0.5069 | 0.5103 |
+| Δ (delta-feature FRED effect) | **+0.0029** | **+0.0032** |
+
+**Root cause and fix.** The raw level is a slow-trending, highly persistent
+series (bond yields move in multi-month trends) — feeding it directly to a
+next-day model is the same class of mistake the project already avoids
+elsewhere: `log_return` is used instead of raw `close`, `bar_dynamics` instead
+of raw `high`/`low`, because a next-day model should see *change*, not *level*.
+Re-running the identical ablation with `yield_differential.diff(1)` (§2.4) in
+place of the raw level flips the effect from net-negative to net-positive on
+both metrics — small, consistent with everything else on this near-efficient
+target (§4.2.1), but real and in the theory-predicted direction. The raw level
+is still merged and displayed on the dashboard (`bar_used.yield_differential`,
+unchanged) — only the **model-facing** feature changed.
+
+**Follow-up not yet done:** the notebook's own §2C ablation cell computes this
+same comparison dynamically (it imports `FEATURE_COLUMNS`/`merge_macro_features`/
+`compute_features` from `src/features.py`, so it will pick up the new delta
+feature automatically on its next execution) but its markdown narrative still
+describes the old raw-level result and has not been re-run to confirm the
+notebook environment reproduces the same numbers as this standalone check.
+
+### 4.3.1 Three added macro features — kept provisionally, not statistically proven
+
+> **⚠ Methodology superseded (2026-07-06).** The significance numbers in this
+> section were computed on the **held-out test block** `[80%:100%]` — the same
+> block used repeatedly for feature search, which is data-snooping (see
+> *Production Methodology* at the top of this doc). The KEEP decisions have since
+> been re-run on the clean **validation slice** `[70%:80%]` via `src/ablation.py`
+> and judged against a **Bonferroni-corrected** bar
+> (`results/feature_ablation_validation.csv`, `results/feature_hypothesis_log.csv`).
+> The conclusion is unchanged — **all four features stay KEEP-provisional** — but
+> the validation table there, not the test-block table below, is the governing
+> record. The numbers below are retained only as the before/after audit trail.
+
+Three more FRED macro features were added (`usd_index_return`,
+`policy_rate_differential`, `inflation_differential` — see §2.4/§2.6). Each was
+ablated individually (WITH vs WITHOUT, one feature toggled, all other columns and
+rows held fixed) on the **euro-era 1999+ row set** — the addition of ECB/USD/HICP
+series truncates the trainable history from the synthetic-1971 span to the real
+euro era (§2.6), so this ablation runs on a different, shorter row set than §4.3's
+1971+ numbers and the two are **not** directly comparable (the old 24-col/1971+
+baseline row is preserved in `results/comparison_table.csv` as the permanent
+before reference). Point-estimate deltas (`results/new_macro_ablation.csv`):
+
+| Added feature | Δ accuracy | Δ ROC-AUC |
+|---|---|---|
+| `usd_index_return` | +0.0064 | +0.0073 |
+| `policy_rate_differential` | +0.0047 | +0.0045 |
+| `inflation_differential` | +0.0123 | +0.0041 |
+
+All three point estimates are **positive**, so per the "keep only non-negative
+features" rule they are kept — **but a proper significance test
+(`results/new_macro_significance.csv`) shows none of the three is distinguishable
+from noise:**
+
+| Added feature | 95% bootstrap CI (Δacc) | frac(Δ>0) | McNemar p | Verdict |
+|---|---|---|---|---|
+| `usd_index_return` | [−0.0099, +0.0234] | 0.77 | 0.499 | KEEP — **provisional** |
+| `policy_rate_differential` | [−0.0099, +0.0181] | 0.73 | 0.568 | KEEP — **provisional** |
+| `inflation_differential` | [−0.0064, +0.0298] | 0.90 | 0.210 | KEEP — **provisional** |
+
+Every 95% CI straddles 0 and every McNemar p-value is far above 0.05 (2000
+paired bootstrap resamples of the 1,712-row test block; McNemar over the 2×2
+correct/wrong flip table). So the features are retained on a nominally-positive
+point estimate but carry **no proven edge** — exactly the efficient-market result
+of §4.2. They should be revisited with a longer live test window before being
+treated as real signal, and this is a live-money caveat, not an academic one.
+
+**Out-of-scope flag (not acted on):** on this same 1999+ set, the existing
+`yield_differential_delta` now shows a small *negative* ablation delta
+(−0.0041 acc / −0.0045 auc) — the opposite sign from its +0.0029/+0.0032 on the
+1971+ set in §4.3. Both are within noise; re-evaluating/removing the yield
+feature is tracked as a separate `IMPROVEMENT_LOG.md` follow-up, deliberately not
+changed in the same pass that added the three features (one change at a time).
+
+### 4.3.2 COT positioning — genuinely new information, tested in both families, dropped
+
+`src/cot_data.py` added weekly **net speculative positioning** (CFTC *Traders in
+Financial Futures*, leveraged-funds long − short) for **EURO FX** and **ICE's USD
+INDEX (DX)** futures as two candidate features (`cot_eur_zscore`,
+`cot_usdindex_zscore`), z-scored over a trailing 3-year weekly window. Unlike the
+FRED macro features this is a different *kind* of information — positioning /
+sentiment, not price or rates — so it was worth a dedicated hypothesis in each
+family. Raw contract counts are **not** used: open interest has grown structurally
+for two decades, so raw levels are non-stationary; the trailing z-score removes
+that drift.
+
+**Look-ahead handling (the load-bearing part).** CFTC reports a Tuesday "as of"
+date but only *publishes* the following Friday (~3-day structural lag), delayed
+irregularly by holidays and government shutdowns. The daily join therefore uses
+the **availability date**, never the as-of date. The live Socrata API exposes a
+true system publish timestamp `:created_at`, but it is reliable only for rows
+inserted after the dataset's **2022-09-13 bulk reload** (every earlier row carries
+that one reload timestamp). `availability_date()` is hybrid: trust `:created_at`
+when its lag over as-of is plausible (recent rows — captures real holiday/shutdown
+delays exactly), else fall back to a conservative **`as_of + 10 days`** (a fixed
++3 would leak during exactly those gaps). Z-scores are computed on the native
+weekly cadence and ffilled by availability date onto daily bars
+(`add_cot_features`), so a bar can only ever see a reading already public — the
+same as-of ffill discipline the monthly FRED series use. Guarded by
+`test_add_cot_features_ffill_by_availability_date_no_lookahead` and
+`test_cot_availability_date_trusts_recent_publish_but_buffers_bulk_reload`.
+
+**Result — DROP in both families** (validation-only arbiter `[70%:80%]`, test block
+never touched, each a single bundled Bonferroni hypothesis):
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py`) | Δacc **−0.0035**, Δauc −0.0099 | Δacc [−0.0234, +0.0175] | McNemar **p=0.83** | 0.05/6 = 0.0083 | **DROP** (`feature_hypothesis_log.csv` n=6) |
+| Volatility 5-seed ensemble (`src/volatility.py`) | ΔMAE **−0.0067%**, ΔR² −0.025 | ΔMAE **[−0.0091, −0.0045]** (entirely < 0) | frac(dMAE>0)=0.000 | 0.05/7 = 0.0071 | **DROP** (`volatility_hypothesis_log.csv` n=7) |
+
+In direction/return COT is indistinguishable from noise; in volatility it is
+reliably **worse** than the validated base ensemble (the CI sits wholly below
+zero, and the challenger's best of 5 seeds still lost to the base mean, so it is
+not training-noise). Consistent with COT being documented for multi-week reversals
+rather than next-day moves, and with the efficient-market result of §4.2. The
+module, both ablation hooks, and the tests are kept so the finding is reproducible,
+but COT is **not** in `FEATURE_COLUMNS`, **not** served, and triggered no retrain.
+`cot_staleness_days()` exists as a module diagnostic for a future forward test; it
+is wired into the live response only if COT ever ships.
+
+**Weekly-horizon side-check (also DROP, own family).** Because COT is documented
+for multi-week reversals rather than next-day moves, a separate exploratory check
+(`src/cot_weekly_check.py`) asked whether the z-scores carry a **weekly** edge —
+daily close resampled to W-TUE bars (CFTC's Tuesday cadence), target = forward
+weekly log return, predictors joined by availability date (`merge_asof` backward,
+same no-look-ahead discipline, guarded by
+`test_weekly_cot_asof_join_backward_no_lookahead`). This is a **different target
+horizon**, so it is *not* comparable to the daily direction/return or volatility
+bars and is logged in its **own** family file `results/cot_weekly_hypothesis_log.csv`
+(alpha=0.05 first test) — `feature_hypothesis_log.csv` and
+`volatility_hypothesis_log.csv` are untouched. One pre-registered battery (992
+analysis weeks, 99 validation): Spearman rho on validation was **+0.061** for both
+z-scores with 95% CIs straddling 0, and a logistic direction model collapsed
+exactly to the majority baseline (Δacc +0.000, McNemar p=1.0) → **DROP**. Honest
+power caveat: ~100 validation weeks only detect |rho| ≳ 0.2, so this is weak
+evidence of absence, and it remains **research-only** — no model, no variant, no
+serving change regardless of outcome.
+
+A **second** weekly hypothesis (`run_extremes()`, same family, so the bar tightens
+to alpha=0.05/2=**0.025**) tested positioning **extremes as a contrarian signal**
+rather than linear correlation: pre-registered crowded-long = z>+1.0 /
+crowded-short = z<−1.0 (~16% tails, a priori), predicting crowded-long → negative
+and crowded-short → positive forward weekly returns, with the PRIMARY test the
+bootstrap 95% CI of `spread = mean(fwd|z>+1) − mean(fwd|z<−1)` (KEEP only if
+entirely below 0 with the expected sign) and exact binomial sign tests as
+context. **Outcome: INCONCLUSIVE / underpowered** — the validation window had
+one-sided positioning (`cot_eur_zscore` crowded-long 30 weeks / crowded-short 0;
+`cot_usdindex_zscore` crowded-short 27 / crowded-long 2), so neither z-score had
+≥5 two-sided extreme weeks for a stable CI. Per the pre-registration the cutoff
+was **not** loosened to manufacture rows; the thin tails were reported plainly
+(`cot_weekly_hypothesis_log.csv` row #2, `cleared_bar=False`). Still research-only.
+
+**Fibonacci retracement + Williams fractals (direction/return hypothesis #7, DROP).**
+`src/fibonacci_fractals.py` adds swing-structure *geometry* from OHLC alone — a
+different kind of information from momentum or the macro feeds. A Williams 5-bar
+fractal (a strict extremum of high/low`[i-2:i+3]`) is the primitive, and the
+**confirmation lag is the load-bearing look-ahead surface**: a fractal at bar i
+reaches two bars into the future, so it is only knowable at bar i+2. The reveal
+walk exposes the fractal at index t−2 exactly at step t, so a fractal forming at
+i is invisible on bars i, i+1 and first usable on i+2 — asserted directly by
+`test_fractal_confirmation_lag_no_lookahead` (mirroring the FRED/COT guards).
+Every feature is neutral 0 / NaN-safe until a confirmed structure exists, so the
+modeled row set is unchanged. The bundle (`fractal_breakout_up`,
+`fractal_breakout_down`, `dist_to_nearest_fib_pct` — three views of one swing
+fact, one Bonferroni slot) was ADD-tested exactly like the macro/COT/FOMC blocks:
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py fib`) | Δacc **+0.0035**, Δauc +0.0047 | Δacc [−0.0187, +0.0257] | McNemar **p=0.84** | 0.05/7 = 0.0071 | **DROP** (`feature_hypothesis_log.csv` n=7) |
+
+A **hypothesis #8** (`dist_to_nearest_fib_extension_pct` — a 3-point
+extension/projection off a confirmed A→B→C swing, chronology-guarded) was **built
+and unit-tested but deliberately not spent**: a pre-registered contingency (in the
+module docstring, `feature_hypothesis_log.csv` #7 notes, and IMPROVEMENT_LOG.md)
+runs #8 only if #7 clears its bar. #7 is DROP, so #8 stays dormant — a more
+discretionary feature is not worth a slot when the simpler 2-point version already
+failed. Nothing is in `FEATURE_COLUMNS`, served, or retrained; the finding is
+reproducible via `python -m src.ablation fib`.
+
+**VIX regime features (direction/return hypothesis #8, DROP).**
+`src/vix_features.py` adds broad equity risk sentiment (the "fear gauge") — a
+different *kind* of information again. The raw VIXCLS **level** rides the shared
+FRED framework (`config.json macro.features.vix` → `macro_data._combine_vix`,
+cache `results/vix.csv`); the two stationary transforms live downstream, mirroring
+how `usd_index_return` is derived from the merged `usd_index` level:
+`vix_zscore` (trailing 756/252-day rolling z-score — VIX has real multi-year
+regime drift, so a level is non-stationary, the COT z-score treatment) and
+`vix_change_pct` (day-over-day shock). **STEP 0 verified, not assumed:** the FX D1
+bar closes ~17:00 ET, VIXCLS is the ~16:15 ET CBOE close, and a live FRED probe
+(2026-07-26) showed VIXCLS publishes with a business-day lag (Friday's print
+absent two days later) — so a print dated D is treated as usable only on **D+1
+business day** (conservative D-1 rule), and the z-score is computed on the
+**native business-day cadence** (not the ffill-duplicated FX-daily series, whose
+Sunday bars would corrupt the window), then as-of ffilled. Guarded by
+`test_vix_availability_is_one_business_day_after_the_print_no_lookahead`,
+`test_vix_value_never_usable_on_the_bar_it_would_leak_into`, and the graceful-
+degradation / feature-exclusion tests.
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py vix`) | Δacc **−0.0117**, Δauc +0.0040 | Δacc [−0.0327, +0.0105] | McNemar **p=0.36** | 0.05/8 = 0.00625 | **DROP** (`feature_hypothesis_log.csv` n=8) |
+
+The point estimate is actively negative — consistent with equity fear being a
+*volatility* event, not a next-day *directional* EUR/USD signal. The raw VIX level
+is deliberately kept OUT of `MACRO_MERGE_COLUMNS`, so nothing enters the served
+model frame and predictions are byte-identical; reproducible via
+`python -m src.ablation vix`.
+
+**Follow-up in the VOLATILITY family (separate hypothesis, separate log, §3.5).**
+The direction result above does not settle equity-vol → FX-*volatility*
+spillover, a distinctly better-established relationship — so the SAME module
+and SAME D-1 availability convention (nothing rebuilt) were tested a second
+time as `vix_regime_block`, one bundled hypothesis, via the volatility family's
+own 5-seed multi-task LSTM ensemble methodology
+(`python -m src.volatility candidates vix`, `results/volatility_hypothesis_log.csv`,
+independent Bonferroni count — confirmed at n=7 before running, so this is
+volatility hypothesis #8, bar 0.05/8 = 0.00625):
+
+| Family | Point estimate | 95% CI | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|
+| Volatility 5-seed ensemble (`src/volatility.py candidates vix`) | ΔMAE **−0.0024%**, ΔR² +0.0014 | ΔMAE [−0.0062, +0.0018] | 0.05/8 = 0.00625 | **DROP** (`volatility_hypothesis_log.csv` n=8) |
+
+Also indistinguishable from noise — the better-motivated hypothesis fares no
+better than the direction-family test. `feature_hypothesis_log.csv` is
+untouched by this second test (different family, different target/metric); the
+weekly COT log is likewise untouched.
+
+**Volatility ensemble's own forecast as a direction/return input (direction/return
+hypothesis #9, DROP).** CROSS-FAMILY REUSE, not a new raw data source: does
+conditioning direction/return on "how much movement is expected tomorrow" — a
+signal already validated in the SEPARATE volatility family (§3.5, the only
+neural family with a CI-confirmed edge over its baseline) — help predict
+direction? Rationale: trend persistence vs. mean-reversion often differs by
+volatility regime.
+
+Implementation performs **NO retraining**: `src/volatility.py::load_frozen_volatility_ensemble`
+loads the PRODUCTION `models/volatility/` artifacts (5 seed `.keras` models +
+`lag_scaler`/`lag_pca`/`global_scaler`, fit ONCE on train[0:80%]) via
+`joblib.load`/Keras `load_model` only, and `batch_predict_frozen_ensemble_vol_pct`
+runs pure batch inference (`.transform()` + `.predict()` only) across the full
+historical row set — the exact transform/predict calls
+`src/inference.py::_predict_volatility` makes for one live window, vectorized
+over history. This is the SAME once-fit-then-applied-everywhere idiom
+`src/ablation.py::build_matrix` already uses for its own PCA; row t's
+prediction still depends only on rows ≤ t (`make_sequences`' existing
+no-look-ahead sliding-window geometry), so reusing the frozen ensemble across
+train+val+test introduces no new look-ahead surface. Guarded by
+`test_frozen_volatility_ensemble_batch_inference_never_fits`, which
+monkeypatches `StandardScaler`/`PCA`'s `fit`/`fit_transform` to raise and
+confirms the code path never triggers them.
+
+Wired into `build_matrix`'s `extra_feature_columns` handling
+(`python -m src.ablation volforecast`), single-column bundle
+(`predicted_vol_pct`), ADD-tested exactly like the other blocks:
+
+| Family | Point estimate | 95% CI | Test | Bar (Bonferroni) | Verdict |
+|---|---|---|---|---|---|
+| Direction/return (`src/ablation.py volforecast`) | Δacc **−0.0093**, Δauc +0.0009 | Δacc [−0.0304, +0.0105] | McNemar **p=0.43** | 0.05/9 ≈ 0.00556 | **DROP** (`feature_hypothesis_log.csv` n=9) |
+
+Even an already-proven signal from a different family adds nothing the
+existing 27-column input set doesn't already carry. `volatility_hypothesis_log.csv`
+and the weekly COT log are untouched (this is a direction/return-only
+hypothesis). Nothing is in `FEATURE_COLUMNS`, served, or retrained. Note for the
+record: had this cleared, shipping it would introduce a **serving-order
+dependency** (the volatility ensemble must run before direction/return can
+consume its output) — a discussion point, not automatic, moot here since it
+DROPped.
+
+### 4.4 Known defects — fixed in this branch
+
+1. **Macro cache truncation (data-loss).** `fetch_yield_differential` previously
+   wrote the live fetch over the cache unconditionally. Because the request
+   window is derived from the (often short) live price index, a single run could
+   shrink `results/yield_differential.csv` from ~14,600 rows (1971→) to ~200.
+   **Fixed** by merging onto the existing cache + de-dup before writing
+   (`src/macro_data.py:80-101`), plus restoring the `DATE` index name.
+2. **Section 20 test cells (false failures).** Notebook cells 20a/20b ran
+   `pytest` via `subprocess` **without `cwd`**; from `notebooks/` pytest
+   collected 0 tests (exit 5) / hit a usage error (exit 4) and raised a
+   misleading "tests failed". **Fixed** by passing `cwd=os.path.abspath('..')`.
+   The suite itself is green (**19 passed**).
+3. **D1 tz naive/aware inconsistency (investigated, no leak found; latent risk
+   closed).** `_fetch_from_mt5` (D1, tz-naive, no `utc=True`) and
+   `_fetch_h1_from_mt5`/`_fetch_m15_from_mt5` (tz-aware UTC) parse the identical
+   MT5 wall-clock epoch encoding under two different tz conventions. Owner
+   report: a genuine Sunday D1 bar visible on the live MT5 chart raised the
+   question of whether it could leak past `drop_incomplete_bars`'
+   `idx.weekday<5` filter. Live investigation against a real ActivTradesEU-Server
+   session reproduced the exact bar and confirmed the mechanism is **ruled
+   out**: MT5's raw epoch bakes the broker server's own displayed wall-clock
+   date directly into the value (no genuine UTC correction), so parsing it
+   with or without `utc=True` yields byte-identical wall-clock/weekday fields
+   — verified across all four EU DST transition boundaries 2023–2026 with zero
+   hour-component drift. Both real consumption paths
+   (`PredictionService._resolve_latest_window`, `tracking._actual_closes`)
+   were exercised live and correctly dropped the bar; `results/prediction_log.csv`
+   audited for any weekend `as_of_date`/`forecasting_date` — none found.
+   **Fixed anyway** (the naive/aware split remains a latent `TypeError` risk if a
+   tz-aware index/`now` ever reaches the shared filter): `drop_incomplete_bars`
+   (`src/live_data.py`) now strips — never converts — any tz tag off both
+   `idx` and `now` before comparing, so it can never raise and always resolves
+   to the same calendar date regardless of which convention a caller uses.
+   Deliberately did **not** add `utc=True` to `_fetch_from_mt5` itself: that
+   frame is also diffed directly against the tz-naive `self.history_df`
+   bundled-CSV back-fill in `_resolve_latest_window` (§4.5.1's back-fill path)
+   and against the tz-stripped yfinance D1 fallback, so widening the tz change
+   upstream would have propagated the same mismatch into live serving code
+   that currently has none. 5 new regression tests: the filter itself
+   (parametrized over the owner's exact bar under several tz labels), the
+   naive/aware crash case, `_actual_closes`, and two levels of
+   `_resolve_latest_window` coverage — `as_of_date` never lands on a weekend,
+   and (sharper) `as_of_close`/`feature_window` anchor on the last genuine
+   Friday close rather than the phantom Sunday bar's, added specifically
+   because `forecasting_date`'s own `{Fri:3, Sat:2}.get(weekday, 1)` label
+   math falls through to the same generic `+1 day` default for Sunday(6) and
+   produces an identical-looking Monday date whether or not as_of_date was
+   corrupted — a forecasting_date-only test would not have caught this class
+   of bug. 142 tests pass. See `IMPROVEMENT_LOG.md` → *Bug fixes* for the
+   full investigation trail.
+
+### 4.5 Live-edge / architecture risks (open, by design)
+
+| Risk | Where | Mitigation in place | Residual exposure |
+|---|---|---|---|
+| **Stale macro at live edge** | `merge_macro_features` ffill | weekend/holiday gaps inherit last differential | If the live price index is newer than the newest FRED obs, the latest bars carry a *stale* differential (ffill cannot interpolate the future). Since §4.3, the model actually consumes `yield_differential_delta` (diff of the ffilled level) — a run of stale/repeated level values now correctly diffs to `0` ("no new information"), which is arguably a more honest signal than a stale level pretending to be current |
+| **LSTM direction at chance** | model quality | low-confidence consensus guard (§3.3) downgrades a coin-flip agreement to `MIXED / LOW CONFIDENCE` | A near-chance head still contributes when averaged confidence ≥ 0.52 |
+| **History CSV legacy schema** | `results/eurusd_features.csv` | `load_history` selects only OHLCV cols (`src/features.py:147-148`) | The CSV's precomputed feature columns are an *older* schema and are ignored — only raw OHLCV is consumed and features are recomputed fresh |
+
+### 4.5.1 Resolved Architectural Risks
+
+These risks, documented in earlier revisions, have been **eliminated** by the
+unified-pipeline refactor:
+
+| Former risk | Resolution | Where |
+|---|---|---|
+| **SMA_200 warm-up hard-fail** — a thin live fetch raised `RuntimeError` | `_resolve_latest_window` now **back-fills** the missing preceding rows from the bundled history (concat + de-dup by index) and proceeds; the data source is tagged `…+history_backfill` | `src/inference.py` `_resolve_latest_window` |
+| **GBM vs LSTM unit asymmetry** — GBM trained on fractions (×100 at inference), LSTM on percent | `target_return` is produced **natively in percent** by `src/features.py`; **both** heads train on and output percent — no `*100` anywhere | `src/features.py`, `src/inference.py` |
+| **Dual scalers / dual train fractions** — separate `scaler_gb` (80%) and `scaler_lstm` (70%); PCA fit on 70% but GBM split at 80% | **One** `global_scaler` **and** the PCA are both fit on the **unified 0–80%** block; serialized as `global_scaler.pkl` | `_train_pipeline.py`, `config.json` |
+
+### 4.6 Test inventory
+
+| File | Category | Coverage |
+|---|---|---|
+| `tests/test_smoke.py` | Smoke | All 7 production artifacts (incl. the single `global_scaler.pkl`) + `eurusd_features.csv` + `config.json` + `.env.example` exist |
+| `tests/test_unit.py` | Unit (31 tests) | feature engineering, `build_live_features` (no mocks), **lag-PCA no-leakage**, **macro merge no-look-ahead** (both the raw level and the derived `yield_differential_delta`), FRED fallback chain (4 tests), live-data fallback chain (3 tests), consensus agree/disagree, edge cases, **H1 ensemble** (no-look-ahead, inference-sample forming-day drop, `compute_h1_consensus` majority/unanimous — 5 tests), prediction-log tracking incl. `worst_mistakes`, **backtest cost-on-flip-only logic** (2 tests) |
+| `tests/test_integration.py` | Integration | `POST /api/predict` contract (schema, bounds `0≤conf≤1`, direction ∈ {UP,DOWN}, consensus presence), static UI route |
+
+### 4.7 Backtest — does the direction edge survive transaction costs?
+
+`src/backtest.py::simulate_strategy` runs a minimal daily long/short strategy
+driven by the GBM direction signal, scored on the **same held-out test block**
+against the **actually realised** `target_return` — no position sizing, no
+compounding (returns are simply summed, not geometrically chained), no slippage
+beyond a flat per-trade spread cost. The point is a sanity check on whether the
+model's apparent statistical edge (§4.2) would survive contact with a real
+market, not a trading system. Cost is charged only when the signal's sign
+actually **changes** (a flat→long/short entry, or a long↔short flip) — holding
+an unchanged position overnight incurs no fresh spread — via `EURUSD_PIP_TO_PCT`
+(`0.0001 / 1.10 * 100 ≈ 0.0091%`, a representative EUR/USD level converting pips
+to a round-trip percent cost).
+
+`_train_pipeline.py` runs this immediately after GBM test evaluation and saves
+`results/backtest_transaction_costs.csv`. On the current production artifacts
+(test block: 3,103 days, ≈12 years):
+
+| Scenario | Round-trip cost | Trades | Hit rate | Gross return (total) | Net return (total) |
+|---|---|---|---|---|---|
+| Gross (no costs) | 0 pips | 1,337 | 0.5021 | **+29.08%** | +29.08% |
+| Realistic (tight) | 1 pip | 1,337 | 0.5021 | +29.08% | **+16.93%** |
+| Realistic (typical retail) | 2 pips | 1,337 | 0.5021 | +29.08% | **+4.77%** |
+
+**Reading this honestly:** the *gross* (frictionless, unrealistic) edge is already
+razor-thin — a 0.5021 hit rate over ≈12 years compounds to only +29% *simple-summed*
+return, not even geometric growth. A realistic 1-pip spread more than **halves**
+it; a typical retail 2-pip spread leaves **+4.77% over 12 years** (≈0.4%/year) —
+economically negligible once financing costs, occasional slippage beyond the quoted
+spread, and any position-sizing risk are considered. This is the third independent
+confirmation of the same efficient-market conclusion in this document (§4.2.1's
+"predict the mean" regression finding, §4.2.2's Brier-vs-baseline classification
+finding, and now a P&L-denominated backtest) — each using an unrelated metric on the
+same near-chance direction signal, all converging on the same answer: whatever
+weak edge exists is not *tradeable*, not a modeling defect to "fix".
+
+### 5.1 Trained model artifacts — `models/`
+
+**Production (loaded by `PredictionService`):**
+
+| File | Type | Produced by |
+|---|---|---|
+| `lag_scaler.pkl` | joblib / StandardScaler (lag block, pre-PCA) | `_train_pipeline.py` |
+| `lag_pca.pkl` | joblib / PCA | `_train_pipeline.py` |
+| `global_scaler.pkl` | joblib / StandardScaler (**single, shared by both models**) | `_train_pipeline.py` |
+| `best_gbm_eurusd.pkl` | joblib / `xgb.XGBClassifier` | `_train_pipeline.py` |
+| `best_gbm_regressor_eurusd.pkl` | joblib / `xgb.XGBRegressor` (`reg:pseudohubererror`) | `_train_pipeline.py` |
+| `lstm_multitask_eurusd.keras` | Keras native format | `_train_pipeline.py` |
+| `lstm_time_steps.pkl` | joblib / int (20) | `_train_pipeline.py` |
+
+**Auxiliary H1→Daily ensemble (§3.4, loaded independently — gated by `h1_ready`):**
+
+| File | Type | Produced by |
+|---|---|---|
+| `h1_xgb_regressor.pkl` | joblib / `xgb.XGBRegressor` | `_train_pipeline.py` §13 |
+| `h1_rf_regressor.pkl` | joblib / `RandomForestRegressor` | `_train_pipeline.py` §13 |
+| `h1_svm_regressor.pkl` | joblib / `SVR` (RBF) | `_train_pipeline.py` §13 |
+| `h1_feature_scaler.pkl` | joblib / StandardScaler (flat features) | `_train_pipeline.py` §13 |
+| `h1_lstm_scaler.pkl` | joblib / StandardScaler (24h tensor) | `_train_pipeline.py` §13 |
+| `h1_feature_columns.pkl` | joblib / list[str] (`FLAT_FEATURE_COLUMNS` order) | `_train_pipeline.py` §13 |
+| `h1_lstm_config.pkl` | joblib / dict (`hours`, `seq_features`) | `_train_pipeline.py` §13 |
+| `h1_lstm.keras` | Keras native format | `_train_pipeline.py` §13 |
+
+**Exploratory (notebook baselines, not loaded in production):**
+`exploratory_gbm_baseline.pkl`, `exploratory_gbm_scaler.pkl`,
+`randomforest_tuned.pkl`, `xgboost_tuned.pkl`, `scaler.pkl`.
+
+### 5.2 MLflow experiment tracking
+
+- **Experiment name:** `EURUSD_Prediction` (`_train_pipeline.py:40`).
+- **Runs:** `GBM_dual_pipeline`, `MultiTask_LSTM` (params + metrics + logged models).
+- **Store:** file store under **`mlruns/`** (experiment id `1`; logged model
+  blobs under `mlruns/1/models/m-*`) plus a SQLite DB **`mlflow.db`** at repo
+  root. View with `mlflow ui --backend-store-uri sqlite:///mlflow.db` (or the
+  default `./mlruns` file store).
+- **Note:** the notebook training cells (§19) persist `models/` artifacts but do
+  **not** themselves wrap MLflow runs — MLflow logging lives in
+  `_train_pipeline.py`. The two share identical feature/PCA/model code paths.
+
+### 5.3 Diagnostic exports — `results/`
+
+PNGs (`01_price_sma`, `02_learning_curves`, `03_tscv_folds`,
+`04_confusion_matrix`, `05_residual_analysis`, `06_acf_pacf`,
+`09_lstm_learning_curve`, `10_lstm_evaluation`, `GBM_*`, `2C_fred_*`) and CSVs
+(`comparison_table.csv`, `2C_fred_ablation.csv`, `2C_fred_table.csv`,
+`eurusd_features.csv` = bundled OHLCV history, `yield_differential.csv` = FRED
+cache). Post-defense methodology exports (see *Production Methodology*):
+`feature_ablation_validation.csv` = validation-slice KEEP/DROP re-run,
+`feature_hypothesis_log.csv` = running Bonferroni family count,
+`paper_trading_log.csv` = simulated forward P&L ledger.
+
+### 5.4 Prediction output structure & UI/API routing
+
+`service.predict()` returns a single dict (dual-variant shape):
+
+```jsonc
+{
+  "as_of_date": "YYYY-MM-DD",
+  "forecasting_date": "YYYY-MM-DD",      // as_of + 1 trading session (t+1)
+  "data_source": "MT5|yfinance|history_fallback|<src>+history_backfill",
+  "bar_used": { "date","open","high","low","close","tick_volume",
+                "yield_differential","usd_index","policy_rate_differential",
+                "inflation_differential","macro_source","macro_sources" },
+  "baseline": {                          // price-only variant (23 cols, no FRED)
+    "gbm":  { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+    "lstm": { "direction":"UP|DOWN","confidence":0..1,"predicted_return_pct":float },  // percent
+    "consensus": { "direction":"UP|DOWN|MIXED / LOW CONFIDENCE","agreement":bool,"confidence","predicted_return_pct" }
+  },
+  "with_macro": { /* same committee shape — the experimental 27-col variant */ },
+  "variant_agreement": true,             // bool when both consensuses exist; null when either is degraded
+  "h1": { /* auxiliary intraday ensemble, shared by both variants */ }
+}
+```
+
+A degraded variant replaces its block's committee with an `"error"` note; the
+other variant keeps serving (`baseline_ready` / `macro_ready` gates).
+
+Routing:
+
+| Layer | Entry | Rendering |
+|---|---|---|
+| **FastAPI** `api.py` | `POST /api/predict` | Returns the raw dict as JSON; `503` if `models_ready` is false, `400` on pipeline error. |
+| **Static UI** `static/index.html` | `fetch('/api/predict', {method:'POST'})` | Mounted at `/` by `api.py`; client-side JS renders the prediction, plus the retrain button and a link to `/history`. |
+| **Prediction history** `api.py` | `GET /history` | `src/tracking.build_history_html` — every logged forecast scored against the realised close; cross-links `/paper-trading`. |
+| **Forward paper-trading** `api.py` | `GET /paper-trading` (HTML), `GET /api/paper-trading` (JSON) | `src/paper_trading` — simulated cost-net ledger + scorecard (cum. net pips/%, win rate, Sharpe-like, max drawdown). Simulated only, no orders. |
+
+### 5.5 Containerization note
+
+`Dockerfile` builds the **FastAPI app** (`uvicorn api:app` on port 8000), strips
+`MetaTrader5` (Windows-only) from requirements, and bakes in `api.py` + `src/` +
+`static/` + `models/` + `results/eurusd_features.csv`. With no MT5 terminal the
+container serves live prices from **yfinance** (falling back to the bundled
+history), with FRED still reachable at runtime.
+
+---
+
+## Appendix A — Failure-Mode Quick Reference
+
+| Symptom | Most likely cause | File |
+|---|---|---|
+| `models_ready == False` at startup | a `models/` artifact missing/corrupt (incl. `global_scaler.pkl`) | `src/inference.py` `__init__` |
+| Data source tagged `…+history_backfill` | live fetch was thin; preceding rows were back-filled from history to satisfy the SMA_200/lag warm-up — **no longer a hard-fail** (replaces the former `RuntimeError`) | `src/inference.py` `_resolve_latest_window` |
+| `yield_differential` looks frozen on newest bars | live price index newer than FRED cache; ffill can't see the future | `src/features.py:140` |
+| Consensus shows `MIXED / LOW CONFIDENCE` | both heads agree but averaged confidence < 0.52 (low-confidence guard) | `src/inference.py` `compute_consensus` |
+| Notebook §20 "tests failed" | (fixed) subprocess `cwd` not set to repo root | notebook cells 20a/20b |
+| `yield_differential.csv` shrank dramatically | (fixed) cache overwrite instead of merge | `src/macro_data.py:80-101` |
+| `h1_ready == False` / response carries `h1_error` instead of `h1` | one of the 8 H1 artifacts missing/corrupt, **or** a feature-set change (e.g. new flat/seq columns) not yet followed by a retrain — the saved scalers expect the old column count and raise a shape mismatch | `src/inference.py` `_predict_h1` (§3.4); never fails the daily prediction |
+| H1 `feature_importances_`/scaler shape error right after editing `src/h1_features.py` | `FLAT_FEATURE_COLUMNS`/`SEQ_FEATURE_COLUMNS` changed but `models/h1_*` weren't regenerated | run `_train_pipeline.py` (§13 refreshes the H1 cache and retrains all four) |
+
+<!-- ====================== END VERBATIM ARCHITECTURE_DOCS.md ====================== -->
+
+*End of handover. Part A compiled 2026-09-23 from the repository at `b8dbac2`; Part B reproduced verbatim from the same commit.*
