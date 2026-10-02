@@ -45,7 +45,13 @@ STATE = os.path.join(REPO, 'research_models', 'forward_eval')
 MANIFEST = os.path.join(REPO, 'results', 'horizon_study', 'artifact_manifest.csv')
 RECORD = os.path.join(REPO, 'results', 'horizon_study', 'study_record.json')
 SYMBOL = 'EURUSD'
-H1_BARS, D1_BARS = 3000, 400
+M15_BARS, H1_BARS, D1_BARS = 3000, 3000, 400
+CADENCES = ('M15', 'H1', 'D1')
+# 3000 M15 bars span about six weekends, so the live clock check has real
+# evidence; the threshold tolerates one odd broker opening while still failing a
+# systematic one-hour shift of the server clock, which would silently move every
+# session rule (design D16).
+LIVE_CLOCK_MATCH_MIN = 0.6
 
 PRED_FIELDS = ['key', 'model', 'cadence', 'horizon', 'version_id', 'variant', 'as_of_bar',
                'target_offset_bars', 'p_up', 'ret_pct', 'vol_pct', 'price_source', 'server',
@@ -121,20 +127,29 @@ class Snapshot:
     """Closed bars and metadata from one MT5 read."""
 
     def __init__(self, h1: pd.DataFrame, d1: pd.DataFrame, server: str, meta: dict,
-                 source: str = SOURCE):
+                 source: str = SOURCE, m15: pd.DataFrame | None = None):
         self.h1, self.d1, self.server, self.meta, self.source = h1, d1, server, meta, source
+        self.m15 = m15
+
+
+def bars_for(snap: Snapshot, cadence: str) -> pd.DataFrame:
+    frame = {'M15': snap.m15, 'H1': snap.h1, 'D1': snap.d1}[cadence]
+    return frame if frame is not None else pd.DataFrame()
 
 
 def fetch_snapshot(reader: MT5Reader, now_utc=None, state_path=None) -> Snapshot:
     with reader:
+        m15_all = reader.bars(SYMBOL, 'M15', M15_BARS)
         h1_all = reader.bars(SYMBOL, 'H1', H1_BARS)
         d1_all = reader.bars(SYMBOL, 'D1', D1_BARS)
         server = reader.server()
         meta = reader.symbol_meta(SYMBOL)
     kw = {'state_path': state_path} if state_path else {}
+    # The feed clock is inferred from the H1 series by the production helper; the
+    # M15 closure rule needs it at minute resolution, which it has.
     now_feed = feed_now(h1_all.index, now_utc, **kw)
     return Snapshot(_utc(closed_bars(h1_all, 'H1', now_feed)), _utc(closed_bars(d1_all, 'D1', now_feed)),
-                    server, meta)
+                    server, meta, m15=_utc(closed_bars(m15_all, 'M15', now_feed)))
 
 
 def _utc(df):
@@ -192,6 +207,14 @@ def kronos_rows(as_of, record_path=RECORD) -> list[dict]:
 # ── inputs ──────────────────────────────────────────────────────────────────
 
 def source_frame(model_name: str, cadence: str, snap: Snapshot, as_of, macro_df=None):
+    if cadence == 'M15':
+        from . import m15_data as MD
+        point = snap.meta.get('point')
+        if not point:
+            raise ValueError('the symbol metadata carries no point size, so no mid price can be '
+                             'built; refusing to guess one')
+        m15 = bars_for(snap, 'M15')
+        return MD.from_mt5_bars(m15[m15.index <= pd.Timestamp(as_of)], point)
     if model_name.startswith(('daily_', 'vol_')):
         cfg_set = 'macro' if model_name.endswith('macro') else 'price'
         d1 = snap.d1[snap.d1.index <= as_of].copy()
@@ -218,16 +241,28 @@ def _pos(index, as_of):
 # ── one run ─────────────────────────────────────────────────────────────────
 
 def newest_closed(snap: Snapshot, cadence: str):
-    df = snap.h1 if cadence == 'H1' else snap.d1
+    df = bars_for(snap, cadence)
     return df.index[-1] if len(df) else None
 
 
+def in_session(stamp) -> bool:
+    from . import m15_data as MD
+    return bool(MD.session_mask(pd.DatetimeIndex([pd.Timestamp(stamp)]))[0])
+
+
 def gaps_since(snap: Snapshot, cadence: str, last_logged, newest) -> list:
+    """Bar closes missed since the last run. For M15 only IN-SESSION closes
+    count: the logger never forecasts outside the session, so a bar it was never
+    going to use is not a gap in its coverage (spec forward-arbiter "Sub-hourly
+    logging follows the session")."""
     if last_logged is None:
         return []
-    df = snap.h1 if cadence == 'H1' else snap.d1
-    idx = df.index
-    return list(idx[(idx > pd.Timestamp(last_logged)) & (idx < pd.Timestamp(newest))])
+    idx = bars_for(snap, cadence).index
+    missed = idx[(idx > pd.Timestamp(last_logged)) & (idx < pd.Timestamp(newest))]
+    if cadence == 'M15' and len(missed):
+        from . import m15_data as MD
+        missed = missed[MD.session_mask(missed)]
+    return list(missed)
 
 
 def last_logged_bar(out, cadence):
@@ -256,7 +291,20 @@ def predict_cadence(snap: Snapshot, cadence: str, phase: str, out: str, manifest
     append_rows(_path(out, 'gaps'), [{'cadence': cadence, 'bar': str(b),
                                      'reason': 'bar closed while the logger was not running',
                                      'logged_at': _now_iso()} for b in gaps], GAP_FIELDS)
-    bars = snap.h1 if cadence == 'H1' else snap.d1
+    if cadence == 'M15':
+        from . import m15_data as MD
+        try:
+            MD.verify_clock(bars_for(snap, 'M15').index, min_match=LIVE_CLOCK_MATCH_MIN)
+        except MD.ClockMismatch as e:
+            append_rows(_path(out, 'failures'),
+                        [{'model': '*', 'cadence': cadence, 'horizon': '', 'as_of_bar': str(newest),
+                          'error': f'ClockMismatch: {e}', 'logged_at': _now_iso()}], FAIL_FIELDS)
+            return {'cadence': cadence, 'status': 'clock mismatch', 'as_of': str(newest)}
+        if not in_session(newest):
+            # Outside the owner's session there is no forecast and no gap either.
+            return {'cadence': cadence, 'status': 'outside the session', 'as_of': str(newest),
+                    'gaps': len(gaps)}
+    bars = bars_for(snap, cadence)
     entry_close = float(bars.loc[newest, 'close'])
     spread = float(bars.loc[newest, 'spread']) if 'spread' in bars else float('nan')
     rows, fails = [], []
@@ -318,6 +366,33 @@ def _at(pred, k, p):
     return x if np.isfinite(x) else ''
 
 
+def _m15_mid_pair(bars, entry_i, exit_i, h, idx, snap):
+    """(entry mid, exit mid, exclusion reasons) for a sub-hourly row.
+
+    Sub-hourly cells are scored on the MID price, matching the study (spec
+    forward-arbiter "Sub-hourly forward rows are scored on the mid price"). A
+    missing spread or a point size is never guessed, and a trade that ends
+    outside the session is excluded, exactly as the study's eligibility rule
+    excludes it."""
+    from . import m15_data as MD
+    entry = float(bars['close'].iloc[entry_i])
+    exit_ = float(bars['close'].iloc[exit_i])
+    reasons = []
+    point = snap.meta.get('point')
+    sp_in = bars['spread'].iloc[entry_i] if 'spread' in bars else float('nan')
+    sp_out = bars['spread'].iloc[exit_i] if 'spread' in bars else float('nan')
+    if not point:
+        reasons.append('no point size recorded, mid price unavailable')
+    elif not (np.isfinite(sp_in) and np.isfinite(sp_out)):
+        reasons.append('missing spread, mid price unavailable')
+    else:
+        entry = MD.mid_from(entry, sp_in, point)
+        exit_ = MD.mid_from(exit_, sp_out, point)
+    if not MD.eligible_mask(idx, h)[entry_i]:
+        reasons.append('trade ends outside the session')
+    return entry, exit_, reasons
+
+
 def settle(snap: Snapshot, out: str, registered_server: str | None = None) -> int:
     preds = read(_path(out, 'predictions'))
     if preds.empty:
@@ -326,19 +401,23 @@ def settle(snap: Snapshot, out: str, registered_server: str | None = None) -> in
     done = set(settled['key']) if not settled.empty else set()
     rows = []
     for _, r in preds[~preds['key'].isin(done)].iterrows():
-        bars = snap.h1 if r['cadence'] == 'H1' else snap.d1
+        bars = bars_for(snap, r['cadence'])
         as_of = pd.Timestamp(r['as_of_bar'])
         idx = bars.index
         where = np.flatnonzero(idx == as_of)
         if where.size == 0:
             continue                                     # outside the current window
-        exit_i = where[0] + int(r['target_offset_bars'])
+        h = int(r['target_offset_bars'])
+        exit_i = where[0] + h
         if exit_i >= len(idx):
             continue                                     # exit bar not closed yet
         entry, exit_ = float(bars['close'].iloc[where[0]]), float(bars['close'].iloc[exit_i])
+        reasons = []
+        if r['cadence'] == 'M15':
+            entry, exit_, m15_reasons = _m15_mid_pair(bars, where[0], exit_i, h, idx, snap)
+            reasons.extend(m15_reasons)
         s = pd.Series([entry, exit_])
         d, _ = T.direction_target(s, 1)
-        reasons = []
         if r['price_source'] != SOURCE:
             reasons.append(f"price source {r['price_source']}")
         if registered_server and r['server'] != registered_server:
@@ -380,7 +459,7 @@ def run_once(reader=None, phase: str | None = None, out: str = OUT, manifest_pat
                 read(manifest_path)['model'].astype(str).str.endswith('macro').any():
             macro_df = _macro(snapshot)
         res = [predict_cadence(snapshot, c, phase, out, manifest_path, record_path, digest, macro_df)
-               for c in ('H1', 'D1')]
+               for c in CADENCES]
         n = settle(snapshot, out, registered_server)
     return {'phase': phase, 'cadences': res, 'settled': n}
 
@@ -394,12 +473,29 @@ def _macro(snap: Snapshot):
         return None
 
 
+def refresh_view(out: str = OUT) -> str | None:
+    """Rewrite the operator view after a run. A view failure must never affect
+    logging, so it is reported and swallowed (task 15.2)."""
+    try:
+        from .report import write_dashboard
+        return write_dashboard(out)
+    except Exception as e:                               # noqa: BLE001 -- logging comes first
+        append_rows(_path(out, 'failures'),
+                    [{'model': 'dashboard', 'cadence': '*', 'horizon': '', 'as_of_bar': '',
+                      'error': f'{type(e).__name__}: {e}', 'logged_at': _now_iso()}], FAIL_FIELDS)
+        return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Forward logger: one predict/gap/settle pass.')
     ap.add_argument('--phase', choices=['dry_run', 'scoring'])
+    ap.add_argument('--no-view', action='store_true', help='skip rewriting dashboard.html')
     a = ap.parse_args(argv)
     try:
-        print(json.dumps(run_once(phase=a.phase), default=str))
+        result = run_once(phase=a.phase)
+        if not a.no_view:
+            result['view'] = refresh_view()
+        print(json.dumps(result, default=str))
     except Locked as e:
         print(json.dumps({'status': 'skipped', 'reason': str(e)}))
 

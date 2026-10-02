@@ -26,8 +26,9 @@ class MT5Unavailable(RuntimeError):
     pass
 
 
-TIMEFRAMES = {'H1': 'TIMEFRAME_H1', 'D1': 'TIMEFRAME_D1'}
+TIMEFRAMES = {'M15': 'TIMEFRAME_M15', 'H1': 'TIMEFRAME_H1', 'D1': 'TIMEFRAME_D1'}
 SOURCE = 'MT5'
+M15_MINUTES = 15
 
 
 class MT5Reader:
@@ -102,11 +103,30 @@ def feed_now(h1_index, now_utc=None, state_path: str = OFFSET_STATE) -> pd.Times
     return infer_h1_feed_now(h1_index, now_utc=now_utc, state_path=state_path)
 
 
+def drop_incomplete_m15_bars(df: pd.DataFrame, now_feed: pd.Timestamp) -> pd.DataFrame:
+    """Closed 15-minute bars, in the FEED's own clock.
+
+    The M15 analogue of the production H1 rule: a bar is closed once its 15
+    minutes have elapsed, and Saturday bars are out-of-distribution. Following
+    the verified convention of `src/live_data.drop_incomplete_bars`, a tz tag is
+    STRIPPED rather than converted, because the labels already carry the broker
+    server's wall clock. Everything else the arbiter must not see is removed by
+    the session filter (`m15_data.session_mask`), not here."""
+    idx = pd.DatetimeIndex(df.index)
+    naive = idx.tz_localize(None) if idx.tz is not None else idx
+    now = pd.Timestamp(now_feed)
+    now = now.tz_localize(None) if now.tzinfo is not None else now
+    closed = (naive + pd.Timedelta(minutes=M15_MINUTES)) <= now
+    return df[closed & (naive.dayofweek != 5)]
+
+
 def closed_bars(df: pd.DataFrame, timeframe: str, now_feed: pd.Timestamp) -> pd.DataFrame:
     """Only fully closed bars, by the production rules (src/live_data.py):
     the forming bar, Saturday bars and pre-open Sunday bars are dropped. On a
     weekend the last Friday bar stays, because its hour has elapsed."""
     from src.live_data import drop_incomplete_bars, drop_incomplete_h1_bars
+    if timeframe == 'M15':
+        return drop_incomplete_m15_bars(df, now_feed)
     if timeframe == 'H1':
         return drop_incomplete_h1_bars(df, now=now_feed)
     return drop_incomplete_bars(df, now=now_feed)

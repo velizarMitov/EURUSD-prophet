@@ -24,8 +24,13 @@ SEED = 42
 
 def block_length(h: int, cadence: str) -> int:
     """max(h, 24) for H1 cadence (|return| autocorrelation at lag 24 measured on
-    H1); max(h, 5) for daily (one trading week)."""
-    floor = {'H1': 24, 'D1': 5}[cadence]
+    H1); max(h, 5) for daily (one trading week); max(h, 26) for M15.
+
+    The M15 floor is one trading session rather than one calendar day: the scored
+    rows are session-restricted, so consecutive scored rows are neighbours WITHIN
+    a session and the next session is 17.5 h away. The session is therefore the
+    unit of dependence, and 26 is the longest horizon that fits inside one."""
+    floor = {'M15': 26, 'H1': 24, 'D1': 5}[cadence]
     return max(int(h), floor)
 
 

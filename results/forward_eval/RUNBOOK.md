@@ -9,8 +9,46 @@ the **only** data a horizon claim can be decided on.
 
 | Scheduled task | When | Does |
 |---|---|---|
-| `EURUSDProphet-ForwardLogger` | every hour at :01 | predicts the newest closed H1 bar (and the newest closed day, once per day), writes gap records for bars it missed, settles matured forecasts |
+| `EURUSDProphet-ForwardLogger` | every 15 min at :01 / :16 / :31 / :46 | predicts the newest closed M15 bar (in session only), H1 bar and day, writes gap records for bars it missed, settles matured forecasts |
 | `EURUSDProphet-Refit` | Saturdays 06:00 | refits every model on the **first weekend of the month** only; otherwise it does nothing |
+
+One pass handles all three cadences; the ones with no new bar report
+`nothing new`, so the 15-minute schedule only makes H1 and D1 coverage more
+robust. A run lock keeps two passes from overlapping.
+
+## The trading session (M15 cells only)
+
+Sub-hourly cells are logged **only inside the owner's trading session**:
+
+| | |
+|---|---|
+| owner's clock | **15:30 – 23:00 Europe/Sofia**, Monday to Friday |
+| bar labels | 14:30 – 22:00 (the labels are Europe/Berlin wall clock, not UTC) |
+| New York | 08:30 – 16:00, except the ~5 daylight-saving mismatch weeks |
+| eligible trade | the as-of bar **and** the target bar both inside the session, same day |
+
+Outside that window an M15 bar close produces **neither a prediction nor a gap**
+— the logger was never going to forecast it, so it is not missing coverage.
+
+Why the window stops at 23:00 Sofia: one hour later the broker's spread
+quintuples for the New York 17:00 rollover, and a bid-only series reads a
+spurious 72 % "accuracy" there. M15 rows are therefore scored on the **mid**
+price built from each bar's own recorded spread, and a bar with no spread is
+excluded rather than given a guessed mid.
+
+### Expected volume per session day
+
+| Cadence | Bar closes logged | Rows per close | Rows per day |
+|---|---|---|---|
+| M15 | 30 (in session) | 12 (2 models × 6 horizons) | ~360 |
+| H1 | 24 | 17 | ~408 |
+| D1 | 1 | 21 | ~21 |
+
+A session day well below ~360 M15 rows means the machine slept, the terminal was
+closed, or the session window moved — check `gaps.csv` and `failures.csv`.
+A `ClockMismatch` failure row means the broker's server clock no longer matches
+Europe/Berlin: **stop and re-establish the clock before trusting any session
+rule**, because every session boundary rests on it.
 
 Both call `scripts/forecast_eval/run_module.cmd`. Their console output is
 appended to `research_models/forward_eval/<task name>.log`.
@@ -33,9 +71,36 @@ schtasks /Query /TN EURUSDProphet-ForwardLogger
 - **Keep AutoTrading off** in the terminal. Nothing here needs it.
 - **Disable sleep** on this machine (or move the logger to an always-on host).
   Every hour the machine sleeps is an hour of data that is lost for good:
-  missed bars are recorded as gaps and **never** predicted afterwards.
+  missed bars are recorded as gaps and **never** predicted afterwards. During the
+  session that now costs four M15 bars an hour, not one H1 bar.
 - The study must have produced `results/horizon_study/artifact_manifest.csv`.
   Until then, only the pinned Kronos channels can log.
+
+## Where to look
+
+Open **[`dashboard.html`](dashboard.html)** in a browser. It is a single
+self-contained file, rewritten at the end of every logging run, so it is never
+more than 15 minutes old (it also refreshes itself every 5 minutes). It shows,
+in **your** clock:
+
+- the latest forecast per model and horizon — `+` or `−`, the probability, and
+  the window the move is measured over;
+- `★` on the cells of the registered family, the only ones that can ever reach a
+  verdict;
+- the running accuracy per cell, always labelled *interim* with the number of
+  forecasts still needed;
+- whether the session is open, which phase the logger is in, and any gaps or
+  failures.
+
+**It carries no spread, breakeven or net-profit figure.** You account for
+trading cost yourself (your decision, 2026-10-02). Those columns stay in
+`predictions.csv` and in the pre-registration, because the project's methodology
+refuses to produce net figures on an assumed-free spread — they simply decide
+nothing and are not put in front of you. A guard in `report.py` fails the write
+if such a figure ever reaches the page.
+
+Regenerate it by hand with `python -m src.forecast_eval.report`. It reads the
+logs only; it is not part of the dashboard served by `api.py`.
 
 ## The files
 
@@ -48,6 +113,7 @@ All of them are append-only. A written row is never changed.
 | `gaps.csv` | bar close the logger missed (machine off, terminal closed) |
 | `failures.csv` | model that could not predict at a bar, and why. `*` rows mean MT5 itself was unreachable |
 | `refit_failures.csv` | monthly refit that failed. The previous version stays live |
+| `dashboard.html` | the operator view, rewritten from the four logs above on every run. Not append-only: it is a rendering, safe to delete |
 
 ## Reading it
 
@@ -55,8 +121,9 @@ All of them are append-only. A written row is never changed.
   the pre-registration assumes the coverage measured during the dry run.
   Coverage well below it lengthens every time-to-decision in proportion.
 - **`scorable = False`** has a reason in `exclusion_reason`: dry-run phase, a
-  price source other than MT5, or a server other than the registered one. Such
-  rows never enter a verdict.
+  price source other than MT5, a server other than the registered one, a missing
+  spread (so no mid price), or a sub-hourly trade that would end outside the
+  session. Such rows never enter a verdict.
 - **`feature code changed since this version was trained`** in `failures.csv`
   means a production feature module was edited. Models refuse to predict on
   shifted features until the next refit trains on the new code.

@@ -69,13 +69,13 @@
 
 ## 11. Forward dry run
 
-- [ ] 11.1 Run the logger in `phase = dry_run` for at least two weeks and deliver `results/forward_eval/dry_run_coverage.md` (fraction of bar closes logged, failures by model); verify the report exists and no `dry_run` row was ever settled for scoring
+- [ ] 11.1 Run the logger in `phase = dry_run` for at least two weeks and deliver `results/forward_eval/dry_run_coverage.md` (fraction of bar closes logged per cadence, failures by model); verify the report exists and no `dry_run` row was ever settled for scoring. Started 2026-10-01 for H1 and D1; the M15 cadence joined 2026-10-02, so its own two weeks run to 2026-10-16
 
 ## 12. Pre-registration and verdicts
 
-- [x] 12.1 Implement the power table and fixed-point family in `prereg.py` (Bonferroni, power 0.8, 3 pp over breakeven, 3-year cap, measured coverage); verify at full coverage it reproduces the design table (34 → 6 cells, alpha 0.00833, 0.5 / 1.1 / 2.2 years)
+- [x] 12.1 Extend the power table and fixed-point family in `prereg.py` to the M15 cadence, taking the eligible-trade rate per horizon from measurement (7,523 / 3,632 / 1,816 / 778 / 259 a year at h = 1 / 2 / 4 / 8 / 16) rather than as rate/h, with the edge declared as 3 pp over 50 %; verify at full coverage it reproduces the design D13 table (46 → 10 → 12 cells, alpha 0.004167, n = 3,817, M15 at 0.51 / 1.05 / 2.10 years and H1 at 0.62 / 1.24 / 2.47 years)
 - [x] 12.2 Compute the volatility family power table from the development variance; verify a test on fixture variance gives the expected time-to-decision
-- [ ] 12.3 Write and commit `results/forward_eval/PRE_REGISTRATION.md` (cells, estimand, cost level, coverage assumption, families, alpha, verdict rule, refit cadence, expected outcome) with empty `forward_hypothesis_log.csv` and `forward_vol_hypothesis_log.csv`; verify the commit exists before any scoring
+- [ ] 12.3 Write and commit `results/forward_eval/PRE_REGISTRATION.md` covering all 12 admitted cells including the six M15 session cells (cells, estimand, price definition, session window, cost level, coverage assumption per cadence, families, alpha, verdict rule, refit cadence, expected outcome per cell from the development study, and the bid-versus-mid parity tolerance) with empty `forward_hypothesis_log.csv` and `forward_vol_hypothesis_log.csv`; verify the commit exists before any scoring, that section 14 is complete first, and that the expected outcomes match design D13 (the two 15-minute cells and the three H1 GBM cells expected KEEP, the rest DROP)
 - [x] 12.4 Implement the scoring-mode gate (refuse unless the registration commit is an ancestor of HEAD); verify the logger refuses to score without the commit and scores with it
 - [x] 12.5 Implement the verdict engine (KEEP, DROP, undecided at the registered n only; interim figures labelled; "predictive, not cost-viable" label); verify tests show no verdict before n and the correct label for a cell above 50 % but below breakeven
 
@@ -83,3 +83,28 @@
 
 - [x] 13.1 Run the full test suite; verify it passes, the pinned checksum tests pass without any re-baseline, the provenance check reports nothing undeclared, every existing hypothesis log is byte-identical, and the feature bar is still 0.05/9
 - [x] 13.2 Update the test counts in `README.md` and `HOW_TO_RUN.md`, and add a short pointer to the program in `CLAUDE.md`; verify the documented count equals `pytest --collect-only -q`
+
+## 14. M15 session layer
+
+This section must complete before 12.3, because the registration fixes the family for
+good (design D13, Migration Plan phase 1b).
+
+- [x] 14.1 Implement `m15_data.py` aggregating `results/curl/raw/EURUSD_M1.parquet` to M15 bars that carry bid OHLC, the mid close (`close + spread/2`), summed tick volume and the median spread of their minutes, refusing a source with no spread field and failing with a message naming `pyarrow` when it is absent; verify the built series has 199,097 bars over 2018-08-08 → 2026-08-07, that `results/eurusd_m15.csv` is neither read for targets nor written, and that a spread-less probe source is refused
+- [x] 14.2 Record the M1 source file's SHA-256 and row count in the study record so a regenerated copy can be proven identical; verify a test detects a one-row difference in a probe file
+- [x] 14.3 Establish the bar-label clock from the weekly market boundary and record it with its evidence, refusing a run whose weekly open label stops matching; verify the measured boundary is `Sun 23:00` year-round and `22:00` in the US/EU daylight-saving mismatch weeks of March and late October, that only `Europe/Berlin` fits all four cases, and that a probe frame shifted by an hour is refused
+- [x] 14.4 Implement the session window in label time (`14:30 <= label < 22:00` on weekdays, the owner's 15:30–23:00 Europe/Sofia) with a trade eligible only when its as-of bar AND its target bar fall inside the session on the same label date; verify the in-session as-of count is 62,238 bars over 2,075 session days, the eligible counts are 60,163 / 58,088 / 53,938 at h = 1 / 2 / 4, and that the window is the same label time of day in January and July
+- [x] 14.5 Add the M15 cadence to the study-record grid {1, 2, 4, 8, 16, 26} and to the splitting, uniqueness and block-length arithmetic (block = max(h, 26), one session); verify purge and embargo leave no train/test label-window overlap at h = 26, uniqueness weights are all 1 at h = 1, and the grid cannot change after the first fit
+- [x] 14.6 Implement the two session challengers (`m15_session_gbm`, `m15_session_lstm`) on M15 mid features including intrabar movement, tick volume, the bar's spread and its position within the session, configurations declared once and frozen across horizons, CPU-only; verify fit/predict on a fixture at h ∈ {1, 4}, identical configuration hashes across horizons, and that no feature reads a bar later than its as-of bar
+- [x] 14.7 Implement the bid-versus-mid parity check: score every M15 cell on both price definitions, report both and their difference, and label a cell "spread artifact" when the gap exceeds the declared tolerance of 1.0 pp; verify the check flags the New York 17:00 rollover window (label hour 23: bid 72.2 % against mid 60.5 % at a 1-hour horizon) and flags no eligible in-session hour, where the two agree to within 0.69 pp
+- [x] 14.8 Run the session study and extend `results/horizon_study/` with the M15 curves at both price definitions, the session breakeven at the measured session spread (0.50 pip median, 0.60 pip p90) and at the config round trip, PBO and DSR; verify every M15 cell is present or failed with a reason, the trial log grew by the cells fitted, every pinned file is byte-identical and `GET /api/provenance` reports nothing undeclared
+- [x] 14.9 Add the M15 cadence to the forward logger (session-restricted bar closes, bid close and the bar's spread recorded, mid used at settlement, no gap records outside the session, a bar without a spread excluded from scoring) and to the refit scheduler; verify with a fake reader that an out-of-session close writes neither a prediction nor a gap, that a spread-less bar is excluded, and that the AST guard from 1.2 still covers the new modules
+- [x] 14.10 Extend the scheduled task and `RUNBOOK.md` to the 15-minute cadence with the expected row counts per session day; verify `schtasks /Query` shows the M15 trigger and that a `dry_run` M15 row is never settled for scoring
+- [ ] 14.11 Run the M15 dry run for at least two weeks and extend `results/forward_eval/dry_run_coverage.md` with M15 coverage and failures by model; verify the report covers every cadence separately and that the measured coverage is fed back into 12.1's power table before 12.3
+
+## 15. Operator view
+
+The owner asked for the forward log in an HTML UI, and for cost arithmetic to be
+kept off their screen (2026-10-02). Added after section 14 was built.
+
+- [x] 15.1 Implement `report.py` writing a self-contained `results/forward_eval/dashboard.html` from the logs only: the latest forecast per cell with the window it covers in Europe/Sofia, the running accuracy against the registered n with the remaining count, the session state, and the gaps and failures; verify it renders with no forward rows, with dry-run rows only, and that it contains no spread, breakeven or net-profit figure
+- [x] 15.2 Regenerate the view at the end of every logging run without letting a view failure affect logging, and document it in `RUNBOOK.md`; verify a run still succeeds when the view raises, and that `api.py`, `src/inference.py` and `src/paper_trading.py` are byte-identical

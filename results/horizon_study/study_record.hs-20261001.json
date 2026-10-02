@@ -112,31 +112,6 @@
    "n_paths": 30,
    "train_free": true
   },
-  "m15_session_gbm": {
-   "cadence": "M15",
-   "gbm": {
-    "colsample_bytree": 0.8,
-    "learning_rate": 0.05,
-    "max_depth": 4,
-    "n_estimators": 300,
-    "reg_lambda": 1.0,
-    "subsample": 0.8
-   },
-   "kind": "direction"
-  },
-  "m15_session_lstm": {
-   "cadence": "M15",
-   "kind": "direction",
-   "lstm": {
-    "batch_size": 512,
-    "dropout": 0.3,
-    "epochs": 30,
-    "learning_rate": 0.001,
-    "patience": 4,
-    "time_steps": 16,
-    "units": 64
-   }
-  },
   "ti_lstm": {
    "batch_size": 32,
    "cadence": "D1",
@@ -179,31 +154,17 @@
   "h1_gbm": "14717ab0aa7a5216",
   "kronos_direction": "0e8a260c8d457478",
   "kronos_volatility": "27bc2162ead66585",
-  "m15_session_gbm": "0a0de540575a33e7",
-  "m15_session_lstm": "616afe846b0fea7d",
   "ti_lstm": "6673121cb9772ca7",
   "vol_ensemble": "99df7f1a392bce65"
  },
- "created_at": "2026-10-02T09:01:22+00:00",
+ "created_at": "2026-10-01T17:19:51+00:00",
  "data_ranges": {},
- "data_sources": {
-  "m15_m1": {
-   "bytes": 49456672,
-   "first": "2018-08-08 17:32:00+00:00",
-   "last": "2026-08-07 22:59:00+00:00",
-   "path": "results/curl/raw/EURUSD_M1.parquet",
-   "rows": 2980060,
-   "sha256": "b40f7c40fe5e7d17519b950de67282e65dd4d8afefc8d744fb8cd17d07c17e44"
-  }
- },
  "departures": {
   "daily_gbm_*": "fixed hyperparameters at the centre of the production param_grid (production grid-searches every retrain); the grid itself is the declared TUNING grid",
   "h1_daily_ensemble": "members are classifiers (production members are return regressors); RF/SVM at fixed values from the production grids",
   "h1_gbm": "device=cpu (production trains on CUDA); same hyperparameters",
   "kronos_*": "scored only on bars after its training cutoff (2024-06); clean window starts 2024-07-01. Historically every 12th as-of bar (5.4 s per sampling on GPU: every bar would take ~19 h); forward logging samples every bar",
   "kronos_volatility": "evaluated at h = 24 H1 bars only (design D13)",
-  "m15_session_gbm": "the h1_gbm hyperparameters unchanged, so the two cadences stay comparable; features are the shared H1 direction builder applied to M15 mid bars plus the session/spread/intrabar columns",
-  "m15_session_lstm": "CPU; time_steps 16 (production 20), epochs 30 (100) and batch 512 (64), because the eligible row set is ~7x the daily one and each cell is fitted twice for the bid-versus-mid parity check",
   "ti_lstm": "CPU path (production run() requires CUDA); architecture = production 2x64",
   "vol_ensemble": "CPCV with N = 4, k = 2 (6 splits): a 5-seed refit costs ~150 s"
  },
@@ -213,10 +174,6 @@
     "k": 2,
     "n_groups": 6
    },
-   "m15_session_lstm": {
-    "k": 2,
-    "n_groups": 4
-   },
    "vol_ensemble": {
     "k": 2,
     "n_groups": 4
@@ -224,12 +181,11 @@
   },
   "daily_source": "config.json data.history_csv_path",
   "h1_source": "results/eurusd_h1.csv (production H1 cache)",
-  "m15_source": "results/curl/raw/EURUSD_M1.parquet aggregated to M15 mid bars; results/eurusd_m15.csv has no spread column and is never read",
   "macro": "production fetch_macro_features chain (FRED API -> public CSV -> cache); the euro-era row set comes from its leading NaNs, exactly as in production",
   "min_train_fraction": 0.5,
   "walk_forward_splits": 5
  },
- "first_fit_at": "2026-10-02T09:02:17+00:00",
+ "first_fit_at": "2026-10-01T17:20:02+00:00",
  "grid": {
   "D1": [
    1,
@@ -245,14 +201,6 @@
    24,
    48,
    120
-  ],
-  "M15": [
-   1,
-   2,
-   4,
-   8,
-   16,
-   26
   ]
  },
  "label": "DESCRIPTIVE - not a verdict; describes challengers, not production models",
@@ -263,17 +211,7 @@
   45,
   46
  ],
- "session": {
-  "clock_evidence": "the weekly open label is 23:00 year-round and 22:00 in the US/EU daylight-saving mismatch weeks; only Europe/Berlin fits both",
-  "eligibility": "the as-of bar AND the target bar both inside the session, same label date",
-  "label_tz": "Europe/Berlin",
-  "label_window": "14:30-22:00",
-  "owner_window": "15:30-23:00 Europe/Sofia",
-  "parity_tolerance_pp": 1.0,
-  "price": "mid = bid close + spread/2, from the per-bar M1 spread",
-  "weekdays_only": true
- },
- "study_id": "hs-m15-20261002",
+ "study_id": "hs-20261001",
  "tuning": {
   "grids": {
    "daily_gbm_macro": {
@@ -317,18 +255,6 @@
     ]
    },
    "h1_gbm": {
-    "learning_rate": [
-     0.03,
-     0.05,
-     0.1
-    ],
-    "max_depth": [
-     3,
-     4,
-     6
-    ]
-   },
-   "m15_session_gbm": {
     "learning_rate": [
      0.03,
      0.05,

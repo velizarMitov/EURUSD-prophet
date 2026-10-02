@@ -9,10 +9,11 @@ model that later forward evaluation can build on.
 ## ADDED Requirements
 
 ### Requirement: Fixed horizon grid
-The study SHALL use a horizon grid fixed before the first model is fitted. H1-cadence
-models use {1, 2, 4, 6, 12, 24, 48, 120} H1 bars. Daily-cadence models (direction and
-volatility) use {1, 2, 5} trading days. Changing the grid after the first fit SHALL
-require a new, separately recorded study.
+The study SHALL use a horizon grid fixed before the first model is fitted. M15-cadence
+models use {1, 2, 4, 8, 16, 26} M15 bars. H1-cadence models use {1, 2, 4, 6, 12, 24,
+48, 120} H1 bars. Daily-cadence models (direction and volatility) use {1, 2, 5} trading
+days. Changing the grid after the first fit SHALL require a new, separately recorded
+study.
 
 #### Scenario: The grid is recorded before fitting
 - **WHEN** the study starts
@@ -36,6 +37,86 @@ volatility SHALL be run as-is, without training.
 #### Scenario: One family failing does not stop the rest
 - **WHEN** one family fails to fit at one horizon
 - **THEN** that cell is recorded as failed with its reason, and every other cell still runs
+
+### Requirement: Session challengers on the M15 cadence
+The study SHALL add two challengers on the M15 session cadence: a gradient-boosting
+model and a sequence model. Their features SHALL be built from M15 mid bars and MAY
+include intrabar movement, tick volume, the bar's own spread and the bar's position
+within the session. Their configurations SHALL be declared once and frozen across
+horizons, as for every other challenger.
+
+#### Scenario: Both session challengers appear with their grid
+- **WHEN** the study plan is produced
+- **THEN** both M15 challengers appear with cadence M15 and the full M15 horizon grid
+
+#### Scenario: The session restricts forecasts, never the features' direction of time
+- **WHEN** an M15 challenger is fitted
+- **THEN** the session window decides only which as-of bars are forecast, and no feature reads a bar later than its as-of bar
+
+### Requirement: Mid-price series for sub-hourly cadences
+Sub-hourly bars SHALL be aggregated from one-minute history that carries a per-bar
+spread. Every sub-hourly target, accuracy and cost figure SHALL be computed on the mid
+price, defined as the bid close plus half the spread. Each aggregated bar SHALL retain
+its own spread.
+
+#### Scenario: Targets are built on mid, not on the bid close
+- **WHEN** a sub-hourly direction target is built
+- **THEN** it is the sign of the change in mid price, and the bar's own spread is recorded beside it
+
+#### Scenario: A source without a spread is refused
+- **WHEN** the one-minute source for a sub-hourly bar carries no spread field
+- **THEN** the aggregation is refused rather than assuming a spread
+
+### Requirement: The bar-label clock is established by measurement
+The wall clock that labels the bars SHALL be established from the data, never assumed,
+and recorded in the study record before the first fit. The weekly market open and
+close labels, including the weeks in which US and EU daylight saving disagree, SHALL
+be the evidence. Every session rule SHALL be expressed against the established clock.
+
+#### Scenario: The clock is evidenced, not assumed
+- **WHEN** any session rule is applied
+- **THEN** the study record states the established label clock and the weekly-boundary evidence for it
+
+#### Scenario: A clock change is refused, not absorbed
+- **WHEN** the weekly open label stops matching the recorded clock
+- **THEN** the run is refused, rather than silently shifting every session rule
+
+### Requirement: Session-restricted evaluation window for sub-hourly cells
+Sub-hourly cells SHALL forecast only inside the owner's declared trading session,
+15:30 to 23:00 Europe/Sofia on weekdays. A trade SHALL be eligible at horizon h only
+when its as-of bar and its target bar both fall inside that session on the same session
+day. Any other row SHALL be recorded with that exclusion reason and left out of
+scoring.
+
+#### Scenario: Out-of-session bars produce no forecast
+- **WHEN** an as-of bar falls outside the declared session
+- **THEN** no sub-hourly forecast is made for it, and its absence is not recorded as a gap
+
+#### Scenario: A trade that would end outside the session is not eligible
+- **WHEN** a forecast's target bar would close after the session end
+- **THEN** the row is recorded with that exclusion reason and is left out of every accuracy figure and verdict
+
+#### Scenario: The session does not drift with daylight saving
+- **WHEN** the session is resolved in January and again in July
+- **THEN** both resolve to the same bar-label time of day, because the owner's zone and the bar-label zone share one daylight-saving rule
+
+### Requirement: Bid-versus-mid parity check on every sub-hourly result
+Every sub-hourly cell SHALL be scored twice, on mid prices and on bid closes, and both
+figures SHALL be reported with their difference. A cell whose two accuracies differ by
+more than a tolerance declared before fitting SHALL be labelled a spread artifact and
+SHALL NOT be reported as skill.
+
+#### Scenario: A spread-driven result is labelled, never presented as an edge
+- **WHEN** a cell's bid and mid accuracies differ by more than the declared tolerance
+- **THEN** the cell is labelled "spread artifact" and its bid figure is never reported as skill
+
+#### Scenario: Both price definitions reach the report
+- **WHEN** the horizon curve is produced
+- **THEN** every sub-hourly cell shows its accuracy on mid, its accuracy on bid, and the difference
+
+#### Scenario: A small sample is not called an artifact on noise alone
+- **WHEN** a cell's two accuracies differ by more than the declared tolerance but by less than the sampling noise of that difference
+- **THEN** the cell is not labelled a spread artifact, and the noise floor is reported beside the difference
 
 ### Requirement: Standalone from production code
 The challengers SHALL be trained by the study's own code. The study SHALL import the
@@ -100,6 +181,10 @@ the measured spread and at the config round trip, and recorded per cell.
 #### Scenario: Below-breakeven skill is labelled
 - **WHEN** a cell's accuracy exceeds 50 % but not its breakeven
 - **THEN** the report labels it "predictive, not cost-viable" rather than as an edge
+
+#### Scenario: A sub-hourly breakeven uses the session's own spread
+- **WHEN** a sub-hourly cell's breakeven is computed
+- **THEN** the measured level is the median spread of the bars inside the declared session, not the all-hours median
 
 ### Requirement: Descriptive horizon curve
 For each model, the study SHALL report per horizon: accuracy, AUC, gross and net mean

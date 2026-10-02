@@ -13,8 +13,9 @@ spec forward-arbiter; design D13).
       True only when PRE_REGISTRATION.md and registration.json are committed,
       unmodified, and their commit is an ancestor of HEAD.
   verdict
-      KEEP / DROP / undecided, only once the registered sample size is reached.
-      Before that, figures are labelled "interim, not adjudicating".
+      Direction: KEEP iff accuracy beats a coin (lower bound > 50 %), else DROP --
+      only at the registered sample size; the spread result is a side label.
+      Before that n, figures are labelled "interim, not adjudicating".
 """
 
 from __future__ import annotations
@@ -34,6 +35,16 @@ PREREG_MD = os.path.join(FWD, 'PRE_REGISTRATION.md')
 PREREG_JSON = os.path.join(FWD, 'registration.json')
 
 BARS_PER_YEAR = {'H1': 6170.0, 'D1': 260.0}
+
+# M15 cells are session-restricted and need the TARGET inside the session too
+# (m15_data.eligible_mask), so the eligible-trade rate is not bars/h: the cutoff
+# costs more at longer horizons. These are MEASURED non-overlapping eligible
+# trades per year on results/curl/raw/EURUSD_M1.parquet, 2018-08 to 2026-08
+# (test_forecast_eval_m15_data pins the eligible row counts they come from).
+# Using BARS_PER_YEAR['M15']/h instead would overstate every cell by ~3.6 %,
+# which in a pre-registration is optimism, not simplification.
+M15_TRADES_PER_YEAR = {1: 7523.0, 2: 3632.0, 4: 1816.0, 8: 778.0, 16: 259.0, 26: 259.0}
+
 UNDERPOWERED = 'UNDERPOWERED — NO DECISION'
 INTERIM = 'interim, not adjudicating'
 
@@ -49,10 +60,20 @@ def n_required(alpha: float, edge: float, power: float = 0.80, p: float = 0.5) -
     return (z_total(alpha, power) * np.sqrt(p * (1 - p)) / edge) ** 2
 
 
+def trades_per_year(cadence: str, h: int, coverage: float = 1.0) -> float:
+    """Non-overlapping scorable forecasts a year. For M15 this is measured per
+    horizon (M15_TRADES_PER_YEAR); for the other cadences it is bars/h."""
+    if cadence == 'M15':
+        if int(h) not in M15_TRADES_PER_YEAR:
+            raise KeyError(f'no measured M15 trade rate for h={h}; '
+                           f'declared horizons are {sorted(M15_TRADES_PER_YEAR)}')
+        return M15_TRADES_PER_YEAR[int(h)] * coverage
+    return BARS_PER_YEAR[cadence] / h * coverage
+
+
 def years_to_decide(cadence: str, h: int, alpha: float, edge: float, coverage: float = 1.0,
                     power: float = 0.80) -> float:
-    per_year = BARS_PER_YEAR[cadence] / h * coverage
-    return n_required(alpha, edge, power) / per_year
+    return n_required(alpha, edge, power) / trades_per_year(cadence, h, coverage)
 
 
 def fixed_point_family(cells, edge=0.03, cap_years=3.0, coverage=1.0, power=0.80, family_alpha=0.05):
@@ -71,7 +92,7 @@ def fixed_point_family(cells, edge=0.03, cap_years=3.0, coverage=1.0, power=0.80
     alpha = family_alpha / max(len(admitted), 1)
     table = [{'model': m, 'cadence': c, 'horizon': h,
               'n_required': n_required(alpha, edge, power),
-              'n_per_year': BARS_PER_YEAR[c] / h * coverage,
+              'n_per_year': trades_per_year(c, h, coverage),
               'years': years_to_decide(c, h, alpha, edge, coverage, power),
               'status': 'ADMITTED' if (m, c, h) in admitted else UNDERPOWERED}
              for (m, c, h) in cells]
@@ -155,27 +176,29 @@ def non_overlapping_rows(as_of_positions, h):
 
 def direction_verdict(correct, n_required_: float, breakeven: float, alpha: float, h: int,
                       cadence: str, admitted: bool = True) -> dict:
-    """`correct` holds the 0/1 outcomes of NON-OVERLAPPING scorable forecasts,
-    in time order."""
+    """Direction verdict against a COIN (owner's criterion, 2026-10-02).
+
+    `correct` holds the 0/1 outcomes of NON-OVERLAPPING scorable forecasts, in
+    time order. KEEP iff the one-sided lower bound at the family alpha is above
+    50 %; at the registered n anything else is DROP. The spread breakeven is
+    reported as `cost_label` and never changes the verdict."""
     x = np.asarray(correct, dtype=float)
     x = x[np.isfinite(x)]
     n = len(x)
     acc = float(x.mean()) if n else float('nan')
-    base = {'n': n, 'n_required': n_required_, 'accuracy': acc, 'breakeven': breakeven}
+    base = {'n': n, 'n_required': n_required_, 'accuracy': acc, 'breakeven': breakeven,
+            'cost_label': ('' if not n else 'predictive, not cost-viable' if acc <= breakeven
+                           else 'above spread breakeven')}
     if not admitted:
         return {**base, 'verdict': UNDERPOWERED, 'label': UNDERPOWERED}
     if n < n_required_:
         return {**base, 'verdict': None, 'label': INTERIM}
     blen = ST.block_length(h, cadence)
     lo = ST.one_sided_lower_bound(x, blen, alpha)
-    hi = ST.one_sided_upper_bound(x, blen, alpha)
-    base.update({'lower': lo, 'upper': hi})
-    if lo > breakeven:
-        return {**base, 'verdict': 'KEEP', 'label': 'cost-viable edge'}
-    if hi < breakeven:
-        label = 'predictive, not cost-viable' if lo > 0.5 else 'no cost-viable edge'
-        return {**base, 'verdict': 'DROP', 'label': label}
-    return {**base, 'verdict': 'UNDECIDED', 'label': 'interval contains the breakeven at the registered n'}
+    base['lower'] = lo
+    if lo > 0.5:
+        return {**base, 'verdict': 'KEEP', 'label': 'calls direction better than a coin'}
+    return {**base, 'verdict': 'DROP', 'label': 'not shown better than a coin'}
 
 
 def volatility_verdict(err_model, err_baseline, n_required_: float, alpha: float, h: int,

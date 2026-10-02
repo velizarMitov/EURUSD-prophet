@@ -105,6 +105,67 @@ def h1_daily_features(h1: pd.DataFrame):
     return flat, build_lstm_tensor(h1, flat.index), daily_close
 
 
+# ── M15 session ─────────────────────────────────────────────────────────────
+
+M15_EXTRA_COLUMNS = ('spread_norm', 'spread_rel', 'range_norm', 'close_in_range',
+                     'volume_rel', 'session_pos', 'in_session')
+M15_PRICES = ('mid', 'bid')
+
+
+def m15_bar_features(m15: pd.DataFrame, price: str = 'mid') -> pd.DataFrame:
+    """M15 features with `close`, on the chosen price definition.
+
+    The base columns come from the SAME shared builder the H1 challenger uses
+    (`compute_h1_direction_features`), applied to M15 bars, so the two cadences
+    describe the market the same way and the digest guard already covers the
+    code. The extra columns are what the spec names for a sub-hourly cell: the
+    bar's own spread, its intrabar movement, its tick volume and where it sits
+    in the session.
+
+    `price='mid'` shifts the whole OHLC up by half the bar's spread, so features
+    and target share one price definition; `price='bid'` leaves the quotes as the
+    broker published them, for the parity check in design D17.
+
+    Rows are a contiguous SUFFIX of the input: only the leading warm-up is
+    dropped. An interior NaN would silently renumber positions and break the
+    purge arithmetic, so it is refused instead.
+    """
+    from src.h1_features import compute_h1_direction_features
+    from . import m15_data as MD
+    if price not in M15_PRICES:
+        raise KeyError(f'unknown price definition {price!r}; expected one of {M15_PRICES}')
+    for col in ('open', 'high', 'low', 'close', 'tick_volume', 'spread_price'):
+        if col not in m15.columns:
+            raise KeyError(f'M15 frame has no {col!r} column')
+
+    ohlc = m15[['open', 'high', 'low', 'close']].astype(float)
+    spread = m15['spread_price'].astype(float)
+    if price == 'mid':
+        ohlc = ohlc.add(spread / 2.0, axis=0)
+
+    out = compute_h1_direction_features(ohlc)
+    close, high, low = ohlc['close'], ohlc['high'], ohlc['low']
+    rng = (high - low)
+    vol = m15['tick_volume'].astype(float)
+    out['spread_norm'] = spread / close
+    out['spread_rel'] = spread / spread.rolling(96, min_periods=24).median()
+    out['range_norm'] = rng / close
+    out['close_in_range'] = ((close - low) / rng.where(rng > 0)).fillna(0.5)
+    out['volume_rel'] = vol / vol.rolling(96, min_periods=24).mean()
+    # Outside the session these two are never trained on or scored, but they must
+    # stay finite so the row survives and the bar grid keeps its numbering.
+    out['session_pos'] = np.nan_to_num(MD.session_position(out.index), nan=-1.0)
+    out['in_session'] = MD.session_mask(out.index).astype(float)
+
+    complete = out.notna().all(axis=1).to_numpy()
+    if not complete.any():
+        raise ValueError('no M15 row has every feature defined; the frame is shorter than the warm-up')
+    out = out.iloc[int(np.argmax(complete)):]
+    if out.isna().to_numpy().any():
+        raise ValueError('interior NaN in the M15 features would break the contiguous bar grid')
+    return out.assign(close=close.reindex(out.index))
+
+
 def ti_daily_sequences(h1: pd.DataFrame):
     """(X, index, daily_close) of TI-LSTM's (24, n) right-aligned tensors for
     every complete session, INCLUDING the newest one.

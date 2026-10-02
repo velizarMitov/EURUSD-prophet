@@ -22,10 +22,24 @@ from .challengers.base import config_hash
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RECORD_PATH = os.path.join(REPO, 'results', 'horizon_study', 'study_record.json')
 
-GRID = {'H1': [1, 2, 4, 6, 12, 24, 48, 120], 'D1': [1, 2, 5]}
+GRID = {'M15': [1, 2, 4, 8, 16, 26], 'H1': [1, 2, 4, 6, 12, 24, 48, 120], 'D1': [1, 2, 5]}
 CAP_YEARS = 3.0
 SEEDS = [42, 43, 44, 45, 46]
-LOCKED_KEYS = ('grid', 'challengers', 'tuning', 'cap_years', 'seeds', 'development')
+LOCKED_KEYS = ('grid', 'challengers', 'tuning', 'cap_years', 'seeds', 'development', 'session')
+
+# Sub-hourly declarations, fixed before the first fit (design D16, D17). The
+# label clock is EVIDENCED by m15_data.verify_clock, not taken on faith.
+SESSION = {
+    'label_tz': 'Europe/Berlin',
+    'label_window': '14:30-22:00',
+    'owner_window': '15:30-23:00 Europe/Sofia',
+    'weekdays_only': True,
+    'eligibility': 'the as-of bar AND the target bar both inside the session, same label date',
+    'price': 'mid = bid close + spread/2, from the per-bar M1 spread',
+    'parity_tolerance_pp': 1.0,
+    'clock_evidence': 'the weekly open label is 23:00 year-round and 22:00 in the US/EU '
+                      'daylight-saving mismatch weeks; only Europe/Berlin fits both',
+}
 
 
 class StudyRecordLocked(RuntimeError):
@@ -64,6 +78,12 @@ def default_challengers() -> dict:
         'h1_gbm': {'cadence': 'H1', 'kind': 'direction',
                    'gbm': {'n_estimators': 300, 'max_depth': 4, 'learning_rate': 0.05,
                            'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1.0}},
+        'm15_session_gbm': {'cadence': 'M15', 'kind': 'direction',
+                            'gbm': {'n_estimators': 300, 'max_depth': 4, 'learning_rate': 0.05,
+                                    'subsample': 0.8, 'colsample_bytree': 0.8, 'reg_lambda': 1.0}},
+        'm15_session_lstm': {'cadence': 'M15', 'kind': 'direction',
+                             'lstm': {**lstm, 'time_steps': 16, 'epochs': 30,
+                                      'batch_size': 512, 'patience': 4}},
         'kronos_direction': {'cadence': 'H1', 'kind': 'direction', 'model': 'mini',
                              'n_paths': 30, 'train_free': True, 'history_stride': 12},
         'vol_ensemble': {'cadence': 'D1', 'kind': 'volatility', 'feature_set': 'price',
@@ -80,6 +100,12 @@ def default_challengers() -> dict:
                              'regressors); RF/SVM at fixed values from the production grids',
         'ti_lstm': 'CPU path (production run() requires CUDA); architecture = production 2x64',
         'h1_gbm': 'device=cpu (production trains on CUDA); same hyperparameters',
+        'm15_session_gbm': 'the h1_gbm hyperparameters unchanged, so the two cadences stay '
+                           'comparable; features are the shared H1 direction builder applied '
+                           'to M15 mid bars plus the session/spread/intrabar columns',
+        'm15_session_lstm': 'CPU; time_steps 16 (production 20), epochs 30 (100) and batch 512 '
+                            '(64), because the eligible row set is ~7x the daily one and each '
+                            'cell is fitted twice for the bid-versus-mid parity check',
         'kronos_*': 'scored only on bars after its training cutoff (2024-06); clean window '
                     'starts 2024-07-01. Historically every 12th as-of bar (5.4 s per sampling on '
                     'GPU: every bar would take ~19 h); forward logging samples every bar',
@@ -89,7 +115,9 @@ def default_challengers() -> dict:
     return {'challengers': out, 'departures': departures,
             'tuning': {'grids': {'daily_gbm_price': c['gbm']['param_grid'],
                                  'daily_gbm_macro': c['gbm']['param_grid'],
-                                 'h1_gbm': {'max_depth': [3, 4, 6], 'learning_rate': [0.03, 0.05, 0.1]}},
+                                 'h1_gbm': {'max_depth': [3, 4, 6], 'learning_rate': [0.03, 0.05, 0.1]},
+                                 'm15_session_gbm': {'max_depth': [3, 4, 6],
+                                                     'learning_rate': [0.03, 0.05, 0.1]}},
                        'rule': {'min_net_improvement_pct': 10.0, 'max_pbo': 0.5,
                                 'inner_folds': 4}}}
 
@@ -110,12 +138,17 @@ def new_record(study_id: str, data_ranges: dict | None = None,
         'seeds': list(SEEDS),
         'development': development or {
             'walk_forward_splits': 5, 'min_train_fraction': 0.5,
-            'cpcv': {'default': {'n_groups': 6, 'k': 2}, 'vol_ensemble': {'n_groups': 4, 'k': 2}},
+            'cpcv': {'default': {'n_groups': 6, 'k': 2}, 'vol_ensemble': {'n_groups': 4, 'k': 2},
+                     'm15_session_lstm': {'n_groups': 4, 'k': 2}},
             'macro': 'production fetch_macro_features chain (FRED API -> public CSV -> cache); '
                      'the euro-era row set comes from its leading NaNs, exactly as in production',
             'h1_source': 'results/eurusd_h1.csv (production H1 cache)',
-            'daily_source': 'config.json data.history_csv_path'},
+            'daily_source': 'config.json data.history_csv_path',
+            'm15_source': 'results/curl/raw/EURUSD_M1.parquet aggregated to M15 mid bars; '
+                          'results/eurusd_m15.csv has no spread column and is never read'},
+        'session': copy.deepcopy(SESSION),
         'data_ranges': data_ranges or {},
+        'data_sources': {},
         'label': 'DESCRIPTIVE - not a verdict; describes challengers, not production models',
     }
     return rec
@@ -155,6 +188,36 @@ def mark_first_fit(path: str = RECORD_PATH) -> dict:
         with open(path, 'w', encoding='utf-8') as fh:
             json.dump(rec, fh, indent=1, sort_keys=True)
     return rec
+
+
+def record_data_source(name: str, fingerprint: dict, path: str = RECORD_PATH) -> dict:
+    """Store a source file's digest and row count (task 14.2). `data_sources` is
+    deliberately NOT locked: the M1 parquet is outside git, so a regenerated copy
+    must be recordable -- but it must then be PROVEN identical, which is what
+    `assert_data_source` does with the stored fingerprint."""
+    rec = load(path)
+    if rec is None:
+        raise FileNotFoundError('write the study record before recording a data source')
+    existing = rec.setdefault('data_sources', {}).get(name)
+    if existing and rec.get('first_fit_at') and existing.get('sha256') != fingerprint.get('sha256'):
+        raise StudyRecordLocked(
+            f'{name} changed after the first fit: recorded sha256 '
+            f'{str(existing.get("sha256"))[:12]}, now {str(fingerprint.get("sha256"))[:12]}. '
+            'Start a new study id rather than re-fitting on different data.')
+    rec['data_sources'][name] = dict(fingerprint)
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True)
+    return rec
+
+
+def assert_data_source(name: str, verifier, path: str = RECORD_PATH) -> dict:
+    """Raise unless the file on disk matches what the record was built from.
+    `verifier(recorded) -> fingerprint` is m15_data.verify_source for M15."""
+    rec = load(path)
+    recorded = (rec or {}).get('data_sources', {}).get(name)
+    if not recorded:
+        raise StudyRecordLocked(f'the study record has no fingerprint for data source {name!r}')
+    return verifier(recorded)
 
 
 def assert_fit_allowed(challenger: str, config: dict, h: int, cadence: str,

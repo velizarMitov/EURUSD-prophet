@@ -140,8 +140,10 @@ Contains the full research process — feature engineering, training, diagnostic
 ```bash
 python -m pytest -q
 ```
-Expected result: **753 passed** (smoke, unit, integration, no-look-ahead,
-artifact-checksum and hypothesis-registry tests).
+Expected result: **861 passed, 1 skipped** of 862 collected (smoke, unit,
+integration, no-look-ahead, artifact-checksum and hypothesis-registry tests).
+The skip is the POSIX-shell hook-shim test, which needs a `sh` this environment
+does not provide.
 
 To run a single test:
 ```bash

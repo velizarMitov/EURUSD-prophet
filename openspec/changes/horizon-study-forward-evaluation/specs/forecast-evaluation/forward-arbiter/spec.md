@@ -25,11 +25,15 @@ SHALL be recorded in a separate results document, never edited into it.
 ### Requirement: Family composition fixed from arithmetic before outcomes
 Cells SHALL be admitted to a tested family only if their time-to-decision is at or
 below the registered cap, at the family's own Bonferroni alpha, for an edge of 3 pp
-over breakeven. Other cells SHALL be registered `UNDERPOWERED — NO DECISION` and spend
+over 50 %. Other cells SHALL be registered `UNDERPOWERED — NO DECISION` and spend
 zero alpha. Family size SHALL never shrink after registration.
 
 #### Scenario: Daily-cadence cells are not adjudicated
 - **WHEN** the power table shows a daily-cadence cell needs more years than the cap
+- **THEN** that cell is registered `UNDERPOWERED — NO DECISION`, is still logged and reported descriptively, and is excluded from the alpha count
+
+#### Scenario: Longer sub-hourly cells are not adjudicated either
+- **WHEN** the power table shows a sub-hourly cell at two hours or longer needs more years than the cap
 - **THEN** that cell is registered `UNDERPOWERED — NO DECISION`, is still logged and reported descriptively, and is excluded from the alpha count
 
 #### Scenario: A failing cell does not loosen the bar
@@ -47,17 +51,35 @@ hypothesis log. Each family SHALL have its own new registry file.
 
 ### Requirement: Scheduled forward logging independent of the API
 A scheduled process SHALL record a prediction from every model at every horizon at
-each bar close of that model's cadence, whether or not any user calls the API. Each
-row SHALL carry: model, horizon, model-version hash, as-of bar, target bar, the
+each bar close of that model's cadence, whether or not any user calls the API.
+Sub-hourly models SHALL be recorded only at bar closes inside their declared session.
+Each row SHALL carry: model, horizon, model-version hash, as-of bar, target bar, the
 prediction, price source, the bar's spread and the UTC log time.
 
 #### Scenario: Logging happens without a user
 - **WHEN** no one opens the dashboard for a full trading day
 - **THEN** that day still has one row per model per horizon per bar close
 
+#### Scenario: Sub-hourly logging follows the session
+- **WHEN** a sub-hourly bar closes outside the declared session
+- **THEN** no prediction row is written for it, and no gap record is written for it either
+
 #### Scenario: Every row is traceable
 - **WHEN** any forward row is read
 - **THEN** its model-version hash resolves to exactly one artifact in the study manifest
+
+### Requirement: Sub-hourly forward rows are scored on the mid price
+A sub-hourly forward row SHALL record the bar's bid close and the bar's own spread, and
+SHALL be scored on the mid price built from them, matching the price definition the
+study used. A row whose spread is missing SHALL be recorded and excluded from scoring.
+
+#### Scenario: Entry and exit both use mid
+- **WHEN** a sub-hourly forecast is settled
+- **THEN** both the entry and the exit price are the mid built from that bar's recorded bid close and spread
+
+#### Scenario: A missing spread is never assumed
+- **WHEN** the terminal returns a sub-hourly bar with no spread
+- **THEN** the row records the missing spread and is excluded from every accuracy figure and verdict
 
 ### Requirement: MT5 is the only arbiter price source
 Prices used to score forward forecasts SHALL come from MT5 only. A row produced from
@@ -98,19 +120,67 @@ time.
 - **WHEN** the registered cadence is monthly
 - **THEN** a new version per model per horizon appears once per calendar month, and none in between
 
-### Requirement: Verdict rule against cost breakeven
-A cell SHALL be KEEP only if the one-sided lower confidence bound on accuracy, at the
-family alpha, exceeds that cell's registered breakeven. It SHALL be DROP only if the
-upper bound falls below the breakeven. Otherwise it remains undecided. Verdicts SHALL
-be issued only at the registered sample size.
+### Requirement: Verdict rule on directional accuracy
+The owner's question is whether a model calls the direction (+ or -) better than a
+coin. A cell SHALL be KEEP only if the one-sided lower confidence bound on accuracy, at
+the family alpha, exceeds 50 %. At the registered sample size a cell that is not KEEP
+SHALL be DROP. Verdicts SHALL be issued only at the registered sample size.
 
-#### Scenario: Predictive but not cost-viable is DROP-eligible
-- **WHEN** accuracy is significantly above 50 % but its upper bound is below the breakeven
-- **THEN** the verdict is DROP, with the label "predictive, not cost-viable"
+#### Scenario: Better than a coin is KEEP
+- **WHEN** at the registered sample size the lower bound on accuracy is above 50 %
+- **THEN** the verdict is KEEP
+
+#### Scenario: Not shown better than a coin is DROP
+- **WHEN** at the registered sample size the lower bound on accuracy is at or below 50 %
+- **THEN** the verdict is DROP, labelled "not shown better than a coin"
+
+### Requirement: Cost result reported beside every verdict
+Every verdict SHALL be reported with the cell's spread breakeven and net result per
+trade. These figures are informational and SHALL NOT change the verdict.
+
+#### Scenario: Predictive but not cost-viable is labelled, not dropped
+- **WHEN** a cell is KEEP but its accuracy is below its spread breakeven
+- **THEN** the verdict stays KEEP and the cost label reads "predictive, not cost-viable"
 
 #### Scenario: No early verdict
 - **WHEN** running results look decisive before the registered sample size is reached
 - **THEN** no verdict is written, and running figures are shown labelled "interim, not adjudicating"
+
+### Requirement: Operator view of the forward log
+A self-contained HTML view SHALL be regenerated from the forward log on every
+logging run, showing the latest forecast per cell with the window it covers, the
+running accuracy against its registered sample size, and the coverage problems.
+It SHALL read the logs only and SHALL NOT be part of the serving application.
+
+#### Scenario: The view is current without anyone opening the dashboard
+- **WHEN** a logging run finishes
+- **THEN** the view is rewritten from the logs, and it states the time it was generated
+
+#### Scenario: Serving is untouched
+- **WHEN** the view is generated
+- **THEN** no route, template or module of the serving application has changed
+
+#### Scenario: Times are shown in the owner's clock
+- **WHEN** a forecast is displayed
+- **THEN** its as-of bar and the window it covers are labelled in Europe/Sofia, not in bar-label time
+
+### Requirement: The operator view shows direction, never a cost verdict
+The view SHALL present the direction call and the running accuracy. It SHALL NOT
+display spread, breakeven or net-profit figures, because the owner accounts for
+trading cost themselves. Those figures SHALL remain in the logs and in the
+pre-registration, where the methodology requires them.
+
+#### Scenario: No cost arithmetic reaches the screen
+- **WHEN** the view is rendered
+- **THEN** it contains no spread, breakeven or net-profit figure
+
+#### Scenario: The cost record survives
+- **WHEN** the view is generated
+- **THEN** every cost column in the forward log and the pre-registration is unchanged
+
+#### Scenario: A running figure is labelled as not deciding
+- **WHEN** the running accuracy is shown before the registered sample size
+- **THEN** it is labelled "interim, not adjudicating" and the remaining count is shown
 
 ### Requirement: Read-only market access
 The forward process SHALL only read prices and symbol metadata from the broker

@@ -1,0 +1,80 @@
+{
+ "study_id": "hs-m15-20261002",
+ "finished_at": "2026-10-02T09:31:21+00:00",
+ "daily_range": [
+  "1999-01-04 00:00:00",
+  "2026-08-10 00:00:00"
+ ],
+ "daily_rows": 8606,
+ "h1_range": [
+  "2017-01-20 02:00:00+00:00",
+  "2026-10-01 23:00:00+00:00"
+ ],
+ "h1_rows": 60353,
+ "macro_sources": {
+  "yield_differential": "FRED_public",
+  "usd_index": "FRED_public",
+  "policy_rate_differential": "FRED_public",
+  "inflation_differential": "FRED_public",
+  "vix": "FRED_public"
+ },
+ "seeds": [
+  42,
+  43,
+  44,
+  45,
+  46
+ ],
+ "cell_seconds": {
+  "m15_session_lstm_h1": 180.1,
+  "m15_session_lstm_h2": 150.5,
+  "m15_session_lstm_h4": 131.7,
+  "m15_session_lstm_h8": 114.0,
+  "m15_session_lstm_h16": 94.7,
+  "m15_session_lstm_h26": 67.6,
+  "m15_session_gbm_h1": 32.6,
+  "m15_session_gbm_h2": 36.9,
+  "m15_session_gbm_h4": 29.6,
+  "m15_session_gbm_h8": 27.6,
+  "m15_session_gbm_h16": 25.8,
+  "m15_session_gbm_h26": 16.8
+ },
+ "banner": "DESCRIPTIVE - not a verdict; describes challengers, not production models",
+ "m15": {
+  "bars": 199097,
+  "first": "2018-08-08 17:30:00+00:00",
+  "last": "2026-08-07 22:45:00+00:00",
+  "span_years": 8.0,
+  "in_session": 62238,
+  "session_days": 2075,
+  "session_label_window": "14:30-22:00",
+  "owner_window": "15:30-23:00 Europe/Sofia",
+  "label_tz": "Europe/Berlin",
+  "source": {
+   "path": "results/curl/raw/EURUSD_M1.parquet",
+   "sha256": "b40f7c40fe5e7d17519b950de67282e65dd4d8afefc8d744fb8cd17d07c17e44",
+   "rows": 2980060,
+   "first": "2018-08-08 17:32:00+00:00",
+   "last": "2026-08-07 22:59:00+00:00",
+   "bytes": 49456672
+  },
+  "clock": {
+   "label_tz": "Europe/Berlin",
+   "n_weeks": 425,
+   "match_rate": 0.9929411764705882,
+   "market_open": "Sunday 17:00 America/New_York",
+   "aligned": {
+    "n": 396,
+    "match_rate": 0.9924242424242424,
+    "modal_label_hour": 23,
+    "expected_hour": 23
+   },
+   "dst_mismatch": {
+    "n": 29,
+    "match_rate": 1.0,
+    "modal_label_hour": 22,
+    "expected_hour": 22
+   }
+  }
+ }
+}

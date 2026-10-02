@@ -11,18 +11,58 @@ from src.forecast_eval import record as R
 
 # ── 12.1 fixed-point family reproduces the design table ───────────────────
 
+H1_MODELS = ('h1_gbm', 'kronos_direction')
+M15_MODELS = ('m15_session_gbm', 'm15_session_lstm')
+
+
 def test_fixed_point_reproduces_design_table():
+    """Design D13: 46 candidates -> 10 -> 12 cells, alpha 0.05/12, n = 3,817."""
     cells = P.direction_cells(R.new_record('t'))
-    assert len(cells) == 34
+    assert len(cells) == 46
     admitted, alpha, table, history = P.fixed_point_family(cells)
-    assert [h[0] for h in history] == [34, 6]
-    assert alpha == pytest.approx(0.05 / 6) and round(alpha, 5) == 0.00833
-    assert sorted(admitted) == sorted((m, 'H1', h) for m in ('h1_gbm', 'kronos_direction') for h in (1, 2, 4))
-    yrs = {(r['model'], r['horizon']): r['years'] for r in table}
-    assert round(yrs[('h1_gbm', 1)], 1) == 0.5
-    assert round(yrs[('h1_gbm', 2)], 1) == 1.1
-    assert round(yrs[('h1_gbm', 4)], 1) == 2.2
+    assert [h[0] for h in history] == [46, 10, 12], 'the iteration is not monotone'
+    assert alpha == pytest.approx(0.05 / 12) and round(alpha, 6) == 0.004167
+    assert round(P.n_required(alpha, 0.03)) == 3817
+    assert sorted(admitted) == sorted(
+        [(m, 'H1', h) for m in H1_MODELS for h in (1, 2, 4)]
+        + [(m, 'M15', h) for m in M15_MODELS for h in (1, 2, 4)])
+    yrs = {(r['model'], r['horizon']): round(r['years'], 2) for r in table}
+    assert [yrs[('h1_gbm', h)] for h in (1, 2, 4)] == [0.62, 1.24, 2.47]
+    assert [yrs[('m15_session_gbm', h)] for h in (1, 2, 4)] == [0.51, 1.05, 2.10]
     assert all(r['status'] == P.UNDERPOWERED for r in table if r['cadence'] == 'D1')
+
+
+def test_the_longer_m15_cells_are_underpowered_by_arithmetic():
+    cells = P.direction_cells(R.new_record('t'))
+    admitted, alpha, table, _ = P.fixed_point_family(cells)
+    longer = {r['horizon']: round(r['years'], 1) for r in table
+              if r['model'] == 'm15_session_gbm' and r['horizon'] in (8, 16, 26)}
+    assert longer == {8: 4.9, 16: 14.7, 26: 14.7}
+    assert all(('m15_session_gbm', 'M15', h) not in admitted for h in (8, 16, 26))
+
+
+def test_m15_rate_is_measured_per_horizon_not_bars_over_h():
+    """The target-inside-the-session cutoff costs more at longer horizons, so
+    rate/h would overstate every cell. Optimism in a pre-registration is a bug."""
+    assert P.trades_per_year('M15', 1) == 7523.0
+    for h in (2, 4, 8):
+        assert P.trades_per_year('M15', h) < P.trades_per_year('M15', 1) / h
+    assert P.trades_per_year('H1', 2) == pytest.approx(P.BARS_PER_YEAR['H1'] / 2)
+    with pytest.raises(KeyError, match='measured M15 trade rate'):
+        P.trades_per_year('M15', 3)
+
+
+def test_adding_the_m15_models_costs_the_h1_cells_little():
+    """Design D13: the 1-hour H1 cell moves 0.5 -> 0.62 years. Stated in advance
+    so the cost of the 'all models' decision is visible, not discovered."""
+    rec = R.new_record('t')
+    h1_only = [c for c in P.direction_cells(rec) if c[1] != 'M15']
+    _, alpha_before, t_before, _ = P.fixed_point_family(h1_only)
+    _, alpha_after, t_after, _ = P.fixed_point_family(P.direction_cells(rec))
+    before = next(r for r in t_before if r['model'] == 'h1_gbm' and r['horizon'] == 1)
+    after = next(r for r in t_after if r['model'] == 'h1_gbm' and r['horizon'] == 1)
+    assert round(before['years'], 1) == 0.5 and round(after['years'], 2) == 0.62
+    assert alpha_before == pytest.approx(0.05 / 6) and alpha_after == pytest.approx(0.05 / 12)
 
 
 def test_lower_coverage_lengthens_and_can_shrink_the_family():
@@ -99,17 +139,19 @@ def test_no_verdict_before_the_registered_n():
     assert v['verdict'] is None and v['label'] == P.INTERIM
 
 
-def test_predictive_but_not_cost_viable_is_dropped_with_its_label():
+def test_better_than_a_coin_is_keep_even_below_the_spread_breakeven():
+    """Owner's criterion: direction vs a coin. The spread only labels it."""
     rng = np.random.default_rng(0)
-    x = (rng.random(6000) < 0.53).astype(float)         # above 50 %, below a 56 % breakeven
-    v = P.direction_verdict(x, n_required_=3364, breakeven=0.56, alpha=0.00833, h=1, cadence='H1')
-    assert v['verdict'] == 'DROP' and v['label'] == 'predictive, not cost-viable'
+    x = (rng.random(6000) < 0.56).astype(float)
+    v = P.direction_verdict(x, n_required_=3364, breakeven=0.60, alpha=0.00833, h=1, cadence='H1')
+    assert v['verdict'] == 'KEEP' and v['cost_label'] == 'predictive, not cost-viable'
 
 
-def test_keep_requires_the_lower_bound_above_breakeven():
+def test_not_better_than_a_coin_is_drop_at_the_registered_n():
     rng = np.random.default_rng(1)
-    x = (rng.random(6000) < 0.60).astype(float)
-    assert P.direction_verdict(x, 3364, 0.5332, 0.00833, 1, 'H1')['verdict'] == 'KEEP'
+    x = (rng.random(6000) < 0.50).astype(float)
+    v = P.direction_verdict(x, 3364, 0.5332, 0.00833, 1, 'H1')
+    assert v['verdict'] == 'DROP' and v['label'] == 'not shown better than a coin'
 
 
 def test_underpowered_cells_never_adjudicate():

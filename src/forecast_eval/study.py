@@ -63,14 +63,26 @@ MANIFEST_FIELDS = ['version_id', 'study_id', 'model', 'cadence', 'horizon', 'var
 
 # ── data ────────────────────────────────────────────────────────────────────
 
-def load_sources(macro: bool = True) -> dict:
-    """Daily (both feature sets on the euro-era row set) and H1 frames."""
+def load_sources(macro: bool = True, m15: bool = True) -> dict:
+    """Daily (both feature sets on the euro-era row set), H1 and M15 frames.
+
+    The M15 source is the ungitted M1 parquet (design D15). When it is absent the
+    whole M15 family fails with that reason, exactly like any other unavailable
+    challenger -- it never silently falls back to the spread-less pinned CSV."""
     raw = F.load_daily_ohlcv()
     macro_df, macro_sources = None, {'all': 'not requested'}
     if macro:
         macro_df, macro_sources = load_macro_window(raw.index.min(), raw.index.max(), with_sources=True)
     daily = {fs: F.daily_features(raw, macro_df, fs) for fs in F.FEATURE_SETS}
-    return {'daily': daily, 'h1': F.load_h1(), 'macro_sources': macro_sources}
+    out = {'daily': daily, 'h1': F.load_h1(), 'macro_sources': macro_sources, 'm15': None}
+    if m15:
+        from . import m15_data as MD
+        try:
+            out['m15'] = MD.m15_bars()
+            out['m15_source'] = MD.source_fingerprint()
+        except Exception as e:                           # noqa: BLE001 -- isolate the family
+            out['m15_error'] = f'{type(e).__name__}: {e}'
+    return out
 
 
 def load_macro_window(start, end, with_sources: bool = False):
@@ -104,9 +116,25 @@ def _macro_cache_paths(macro_cfg: dict) -> list:
 
 
 def source_for(name: str, cfg: dict, sources: dict):
+    if cfg.get('cadence') == 'M15':
+        if sources.get('m15') is None:
+            raise ChallengerUnavailable(sources.get('m15_error', 'no M15 source available'))
+        return sources['m15']
     if name.startswith(('daily_', 'vol_')):
         return sources['daily'][cfg.get('feature_set', 'price')]
     return sources['h1']
+
+
+def m15_cost_levels(m15, symbol: str = SYMBOL) -> list:
+    """The session's OWN median spread, not the all-hours median (spec
+    horizon-study "A sub-hourly breakeven uses the session's own spread")."""
+    from . import m15_data as MD
+    inside = MD.session_mask(m15.index)
+    measured = float(m15.loc[inside, 'spread_price'].median())
+    if not np.isfinite(measured) or measured <= 0:
+        raise C.MissingSpreadError('no in-session spread in the M15 frame')
+    return [C.CostLevel('measured', measured),
+            C.CostLevel('config_round_trip', C.config_round_trip_price(symbol))]
 
 
 def make_targets(close: np.ndarray, h: int) -> dict:
@@ -122,22 +150,42 @@ def cell_horizons(name: str, cfg: dict, rec: dict) -> list[int]:
 
 # ── fitting helpers ─────────────────────────────────────────────────────────
 
-def _oos(name, cfg, inputs, tg, splits_, seed, h, keys):
+MIN_TRAIN_ROWS = 50
+
+
+def _keep(pos, eligible):
+    """Training and scoring are restricted to `eligible` rows (the session, for
+    M15). The SPLIT itself still runs on the full bar grid, because a label spans
+    real bars whether or not they are eligible, so the purge stays correct."""
+    return np.asarray(pos) if eligible is None else np.intersect1d(pos, eligible)
+
+
+def _oos(name, cfg, inputs, tg, splits_, seed, h, keys, eligible=None):
     out = {k: np.full(len(inputs), np.nan) for k in keys}
     for sp in splits_:
-        m = make(name, cfg).fit(inputs, sp.train, tg, seed, h)
+        train, test = _keep(sp.train, eligible), _keep(sp.test, eligible)
+        if train.size < MIN_TRAIN_ROWS or test.size == 0:
+            continue
+        m = make(name, cfg).fit(inputs, train, tg, seed, h)
         pr = m.predict(inputs)
         for k in keys:
             if k in pr:
-                out[k][sp.test] = pr[k][sp.test]
+                out[k][test] = pr[k][test]
     return out
 
 
-def _cpcv_paths(name, cfg, inputs, tg, cv, seed, h, key):
+def _cpcv_paths(name, cfg, inputs, tg, cv, seed, h, key, eligible=None):
     preds = []
     for sp in cv.splits:
-        m = make(name, cfg).fit(inputs, sp.train, tg, seed, h)
-        preds.append(m.predict(inputs)[key][sp.test])
+        train = _keep(sp.train, eligible)
+        if train.size < MIN_TRAIN_ROWS:
+            preds.append(np.full(len(sp.test), np.nan))
+            continue
+        m = make(name, cfg).fit(inputs, train, tg, seed, h)
+        p = np.asarray(m.predict(inputs)[key][sp.test], dtype=float).copy()
+        if eligible is not None:
+            p[~np.isin(sp.test, eligible)] = np.nan
+        preds.append(p)
     return cv.assemble(preds)
 
 
@@ -174,7 +222,19 @@ def strategy_stats(p_up, close, rows, h, cost):
     return pnl, per_trade_net
 
 
-def direction_metrics(name, cadence, h, p_up, ret_pct, close, tg, train_majority_y, cost_levels):
+def mean_abs_move_on(close, h, rows):
+    """E|move| over the rows a cell is actually scored on. For a session cell the
+    all-hours mean would be the wrong denominator in the breakeven."""
+    close = np.asarray(close, dtype=float)
+    rows = np.asarray(rows, dtype=int)
+    rows = rows[rows + h < len(close)]
+    if rows.size == 0:
+        raise ValueError('no complete windows among the scored rows')
+    return float(np.abs(close[rows + h] - close[rows]).mean())
+
+
+def direction_metrics(name, cadence, h, p_up, ret_pct, close, tg, train_majority_y, cost_levels,
+                      eligible=None):
     y = tg['dir']
     rows = np.flatnonzero(np.isfinite(p_up) & np.isfinite(y))
     if rows.size < 30:
@@ -189,7 +249,11 @@ def direction_metrics(name, cadence, h, p_up, ret_pct, close, tg, train_majority
     blen = ST.block_length(h, cadence)
     lo, hi, _ = ST.block_bootstrap_ci(correct, blen, 0.05)
     s_close = pd.Series(close)
-    be = {lv.label: T.breakeven_for_horizon(s_close, h, lv.price) for lv in cost_levels}
+    if eligible is None:
+        be = {lv.label: T.breakeven_for_horizon(s_close, h, lv.price) for lv in cost_levels}
+    else:
+        m_abs = mean_abs_move_on(close, h, eligible)
+        be = {lv.label: T.breakeven_accuracy(m_abs, lv.price) for lv in cost_levels}
     label = ('no directional skill' if acc <= 0.5 else
              'predictive, not cost-viable' if acc <= be['measured'] else
              'above breakeven (descriptive)')
@@ -303,7 +367,10 @@ def done_cells(study_id: str, out: str = OUT) -> set:
 # ── one cell ────────────────────────────────────────────────────────────────
 
 def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_paths=None,
-             save=True) -> dict:
+             save=True, eligible=None, cost_levels=None, parity=None) -> dict:
+    """`eligible`: positions a cell may train and score on (the session, for M15).
+    `parity`: {'inputs': bid-price Inputs, 'tolerance_pp': float} -- the same
+    declared configuration re-scored on bid closes (design D17)."""
     trial_log = trial_log or os.path.join(out, 'trial_log.csv')
     dev = rec['development']
     seed = rec['seeds'][0]
@@ -311,10 +378,16 @@ def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_
     tg = make_targets(inputs.close, h)
     n = len(inputs)
     labelled = np.flatnonzero(np.isfinite(tg['dir']) | np.isfinite(tg['vol']))
+    if eligible is not None:
+        labelled = np.intersect1d(labelled, eligible)
     row = {'study_id': rec['study_id'], 'model': name, 'cadence': cadence, 'horizon': h,
            'config_hash': config_hash(cfg), 'first_bar': str(inputs.index[0]),
            'last_bar': str(inputs.index[-1]), 'banner': BANNER}
-    cost_levels = C.cost_levels(SYMBOL)
+    if eligible is not None:
+        row['n_eligible'] = int(np.size(eligible))
+    if parity:
+        row['price_definition'] = 'mid'
+    cost_levels = cost_levels or C.cost_levels(SYMBOL)
     kind = cfg['kind']
     key = 'p_up' if kind == 'direction' else 'vol_pct'
     t0 = time.time()
@@ -344,23 +417,25 @@ def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_
     min_train = int(n * dev['min_train_fraction'])
     wf = S.walk_forward(n, h=h, n_splits=dev['walk_forward_splits'], min_train=min_train)
     keys = ('p_up', 'ret_pct', 'vol_pct')
-    oos = _oos(name, cfg, inputs, tg, wf, seed, h, keys)
+    oos = _oos(name, cfg, inputs, tg, wf, seed, h, keys, eligible)
     train_mask = np.zeros(n, dtype=bool)
     train_mask[wf[0].train] = True
     cv_cfg = dev['cpcv'].get(name, dev['cpcv']['default'])
     cv = S.cpcv(n, h=h, n_groups=cv_cfg['n_groups'], k=cv_cfg['k'])
+    majority_y = tg['dir'][_keep(wf[0].train, eligible)]
 
     variant, chosen_cfg = 'frozen', cfg
     if kind == 'direction':
         m, per_trade = direction_metrics(name, cadence, h, oos['p_up'], oos.get('ret_pct'),
-                                         inputs.close, tg, tg['dir'][wf[0].train], cost_levels)
-        paths = _cpcv_paths(name, cfg, inputs, tg, cv, seed, h, 'p_up')
+                                         inputs.close, tg, majority_y, cost_levels, eligible)
+        paths = _cpcv_paths(name, cfg, inputs, tg, cv, seed, h, 'p_up', eligible)
         path_rows = [_path_summary(p, inputs.close, tg, h, cost_levels[0].price) for p in paths]
         grid = rec['tuning']['grids'].get(name)
         if grid:
             tuned = TU.inner_tune(name, cfg, grid, inputs, wf[0].train, tg, h, seed,
-                                  rec['tuning']['rule']['inner_folds'])
-            t_paths = _cpcv_paths(name, tuned['config'], inputs, tg, cv, seed, h, 'p_up')
+                                  rec['tuning']['rule']['inner_folds'], eligible=eligible,
+                                  min_train=MIN_TRAIN_ROWS)
+            t_paths = _cpcv_paths(name, tuned['config'], inputs, tg, cv, seed, h, 'p_up', eligible)
             t_rows = [_path_summary(p, inputs.close, tg, h, cost_levels[0].price) for p in t_paths]
             f_net = np.nanmedian([r['net_per_trade'] for r in path_rows])
             t_net = np.nanmedian([r['net_per_trade'] for r in t_rows])
@@ -377,9 +452,9 @@ def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_
                                               float('nan'), m['n_scored'], variant), trial_log)
             if variant == 'tuned':
                 chosen_cfg = tuned['config']
-                oos = _oos(name, chosen_cfg, inputs, tg, wf, seed, h, keys)
+                oos = _oos(name, chosen_cfg, inputs, tg, wf, seed, h, keys, eligible)
                 m, per_trade = direction_metrics(name, cadence, h, oos['p_up'], oos.get('ret_pct'),
-                                                 inputs.close, tg, tg['dir'][wf[0].train], cost_levels)
+                                                 inputs.close, tg, majority_y, cost_levels, eligible)
                 path_rows = t_rows
         else:
             O.append_trials([{'study_id': rec['study_id'], 'model': name, 'cadence': cadence,
@@ -394,6 +469,9 @@ def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_
         dsr = O.deflated_sharpe(per_trade, O.n_trials(trial_log), O.trial_sharpe_variance(trial_log))
         m.update({'sharpe_per_trade': dsr['sharpe'], 'dsr': dsr['dsr'], 'dsr_sr0': dsr['sr0'],
                   'dsr_n_trials': dsr['n_trials']})
+        if parity:
+            m.update(bid_mid_parity(name, chosen_cfg, h, wf, seed, eligible, m['accuracy'],
+                                    parity['inputs'], parity['tolerance_pp']))
         for i, r in enumerate(path_rows):
             _append_csv(os.path.join(out, 'cpcv_paths.csv'),
                         {'study_id': rec['study_id'], 'model': name, 'horizon': h, 'path': i, **r},
@@ -422,6 +500,51 @@ def run_cell(name, cfg, h, inputs, rec, digest, out=OUT, trial_log=None, kronos_
         final = make(name, chosen_cfg).fit(inputs, final_pos, tg, seed, h)
         manifest = save_artifact(final, rec['study_id'], name, cadence, h, variant, inputs, final_pos, digest)
     return row, oos, manifest
+
+
+SPREAD_ARTIFACT = 'spread artifact - not reported as skill'
+
+
+def bid_mid_parity(name, cfg, h, wf, seed, eligible, acc_mid, bid_inputs, tolerance_pp) -> dict:
+    """Score the SAME declared configuration on bid closes and compare (task
+    14.7; design D17).
+
+    A model trained on bid quotes can learn the broker's spread schedule instead
+    of the market: at the New York 17:00 rollover a bid-only series reads 72 %
+    one-hour "accuracy" against 60 % on mid, because the bid falls when the
+    spread opens. Inside the session the two agree to within 0.69 pp, so a gap
+    beyond the declared tolerance means the result is a quote artifact, and the
+    cell is never reported as skill.
+
+    Only the walk-forward accuracy is recomputed; CPCV, tuning and the trial log
+    belong to the primary (mid) scoring, so the check costs one extra pass.
+
+    The two runs are two separately fitted models, so their accuracies differ by
+    sampling noise as well as by the data. The declared tolerance is therefore
+    applied against a NOISE FLOOR of twice the standard error of the difference:
+    without it a cell with few eligible rows -- the long horizons, where the SE
+    alone exceeds a point -- would be called an artifact on noise, which is the
+    opposite of what the check is for. Both numbers are reported.
+    """
+    b_tg = make_targets(bid_inputs.close, h)
+    b_oos = _oos(name, cfg, bid_inputs, b_tg, wf, seed, h, ('p_up',), eligible)
+    rows = np.flatnonzero(np.isfinite(b_oos['p_up']) & np.isfinite(b_tg['dir']))
+    if rows.size < 30:
+        return {'accuracy_bid': float('nan'), 'parity_diff_pp': float('nan'),
+                'parity_tolerance_pp': tolerance_pp, 'parity_label': 'not enough bid rows'}
+    acc_bid = float(((b_oos['p_up'][rows] >= 0.5).astype(float) == b_tg['dir'][rows]).mean())
+    n = int(rows.size)
+    # Percentage points come from targets._to_pct, the package's single scaling
+    # site; a stray `* 100` anywhere else is a guarded invariant.
+    diff = T._to_pct(acc_mid - acc_bid)
+    se_pp = T._to_pct(float(np.sqrt(acc_mid * (1 - acc_mid) / n + acc_bid * (1 - acc_bid) / n)))
+    threshold = max(float(tolerance_pp), 2.0 * se_pp)
+    ok = abs(diff) <= threshold
+    return {'accuracy_bid': acc_bid, 'n_scored_bid': n,
+            'parity_diff_pp': diff, 'parity_tolerance_pp': float(tolerance_pp),
+            'parity_noise_floor_pp': 2.0 * se_pp, 'parity_threshold_pp': threshold,
+            'parity_label': 'parity holds' if ok else SPREAD_ARTIFACT,
+            **({} if ok else {'label': SPREAD_ARTIFACT})}
 
 
 def _path_series(p_up, close, tg, h):
@@ -486,15 +609,29 @@ def run_study(study_id: str, models=None, out: str = OUT, record_path: str | Non
     digest = F.feature_code_digest()['_combined']
     R.mark_first_fit(record_path)
     rec = R.load(record_path)
+    if sources.get('m15_source'):
+        R.record_data_source('m15_m1', sources['m15_source'], record_path)
+        rec = R.load(record_path)
     done = done_cells(study_id, out)
     timings, kronos_cache = {}, {}
     for name, cfg in rec['challengers'].items():
         if models and name not in models:
             continue
         horizons = cell_horizons(name, cfg, rec)
+        is_m15 = cfg['cadence'] == 'M15'
         try:
             model = make(name, cfg)
-            inputs = model.build_inputs(source_for(name, cfg, sources))
+            source = source_for(name, cfg, sources)
+            inputs = model.build_inputs(source)
+            cell_costs, bid_inputs = None, None
+            if is_m15:
+                from . import m15_data as MD
+                MD.verify_clock(source.index)
+                R.assert_data_source('m15_m1', MD.verify_source, record_path)
+                cell_costs = m15_cost_levels(source)
+                bid_inputs = make(name, cfg, price='bid').build_inputs(source)
+                if not bid_inputs.index.equals(inputs.index):
+                    raise ValueError('the mid and bid feature frames must share one bar grid')
             kpaths = None
             if cfg.get('train_free') and any((name, h) not in done for h in horizons):
                 # Both Kronos channels read the SAME sampled paths (same seed per
@@ -517,8 +654,15 @@ def run_study(study_id: str, models=None, out: str = OUT, record_path: str | Non
                 continue
             try:
                 R.assert_fit_allowed(name, cfg, h, cfg['cadence'], record_path)
+                eligible = parity = None
+                if is_m15:
+                    from . import m15_data as MD
+                    eligible = MD.eligible_positions(inputs.index, h)
+                    parity = {'inputs': bid_inputs,
+                              'tolerance_pp': rec['session']['parity_tolerance_pp']}
                 row, oos, manifest = run_cell(name, cfg, h, inputs, rec, digest, out,
-                                              kronos_paths=kpaths, save=save)
+                                              kronos_paths=kpaths, save=save, eligible=eligible,
+                                              cost_levels=cell_costs, parity=parity)
                 _save_oos(study_id, name, h, inputs, oos)
                 _append_csv(os.path.join(out, 'horizon_curves.csv'), row)
                 if manifest:
@@ -535,6 +679,13 @@ def run_study(study_id: str, models=None, out: str = OUT, record_path: str | Non
             'h1_range': [str(sources['h1'].index[0]), str(sources['h1'].index[-1])],
             'h1_rows': len(sources['h1']), 'macro_sources': sources.get('macro_sources'),
             'seeds': rec['seeds'], 'cell_seconds': timings, 'banner': BANNER}
+    if sources.get('m15') is not None:
+        from . import m15_data as MD
+        meta['m15'] = {**MD.session_summary(sources['m15'].index),
+                       'source': sources.get('m15_source'),
+                       'clock': MD.clock_evidence(sources['m15'].index)}
+    elif sources.get('m15_error'):
+        meta['m15'] = {'error': sources['m15_error']}
     meta_path = os.path.join(out, f'run_meta_{study_id}.json')
     if os.path.exists(meta_path):
         with open(meta_path, encoding='utf-8') as fh:

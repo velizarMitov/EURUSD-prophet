@@ -235,14 +235,29 @@ figure from the same vintage — see §8.1.
 **Raw one-minute parquet files** (`results/curl/raw/`, ~284 MB). Six files of eight-year M1
 history for the microstructure study. Excluded because:
 
-- no model, script or test reads them — only `src/curl_mt5_fetch.py`, which *produces* them;
-- `pyarrow` is not a project dependency, so they could not be opened in the environment this
-  project declares;
 - they are regenerable with a single command on a machine with an MT5 terminal;
+- `pyarrow` is not a project dependency, so they cannot be opened in the environment this
+  project declares;
 - redistributing a broker's bar history raises questions this project has no need to answer.
 
 The derived coverage report, `results/curl/m1_coverage.csv`, **is** committed — so the
 provenance evidence cited in the notebook survives without the bulk.
+
+**One consumer now reads `EURUSDPROPHET_M1`.** `src/forecast_eval/m15_data.py` aggregates
+`results/curl/raw/EURUSD_M1.parquet` (2,980,060 bars, 2018-08-08 → 2026-08-07) into 199,097
+M15 bars on the **mid** price, because that file carries `spread_points` per bar and
+`results/eurusd_m15.csv` does not. Without a spread there is no mid price and no honest
+cost, and on bid closes alone the New York 17:00 rollover manufactures a 72 % one-hour
+"accuracy". The M15 session cells of the horizon study therefore depend on this file:
+
+- its SHA-256, byte size and row count are recorded in
+  `results/horizon_study/study_record.json` under `data_sources.m15_m1`, so a regenerated
+  copy can be **proven** identical rather than assumed so;
+- a mismatch stops the run (`m15_data.SourceChanged`);
+- the tests that need it skip when it is absent, so the suite still passes from a fresh
+  clone;
+- `pip install pyarrow` is required, and its absence fails with a message naming it, never
+  with an import traceback.
 
 To regenerate them:
 
@@ -258,7 +273,7 @@ python -m src.curl_mt5_fetch        # requires a running MT5 terminal (Windows)
 ```bash
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model
-python -m pytest -q                    # 556 tests, all passing
+python -m pytest -q                    # 862 tests: 861 pass, 1 environment skip
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
 ```
 

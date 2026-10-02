@@ -19,10 +19,11 @@ LOGIN = 1007437
 
 
 class FakeMT5:
-    TIMEFRAME_H1, TIMEFRAME_D1 = 16385, 16408
+    TIMEFRAME_M15, TIMEFRAME_H1, TIMEFRAME_D1 = 15, 16385, 16408
 
-    def __init__(self, h1, d1, ok=True):
+    def __init__(self, h1, d1, ok=True, m15=None):
         self.h1, self.d1, self.ok = h1, d1, ok
+        self.m15 = m15 if m15 is not None else h1
 
     def initialize(self):
         return self.ok
@@ -46,7 +47,9 @@ class FakeMT5:
         return namedtuple('S', 'point digits swap_long swap_short swap_mode')(1e-5, 5, -7.1, 2.3, 1)
 
     def copy_rates_from_pos(self, symbol, tf, start, count):
-        return self._rates(self.h1 if tf == self.TIMEFRAME_H1 else self.d1)[-count:]
+        frame = {self.TIMEFRAME_M15: self.m15, self.TIMEFRAME_H1: self.h1,
+                 self.TIMEFRAME_D1: self.d1}[tf]
+        return self._rates(frame)[-count:]
 
     @staticmethod
     def _rates(df):
@@ -65,11 +68,12 @@ def h1_all():
     return F.load_h1().iloc[-1600:]
 
 
-def _snap(h1, server='Fake-Server', source='MT5'):
+def _snap(h1, server='Fake-Server', source='MT5', m15=None):
     h1 = h1.assign(spread=6.0)
     d1 = h1.resample('1D').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last',
                                 'tick_volume': 'sum', 'spread': 'mean'}).dropna()
-    return FL.Snapshot(h1, d1, server, {'swap_long': -7.1, 'swap_short': 2.3}, source)
+    return FL.Snapshot(h1, d1, server, {'swap_long': -7.1, 'swap_short': 2.3, 'point': 1e-5},
+                       source, m15=m15)
 
 
 @pytest.fixture

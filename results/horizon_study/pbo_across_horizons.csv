@@ -1,10 +1,3 @@
 study_id,model,pbo,candidates,n_rows,logit_median,banner
-hs-20261001,daily_gbm_macro,0.20481740481740482,"h1,h2,h5",4302,1.0986122886681098,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,daily_gbm_price,0.9016317016317016,"h1,h2,h5",4302,-1.0986122886681098,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,daily_lstm_macro,0.5151515151515151,"h1,h2,h5",4302,0.0,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,daily_lstm_price,0.9578865578865579,"h1,h2,h5",4302,-1.0986122886681098,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,h1_daily_ensemble,0.790986790986791,"h1,h2,h5",1256,0.0,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,h1_gbm,0.15586635586635586,"h1,h2,h4,h6,h12,h24,h48,h120",30056,2.0794415416798353,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,kronos_direction,0.24343434343434345,"h1,h2,h4,h6,h12,h24,h48,h120",1167,0.6931471805599452,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,ti_lstm,0.5058275058275058,"h1,h2,h5",1256,0.0,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
-hs-20261001,vol_ensemble,0.5064491064491065,"h1,h2,h5",4302,0.0,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
+hs-m15-20261002,m15_session_gbm,0.2767676767676768,"h1,h2,h4,h8,h16,h26",4144,0.9162907318741551,"DESCRIPTIVE - not a verdict; describes challengers, not production models"
+hs-m15-20261002,m15_session_lstm,0.7734265734265734,"h1,h2,h4,h8,h16,h26",4144,-0.9162907318741551,"DESCRIPTIVE - not a verdict; describes challengers, not production models"

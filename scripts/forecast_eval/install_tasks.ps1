@@ -1,7 +1,13 @@
 # Install the forward-evaluation scheduled tasks (openspec change
-# horizon-study-forward-evaluation, tasks 9.6 and 10.2).
+# horizon-study-forward-evaluation, tasks 9.6, 10.2 and 14.10).
 #
-#   EURUSDProphet-ForwardLogger  every hour at :01 -- predict / gap / settle
+#   EURUSDProphet-ForwardLogger  every 15 minutes at :01/:16/:31/:46 --
+#                                predict / gap / settle for M15, H1 and D1 in
+#                                one pass. One minute after each bar close, as
+#                                the H1 design already did; the cadences that
+#                                have no new bar return "nothing new", so the
+#                                finer schedule only makes H1 and D1 coverage
+#                                more robust. The run lock keeps passes apart.
 #   EURUSDProphet-Refit          every Saturday 06:00 -- refits only on the
 #                                first weekend of the month, otherwise no-op
 #
@@ -28,5 +34,5 @@ function New-ProphetTask($name, $module, $schedule) {
     Write-Output "installed $name"
 }
 
-New-ProphetTask 'EURUSDProphet-ForwardLogger' 'src.forecast_eval.forward_logger' @('/SC', 'HOURLY', '/MO', '1', '/ST', '00:01')
+New-ProphetTask 'EURUSDProphet-ForwardLogger' 'src.forecast_eval.forward_logger' @('/SC', 'MINUTE', '/MO', '15', '/ST', '00:01')
 New-ProphetTask 'EURUSDProphet-Refit' 'src.forecast_eval.refit' @('/SC', 'WEEKLY', '/D', 'SAT', '/ST', '06:00')

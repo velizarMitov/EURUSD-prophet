@@ -1,0 +1,2 @@
+cadence,bar,reason,logged_at
+H1,2026-10-02 05:00:00+00:00,bar closed while the logger was not running,2026-10-02T05:01:07+00:00

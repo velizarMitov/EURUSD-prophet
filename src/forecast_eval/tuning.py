@@ -50,21 +50,33 @@ def _auc(y, p):
 
 
 def inner_tune(name: str, frozen_cfg: dict, grid: dict, inputs, train_pos, targets: dict,
-               h: int, seed: int, inner_folds: int = 4) -> dict:
+               h: int, seed: int, inner_folds: int = 4, eligible=None,
+               min_train: int = 50) -> dict:
+    """`train_pos` is the CONTIGUOUS training block, so the inner walk-forward
+    can be built on it and mapped back by offset. `eligible` (the session, for
+    M15) then restricts which of its rows are fitted and scored -- passing an
+    already-filtered block instead would make the inner split arithmetic wrong,
+    because a label spans real bars whether or not they are eligible."""
     train_pos = np.sort(np.asarray(train_pos))
     if not np.array_equal(train_pos, np.arange(train_pos[0], train_pos[-1] + 1)):
         raise ValueError('inner tuning needs a contiguous training block (walk-forward)')
     base = int(train_pos[0])
     n = len(train_pos)
     inner = S.walk_forward(n, h=h, n_splits=inner_folds, min_train=max(h + 1, n // 2))
+    keep = (lambda p: np.asarray(p)) if eligible is None else \
+        (lambda p: np.intersect1d(p, eligible))
     scores = []
     for params in grid_points(grid):
         cfg = with_params(frozen_cfg, params, grid)
         fold_auc = []
         for sp in inner:
-            m = make(name, cfg).fit(inputs, base + sp.train, targets, seed, h)
+            tr, te = keep(base + sp.train), keep(base + sp.test)
+            if tr.size < min_train or te.size == 0:
+                fold_auc.append(float('nan'))
+                continue
+            m = make(name, cfg).fit(inputs, tr, targets, seed, h)
             p = m.predict(inputs)['p_up']
-            fold_auc.append(_auc(targets['dir'][base + sp.test], p[base + sp.test]))
+            fold_auc.append(_auc(targets['dir'][te], p[te]))
         scores.append((float(np.nanmean(fold_auc)) if np.isfinite(fold_auc).any() else -np.inf, params))
     best_score, best = max(scores, key=lambda t: t[0])
     return {'config': with_params(frozen_cfg, best, grid), 'params': best,

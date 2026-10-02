@@ -19,12 +19,30 @@ that matters for trading:
   and at **59.97 %** at the 1.5-pip round trip in `config.json`.
 - **2, 4, 6, 12, 48 and 120 h: never tested** with a direction model. The arithmetic
   feasibility scan (`h1_horizon_feasibility.csv`) shows that labels exist there.
+- **Below one hour: never tested at all.** The owner trades from 15:30 Europe/Sofia,
+  which is 08:30 America/New_York, and asked for the sub-hourly horizons they can
+  actually act on. 15-minute history exists on disk and the horizon question has never
+  been asked of it.
 
 The breakeven falls toward 50 % as the horizon lengthens, because the cost shrinks
 relative to the move: the mean |r| is about 7.5 pips at 1 h, 41 pips at 24 h and
 93 pips at 120 h. At the same time, the number of independent observations falls as
 1/h. The horizon question is therefore a trade-off curve between **cost** and
-**sample size**, and nobody has drawn it yet.
+**sample size**, and nobody has drawn it yet. Measured inside the owner's session
+(15:30–23:00 Europe/Sofia), the short end of that curve reads:
+
+| horizon | mean &#124;move&#124; | accuracy needed to beat the spread | years to a verdict |
+|---|---:|---:|---:|
+| 15 min | 4.2 pips | 56.02 % | 0.51 |
+| 30 min | 5.9 pips | 54.27 % | 1.05 |
+| 1 h | 8.3 pips | 53.01 % | 2.10 |
+| 2 h | 11.9 pips | 52.10 % | 4.91 — over the cap |
+
+Shorter horizons buy a verdict sooner and demand a much higher accuracy to pay for
+themselves. **Finer input data does not shorten the wait**: a one-hour forecast needs
+the same number of non-overlapping hours however often it is issued, so 15-minute bars
+speed up a decision only by making the *horizon* shorter, not by making the forecasts
+more frequent. What finer data can do is make the one-hour forecast more accurate.
 
 Two further facts shape the design:
 
@@ -66,12 +84,31 @@ so that nobody can avoid it by choosing the horizon after looking.
   an external pinned model, is run as-is. Each challenger's configuration is declared
   once before the first fit and kept identical across horizons. Features come from the
   project's existing feature code, imported read-only, so both systems describe the
-  market identically. H1-cadence models use {1, 2, 4, 6, 12, 24, 48, 120} bars;
-  daily-cadence models use {1, 2, 5} trading days. The output is a descriptive,
-  cost-net horizon curve per model. Volatility models are compared with their
-  strongest known baseline, GARCH(1,1) × day-of-week, not plain GARCH.
-  Findings apply to the challengers. Promoting any of them into production is a
-  separate, later decision.
+  market identically. M15-cadence models use {1, 2, 4, 8, 16, 26} bars; H1-cadence
+  models use {1, 2, 4, 6, 12, 24, 48, 120} bars; daily-cadence models use {1, 2, 5}
+  trading days. The output is a descriptive, cost-net horizon curve per model.
+  Volatility models are compared with their strongest known baseline,
+  GARCH(1,1) × day-of-week, not plain GARCH. Findings apply to the challengers.
+  Promoting any of them into production is a separate, later decision.
+- **New M15 session layer**, covering the horizons the owner can trade:
+  - Two new session challengers, a gradient-boosting and a sequence model, on
+    15-minute bars, with the bar's position in the session, its spread and its tick
+    volume available as features.
+  - Bars aggregated from the one-minute history, which carries a per-bar spread, and
+    every target and cost computed on the **mid** price rather than the bid close.
+    The pinned `results/eurusd_m15.csv` has no spread column and is not used for
+    targets.
+  - Forecasts made only inside the owner's declared session, 15:30 to 23:00
+    Europe/Sofia on weekdays, with both the as-of bar and the target bar required to
+    fall inside it. The bar labels turned out **not** to be UTC but Europe/Berlin wall
+    clock, established from the weekly market boundary; since Sofia and Berlin share
+    one daylight-saving rule, the session is a fixed label window needing no conversion.
+  - A **bid-versus-mid parity check** on every sub-hourly cell. Measured on history, a
+    bid-only series reaches a 72 % one-hour "accuracy" at the New York 17:00 rollover,
+    where the spread quintuples — entirely an artefact of the quote, worth nothing at
+    any cost level. A cell whose bid and mid results diverge beyond a declared
+    tolerance of 1.0 pp is labelled a spread artifact and never reported as skill.
+    Inside the declared session the two agree to within 0.25 pp.
 - **New forward arbiter:**
   - A scheduled forward logger records every model's prediction at every horizon on
     every bar close, whether or not anyone opens the dashboard.
@@ -81,15 +118,22 @@ so that nobody can avoid it by choosing the horizon after looking.
     cadence, and every prediction carries the hash of the model version that made it.
   - A pre-registration is written before the first forward outcome. It contains a
     power table, the time-to-decision per cell, and the verdict rules: KEEP only if
-    the lower bound of the accuracy CI exceeds the **cost breakeven** for that horizon.
+    the lower bound of the accuracy CI exceeds **50 %**, i.e. the model calls the
+    direction better than a coin. The owner chose this criterion on 2026-10-02: the
+    forecast is used for direction, not for high-frequency trading. The spread result is
+    reported beside every verdict but does not decide it.
 - **Honest scope statement, made before any data:** with a forward-only arbiter, only
-  the shortest H1 horizons can reach a decision within a few years. Admitting only
-  cells that can decide within 3 years gives a direction family of 6 cells
-  (H1-cadence models at 1, 2 and 4 h; alpha = 0.05/6). For a 3 pp edge over
-  breakeven, the decision takes about 0.5 years at 1 h, 1.1 years at 2 h and 2.2 years
-  at 4 h. **Every daily-cadence cell would need 13–65 years.** Those cells are
-  registered `UNDERPOWERED — NO DECISION` by design and spend zero alpha, but are still
-  logged and reported descriptively.
+  the short horizons can reach a decision within a few years. Admitting only cells that
+  can decide within 3 years gives a direction family of **12 cells** out of 46
+  candidates, at alpha = 0.05/12 = 0.004167 and 3,817 forecasts per cell: the two
+  session challengers at 15 min, 30 min and 1 h (0.51, 1.05 and 2.10 years), and the
+  H1 GBM and Kronos direction at 1, 2 and 4 h (0.62, 1.24 and 2.47 years). The M15
+  cells at 2 h and beyond need 4.9–14.7 years, H1 at h ≥ 6 needs 3.7–74, and **every
+  daily-cadence cell would need 13–65 years.** Those 34 cells are registered
+  `UNDERPOWERED — NO DECISION` by design and spend zero alpha, but are still logged and
+  reported descriptively. The family must be fixed before the registration is
+  committed, which is why the session layer lands first: one family of 12 is stronger
+  than two families of 6.
 - **No production change.** Nothing changes under `models/`, `src/inference.py`,
   `src/paper_trading.py`, `api.py` or `_train_pipeline.py`. No order, broker, sizing
   or stop-loss code is added. Research artifacts live outside `models/`.
@@ -106,7 +150,9 @@ so that nobody can avoid it by choosing the horizon after looking.
 - `forecast-evaluation/horizon-study`: the challenger model for each model type, how
   each is fitted per horizon with its configuration declared once and frozen, the
   horizon grid, the cost breakeven per horizon, and the descriptive horizon-curve
-  report. It owns what is evaluated, and on which grid.
+  report. It owns what is evaluated, and on which grid. It also owns the sub-hourly
+  price definition (mid from the per-bar spread), the session window, and the
+  bid-versus-mid parity check.
 - `forecast-evaluation/forward-arbiter`: scheduled forward prediction logging,
   price-source and spread provenance, the walk-forward refit cadence and version
   hashing during the forward window, the pre-registration with its power table and
@@ -138,12 +184,23 @@ None. `openspec/specs/` is empty, so no existing capability's requirements chang
   No order call exists anywhere in the change.
 - **Compute:** fitting every challenger per horizon is the expensive step. That is
   roughly 6 daily-cadence families × 3 horizons plus 1 trainable H1-cadence family ×
-  8 horizons, dominated by the LSTMs. Kronos is inference-only. Refits repeat monthly
-  during the forward window.
+  8 horizons, dominated by the LSTMs. The session layer adds 2 families × 6 horizons on
+  up to 60,163 eligible M15 rows, scored twice (mid and bid) for the parity check — the
+  largest row count in the study, and the session LSTM becomes the most expensive single
+  cell. Kronos is inference-only. Refits repeat monthly during the forward window.
+- **Sub-hourly data:** the session layer reads `results/curl/raw/EURUSD_M1.parquet`
+  (2,980,060 bars, 2018-08-08 → 2026-08-07), which is excluded from git by `DATA.md` §7
+  and regenerable with `src/curl_mt5_fetch.py`. Its SHA-256 and row count go into the
+  study record so a rebuilt copy can be proven identical. `pyarrow` is required to read
+  it and is not a declared dependency, so a missing install must fail with a message
+  naming it. The pinned `results/eurusd_m15.csv` is neither read for targets nor
+  written. History is 8 years here against 11 for H1, because the spread column only
+  exists that far back.
 - **Methodology:** two new self-contained hypothesis families, one for direction and
   one for volatility. Neither touches the standing `0.05/9` feature bar. Existing
   hypothesis logs, fixtures and spent blocks are not modified.
 - **Time:** the first possible verdict comes about 6 months after the forward logger
-  starts scoring, and only for the 1-hour cells, assuming every hourly bar is logged.
-  Downtime lengthens this in proportion. Most cells will be reported descriptively
-  for the life of the program and will never be adjudicated.
+  starts scoring — the 15-minute session cells at 0.49 years and the 1-hour H1 cells at
+  0.62 — assuming every bar close in the session is logged. Downtime lengthens this in
+  proportion. Of 46 candidate cells, 12 can ever be adjudicated; the other 34 will be
+  reported descriptively for the life of the program.

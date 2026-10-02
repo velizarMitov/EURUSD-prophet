@@ -68,11 +68,12 @@ def due_cells(now_utc, manifest_path=MANIFEST) -> list[dict]:
     return out
 
 
-def history_sources(cutoff, extra=None, macro: bool = True) -> dict:
+def history_sources(cutoff, extra=None, macro: bool = True, m15: bool = True) -> dict:
     """The study's history extended with NEWER MT5 bars from `extra`
-    ({'h1': ..., 'd1': ...}), cut at `cutoff`. Without the extension a refit
-    would retrain on the same frozen history every month: the daily history
-    CSV is a frozen input and ends where the study's data ended."""
+    ({'h1': ..., 'd1': ..., 'm15': ..., 'point': ...}), cut at `cutoff`. Without
+    the extension a refit would retrain on the same frozen history every month:
+    the daily history CSV is a frozen input and ends where the study's data
+    ended."""
     raw = F.load_daily_ohlcv()
     h1 = F.load_h1()
     if extra:
@@ -86,10 +87,24 @@ def history_sources(cutoff, extra=None, macro: bool = True) -> dict:
             raw = pd.concat([raw, d1[d1.index > raw.index[-1]]])
     cut = pd.Timestamp(cutoff)
     naive = cut.tz_localize(None) if cut.tzinfo else cut
-    h1 = h1[h1.index <= (cut if cut.tzinfo else cut.tz_localize('UTC'))]
+    aware = cut if cut.tzinfo else cut.tz_localize('UTC')
+    h1 = h1[h1.index <= aware]
     raw = raw[raw.index <= naive]
     macro_df = ST.load_macro_window(raw.index.min(), raw.index.max()) if macro else None
-    return {'h1': h1, 'daily': {fs: F.daily_features(raw, macro_df, fs) for fs in F.FEATURE_SETS}}
+    out = {'h1': h1, 'daily': {fs: F.daily_features(raw, macro_df, fs) for fs in F.FEATURE_SETS},
+           'm15': None}
+    if m15:
+        try:
+            from . import m15_data as MD
+            frame = MD.m15_bars()
+            live = (extra or {}).get('m15')
+            if live is not None and len(live):
+                newer = MD.from_mt5_bars(live, (extra or {}).get('point') or frame['point'].iloc[-1])
+                frame = pd.concat([frame, newer[newer.index > frame.index[-1]]])
+            out['m15'] = frame[frame.index <= aware]
+        except Exception as e:                           # noqa: BLE001 -- isolate the family
+            out['m15_error'] = f'{type(e).__name__}: {e}'
+    return out
 
 
 def refit_cell(row: dict, sources: dict, now_utc, seed: int = 42) -> dict:
@@ -102,6 +117,10 @@ def refit_cell(row: dict, sources: dict, now_utc, seed: int = 42) -> dict:
     n = len(inputs)
     pos = np.flatnonzero(np.isfinite(tg['dir']) | np.isfinite(tg['vol']))
     pos = pos[pos < n - h]
+    if cfg.get('cadence') == 'M15':
+        from . import m15_data as MD
+        MD.verify_clock(inputs.index)
+        pos = np.intersect1d(pos, MD.eligible_positions(inputs.index, h))
     model.fit(inputs, pos, tg, seed, h)
     digest = F.feature_code_digest()['_combined']
     study_id = f"{row['study_id']}-refit{month_tag(now_utc)}"
@@ -129,7 +148,8 @@ def run_refit(now_utc=None, manifest_path=MANIFEST, out=OUT, sources=None) -> di
                           'logged_at': datetime.now(timezone.utc).isoformat(timespec='seconds')}],
                         FAIL_FIELDS)
             return {'status': 'skipped', 'reason': str(e)}
-        sources = history_sources(cutoff, {'h1': snap.h1, 'd1': snap.d1})
+        sources = history_sources(cutoff, {'h1': snap.h1, 'd1': snap.d1, 'm15': snap.m15,
+                                           'point': snap.meta.get('point')})
     done, failed = 0, 0
     for row in cells:
         try:

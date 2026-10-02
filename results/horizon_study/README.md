@@ -1,4 +1,4 @@
-# Horizon study `hs-20261001`: results
+# Horizon study: results (`hs-20261001` daily/H1, `hs-m15-20261002` M15 session)
 
 > **DESCRIPTIVE. Not a verdict.** These curves describe the **challenger**
 > models built by `src/forecast_eval/`, not the production models in `models/`.
@@ -9,27 +9,71 @@
 
 ## What was run
 
+Two studies, because adding a cadence changes the locked grid and so needs its
+own record: `hs-20261001` (daily and H1) and `hs-m15-20261002` (the M15 session
+layer). The earlier record is archived as
+[`study_record.hs-20261001.json`](study_record.hs-20261001.json).
+
 - **Record:** [`study_record.json`](study_record.json). It fixed the horizon grid,
-  every configuration, the tuning rule and the 3-year cap, and was written
-  before the first fit.
-- **Grid:** H1 cadence at {1, 2, 4, 6, 12, 24, 48, 120} bars. Daily cadence at
-  {1, 2, 5} days.
-- **Cells:** 38. That is 34 direction cells (10 challengers), the volatility
-  ensemble at {1, 2, 5}, and Kronos volatility at 24 bars. **0 failures.**
+  every configuration, the session declaration, the tuning rule and the 3-year
+  cap, and was written before the first fit.
+- **Grid:** M15 session cadence at {1, 2, 4, 8, 16, 26} bars. H1 cadence at
+  {1, 2, 4, 6, 12, 24, 48, 120} bars. Daily cadence at {1, 2, 5} days.
+- **Cells:** 38 in `hs-20261001` — 34 direction cells (10 challengers), the
+  volatility ensemble at {1, 2, 5}, and Kronos volatility at 24 bars — plus 12 in
+  `hs-m15-20261002` (2 session challengers × 6 horizons). **Every cell produced a
+  result.** [`failures.csv`](failures.csv) keeps six records from the first M15 GBM
+  attempt, which hit a bug in the nested-tuning call (the session-filtered rows are
+  not a contiguous block, which the inner walk-forward needs). The fix passes the
+  contiguous block plus the eligibility mask; the six cells were re-run and
+  succeeded. The log is append-only, so the record of the failed attempt stays.
 - **Data:**
   - daily: 1999-01-04 → 2026-08-10, 8,606 euro-era rows; macro from FRED
     (public CSV, on a sandboxed copy of the caches);
   - H1: 2017-01-20 → 2026-09-30, 60,312 bars;
+  - M15: 2018-08-08 → 2026-08-07, 199,097 bars aggregated from
+    `results/curl/raw/EURUSD_M1.parquet` (2,980,060 M1 bars, digest in the
+    record). 62,238 fall inside the session over 2,075 session days;
   - Kronos: scored only after its 2024-06 training cutoff, on every 12th bar.
 - **Method:**
   - an expanding purged walk-forward (5 folds, test on the later half);
-  - CPCV (N = 6, k = 2; N = 4 for the volatility ensemble);
-  - nested-CV tuning for the GBM cells under the declared rule.
-- **Costs:** the measured median spread of 0.5 pip is the primary cost. The
-  1.5-pip round trip in `config.json` is the sensitivity case. Breakeven
-  accuracy = 0.5 + cost / (2 · E|move over h|).
-- **Compute:** 111 minutes of fitting across all cells, plus about 108 minutes of
-  Kronos sampling on the GPU.
+  - CPCV (N = 6, k = 2; N = 4 for the volatility ensemble and the session LSTM);
+  - nested-CV tuning for the GBM cells under the declared rule;
+  - M15 cells train and score on session rows only, while the splits run on the
+    full bar grid so the purge stays correct.
+- **Costs:** the measured median spread of 0.5 pip is the primary cost (for M15
+  the in-session median, which is also 0.50 pip, p90 0.60). The 1.5-pip round
+  trip in `config.json` is the sensitivity case. Breakeven accuracy =
+  0.5 + cost / (2 · E|move over h|), with E|move| taken over the rows each cell
+  is actually scored on.
+- **Compute:** 111 minutes for `hs-20261001`, plus about 108 minutes of Kronos
+  sampling on the GPU; 13 minutes for the 12 M15 cells.
+
+### The bar-label clock
+
+The bar labels are **not UTC**. They are **Europe/Berlin** wall clock, which the
+study establishes from the data rather than assuming. The forex week opens Sunday
+17:00 America/New_York; read on Berlin's clock that instant is 23:00 normally and
+22:00 in the March and late-October weeks when US and EU daylight saving disagree.
+Measured over every weekend in the M1 file
+([`run_meta_hs-m15-20261002.json`](run_meta_hs-m15-20261002.json)):
+
+| weeks | n | predicted label hour | observed modal | match |
+|---|---:|---:|---:|---:|
+| daylight saving aligned | 396 | 23 | 23 | 99.2 % |
+| US/EU mismatch | 29 | 22 | 22 | 100 % |
+| all | 425 | | | **99.3 %** |
+
+No other zone fits both rows — UTC would predict 21:00/22:00, New York a constant
+17:00. A run whose weekly opens stop matching is **refused**, because every
+intraday rule rests on this one fact. Every session rule is expressed against that
+clock, so the owner's **15:30–23:00 Europe/Sofia** session is the fixed label
+window **14:30–22:00** with no timezone conversion anywhere (Sofia is Berlin + 1 h
+on every day of the year, under one EU daylight-saving rule).
+
+An earlier draft of this program read the labels as UTC and converted them to
+`America/New_York`. That put the session two hours off and mislocated the rollover
+artifact of §1c at "19:00 New York". Every figure here is from the corrected clock.
 
 ## What it says
 
@@ -62,6 +106,57 @@ for every h ≤ 24.
 - **PBO across horizons is 0.16.** Choosing the best horizon of this model in
   sample is unlikely to be pure luck: the *shape* of the curve is stable, even
   though no single point clears its cost with confidence.
+
+### 1b. In the owner's session, only the 15-minute horizon beats a coin — and it is five points short of the spread
+
+Both session challengers, on mid prices, inside 15:30–23:00 Europe/Sofia:
+
+| horizon | model | accuracy | 95 % CI | breakeven 0.5 pip | net / trade | PT p | bid−mid gap |
+|---|---|---:|---|---:|---:|---:|---:|
+| **15 min** | GBM | **51.01 %** | **50.46–51.56** | 56.02 % | −0.3 pip | 0.0002 | 0.04 pp |
+| **15 min** | LSTM | **51.12 %** | **50.56–51.66** | 56.02 % | −0.2 pip | 0.0001 | 0.20 pp |
+| 30 min | GBM | 50.58 % | 49.95–51.22 | 54.27 % | −0.4 | 0.024 | 0.36 pp |
+| 30 min | LSTM | 50.43 % | 49.76–51.12 | 54.27 % | −0.3 | 0.071 | 0.37 pp |
+| 1 h | GBM | 49.66 % | 48.89–50.47 | 53.01 % | −0.6 | 0.87 | 0.06 pp |
+| 1 h | LSTM | 49.89 % | 48.96–50.83 | 53.01 % | −0.5 | 0.65 | 0.70 pp |
+| 2 h | GBM | 49.63 % | 48.52–50.74 | 52.10 % | −0.3 | 0.84 | 0.60 pp |
+| 4 h | GBM | 48.58 % | 47.18–50.14 | 51.46 % | −2.3 | 1.00 | 0.14 pp |
+| 6.5 h | GBM | 48.84 % | 46.60–50.99 | 51.08 % | −1.8 | 0.92 | 0.62 pp |
+
+(The LSTM's 2 h, 4 h and 6.5 h rows behave the same; 22,000–29,000 scored rows at
+15–60 min.)
+
+- **Two cells have an interval above 50 %: both models at 15 minutes.** The edge
+  is about one point, and the Pesaran–Timmermann p-value is below 0.001.
+- **It cannot pay the spread.** At 15 minutes the mean move is 4.15 pips against
+  a 0.5-pip spread, so breakeven is **56.02 %** — five points above what the
+  models reach. Every net figure, at every cost level, for all twelve cells, is
+  negative. Every Deflated Sharpe is 0.000.
+- **Nothing survives past 30 minutes.** From 1 hour on, the point estimates sit
+  *below* 50 %.
+- **The LSTM's PBO across horizons is 0.77** (the GBM's is 0.28): picking the
+  session LSTM's best horizon in sample is mostly overfitting.
+- **The bid-versus-mid parity check passed on all twelve cells**, worst gap
+  0.70 pp against a declared 1.0 pp tolerance. That is the measurement that the
+  session window is clean, not an assumption.
+
+### 1c. The rollover artifact the session rule exists to exclude
+
+One hour after the session ends, a bid-only series reads a 72 % one-hour
+"accuracy". It is not skill:
+
+| label hour | New York | up-rate on bid | up-rate on mid | gap | median spread |
+|---|---|---:|---:|---:|---:|
+| 14:00–21:00 (session) | 08:00–15:00 | 48.0–50.5 % | 48.1–50.5 % | ≤ 0.69 pp | 0.5 pip |
+| 22:00 | 16:00 | 46.60 % | 57.08 % | +10.48 pp | 0.9 pip |
+| 23:00 | **17:00 — rollover** | **72.20 %** | 60.48 % | −11.72 pp | 2.4 pip |
+
+The spread quintuples at the New York 17:00 rollover; the bid falls because the
+spread opens, not because the market falls. A sign model fitted there would
+backtest above 70 % and lose money at any cost level — its breakeven is near
+80 %. This is why every sub-hourly target is built on the **mid** price from each
+bar's own spread, why the session stops at 23:00 Sofia, and why a trade must both
+start and end inside the session to be eligible.
 
 ### 2. The daily models are coin flips at every horizon
 
@@ -98,18 +193,32 @@ production ensemble.
 
 ## What this means for the forward test
 
-The six cells admitted to the forward family were fixed by arithmetic before any
-of this was seen. They are the H1 GBM and Kronos direction at 1, 2 and 4 h. The
-study gives each one a prior:
+The forward verdict asks the owner's question: **does the model call the direction
+(+ or -) better than a coin?** KEEP means the lower bound on accuracy is above 50 %.
+The spread result is reported beside it but does not decide it. The owner chose this
+on 2026-10-02. ActivTrades charges no commission, so the spread is the only cost.
 
-- **1 h and 2 h:** expected *predictive, not cost-viable*. The model is reliably
-  above 50 % and reliably below the breakeven.
-- **4 h:** the only cell where the H1 GBM sits at its breakeven. It is the cell
-  worth watching. At full coverage, a forward decision on it takes about
-  2.2 years.
-- **Kronos:** expected undecided or DROP.
+The **twelve** cells admitted to the forward family were fixed by arithmetic before any
+of this was seen: 46 candidates iterate to 12 at alpha = 0.05/12 = 0.004167, needing
+3,817 forecasts each. The study gives each one a prior:
 
-Every daily cell remains `UNDERPOWERED — NO DECISION` by design.
+| cell | horizon | years to decide | expected verdict |
+|---|---|---:|---|
+| `m15_session_gbm`, `m15_session_lstm` | 15 min | 0.51 | **KEEP**, cost-labelled |
+| `m15_session_gbm`, `m15_session_lstm` | 30 min | 1.05 | DROP |
+| `m15_session_gbm`, `m15_session_lstm` | 1 h | 2.10 | DROP |
+| `h1_gbm` | 1, 2, 4 h | 0.62 / 1.24 / 2.47 | **KEEP**, 1 h and 2 h cost-labelled |
+| `kronos_direction` | 1, 2, 4 h | 0.62 / 1.24 / 2.47 | DROP |
+
+- **The 15-minute session cells and the H1 GBM** are the only cells whose study
+  interval cleared 50 %, so they are the ones expected to end KEEP. Every one of them
+  is expected to carry the cost label *predictive, not cost-viable* — the 15-minute
+  cells by five points, the H1 1 h cell by one.
+- **Kronos direction and everything from 30 minutes up** are expected to end DROP.
+- The first possible verdict is about **six months** in: the 15-minute cells at 0.51
+  years and the H1 1-hour cells at 0.62.
+- The other 34 candidate cells stay `UNDERPOWERED — NO DECISION` by design — the M15
+  cells at 2 h and beyond (4.9–14.7 years), H1 at h ≥ 6, and every daily cell.
 
 ## Files
 
@@ -120,8 +229,18 @@ Every daily cell remains `UNDERPOWERED — NO DECISION` by design.
 | [`pbo_across_horizons.csv`](pbo_across_horizons.csv) | per model: PBO of picking its best horizon in sample |
 | [`trial_log.csv`](trial_log.csv) | append-only count of every configuration ever fitted (the DSR's N) |
 | [`artifact_manifest.csv`](artifact_manifest.csv) | SHA-256 of every fitted challenger in `research_models/` (gitignored), which the forward logger loads |
-| [`study_record.json`](study_record.json) | the locked declaration (first fit 2026-10-01) |
+| [`study_record.json`](study_record.json) | the locked declaration for `hs-m15-20261002`: grid, configurations, the session rules, the M1 source digest |
+| [`study_record.hs-20261001.json`](study_record.hs-20261001.json) | the archived declaration of the daily/H1 study (first fit 2026-10-01) |
 | [`run_meta_hs-20261001.json`](run_meta_hs-20261001.json) | data ranges, macro sources, per-cell timings of the resumed run |
+| [`run_meta_hs-m15-20261002.json`](run_meta_hs-m15-20261002.json) | the same for the M15 session layer, plus the session summary and the clock evidence |
 
-Re-running: `python -m src.forecast_eval.study --study-id hs-20261001` skips the
-finished cells. A new grid or new configuration needs a new study id.
+`horizon_curves.csv` holds both studies; the `study_id` column separates them, and
+the M15 rows add `n_eligible`, `price_definition`, `accuracy_bid`,
+`parity_diff_pp`, `parity_noise_floor_pp`, `parity_threshold_pp` and
+`parity_label`.
+
+Re-running: `python -m src.forecast_eval.study --study-id hs-m15-20261002` skips the
+finished cells. A new grid or new configuration needs a new study id. The M15 layer
+needs `results/curl/raw/EURUSD_M1.parquet`, which is excluded from git (`DATA.md` §7)
+and regenerable with `pip install pyarrow && python -m src.curl_mt5_fetch`; its SHA-256
+and row count are in the record so a rebuilt copy can be proven identical.

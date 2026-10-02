@@ -91,10 +91,26 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
    never writes under `models/` (artifacts in gitignored `research_models/`, digests in
    `results/horizon_study/artifact_manifest.csv`). The historical study
    (`results/horizon_study/`, README there) is DESCRIPTIVE only. Horizon claims are decided
-   solely on forward data logged hourly by `EURUSDProphet-ForwardLogger`
+   solely on forward data logged every 15 minutes by `EURUSDProphet-ForwardLogger`
    (`results/forward_eval/`, RUNBOOK there). Scoring stays off until
-   `results/forward_eval/PRE_REGISTRATION.md` is committed. Daily-cadence cells are
-   `UNDERPOWERED — NO DECISION` by design. Its two families never touch the `0.05/9` bar.
+   `results/forward_eval/PRE_REGISTRATION.md` is committed. The direction family is 12 of
+   46 candidate cells at `alpha = 0.05/12`; the rest, including every daily-cadence cell,
+   are `UNDERPOWERED — NO DECISION` by design. Its two families never touch the `0.05/9` bar.
+
+6. **Bar labels are the broker server's wall clock, and it is `Europe/Berlin`.** Every
+   cache in this repo stores MT5's epoch localised to UTC as-is, so a label is NOT UTC.
+   `src/forecast_eval/m15_data.py` establishes this from the weekly market boundary
+   (open label 23:00, and 22:00 in the US/EU DST-mismatch weeks of March and late
+   October; 99.3 % of 425 weekends) and REFUSES a run whose weekly opens stop matching.
+   The M15 session cells forecast only inside the owner's trading window — 15:30–23:00
+   `Europe/Sofia`, which is the fixed label window 14:30–22:00 because Sofia is Berlin
+   + 1 h all year — and a trade is eligible only if its as-of bar *and* its target bar
+   fall inside it. Sub-hourly targets and costs use the **mid** price built from each
+   bar's own spread: on bid closes alone the New York 17:00 rollover reads a spurious
+   72 % one-hour "accuracy" because the bid falls when the spread quintuples. Every
+   sub-hourly cell is scored on both price definitions and a gap beyond the declared
+   1.0 pp tolerance labels it a spread artifact. Do not add an intraday rule without
+   checking which clock its timestamps are on.
 
 ## Notebook specifics
 
