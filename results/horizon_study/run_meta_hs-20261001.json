@@ -1,0 +1,60 @@
+{
+ "study_id": "hs-20261001",
+ "finished_at": "2026-10-01T21:11:31+00:00",
+ "daily_range": [
+  "1999-01-04 00:00:00",
+  "2026-08-10 00:00:00"
+ ],
+ "daily_rows": 8606,
+ "h1_range": [
+  "2017-01-20 02:00:00+00:00",
+  "2026-09-30 06:00:00+00:00"
+ ],
+ "h1_rows": 60312,
+ "macro_sources": {
+  "yield_differential": "FRED_public",
+  "usd_index": "FRED_public",
+  "policy_rate_differential": "FRED_public",
+  "inflation_differential": "FRED_public",
+  "vix": "FRED_public"
+ },
+ "seeds": [
+  42,
+  43,
+  44,
+  45,
+  46
+ ],
+ "cell_seconds": {
+  "daily_lstm_price_h1": 305.6,
+  "daily_lstm_price_h2": 271.9,
+  "daily_lstm_price_h5": 178.9,
+  "h1_daily_ensemble_h1": 146.9,
+  "h1_daily_ensemble_h2": 129.0,
+  "h1_daily_ensemble_h5": 116.7,
+  "h1_gbm_h1": 44.5,
+  "h1_gbm_h2": 44.8,
+  "h1_gbm_h4": 45.3,
+  "h1_gbm_h6": 49.9,
+  "h1_gbm_h12": 61.7,
+  "h1_gbm_h24": 56.8,
+  "h1_gbm_h48": 46.4,
+  "h1_gbm_h120": 42.3,
+  "kronos_direction_h1": 0.2,
+  "kronos_direction_h2": 0.2,
+  "kronos_direction_h4": 0.3,
+  "kronos_direction_h6": 0.2,
+  "kronos_direction_h12": 0.2,
+  "kronos_direction_h24": 0.2,
+  "kronos_direction_h48": 0.1,
+  "kronos_direction_h120": 0.1,
+  "kronos_volatility_h24": 101.9,
+  "ti_lstm_h1": 194.8,
+  "ti_lstm_h2": 212.8,
+  "ti_lstm_h5": 224.9,
+  "vol_ensemble_h1": 1010.1,
+  "vol_ensemble_h2": 910.1,
+  "vol_ensemble_h5": 916.6
+ },
+ "banner": "DESCRIPTIVE - not a verdict; describes challengers, not production models"
+}

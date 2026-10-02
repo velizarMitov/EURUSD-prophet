@@ -85,6 +85,17 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
    *"undeclared for N days"*. Never bundle a retrain into a commit about something else, and
    never `--no-verify` past this.
 
+5. **Horizon study and forward arbiter (`src/forecast_eval/`, openspec change
+   `horizon-study-forward-evaluation`).** A standalone research system that trains its own
+   *challengers* for every model type, imports the production feature code read-only, and
+   never writes under `models/` (artifacts in gitignored `research_models/`, digests in
+   `results/horizon_study/artifact_manifest.csv`). The historical study
+   (`results/horizon_study/`, README there) is DESCRIPTIVE only. Horizon claims are decided
+   solely on forward data logged hourly by `EURUSDProphet-ForwardLogger`
+   (`results/forward_eval/`, RUNBOOK there). Scoring stays off until
+   `results/forward_eval/PRE_REGISTRATION.md` is committed. Daily-cadence cells are
+   `UNDERPOWERED — NO DECISION` by design. Its two families never touch the `0.05/9` bar.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

@@ -44,3 +44,8 @@ results/curl/raw/
 # loaded by nothing. It exists so a research re-run cannot overwrite served artifacts —
 # several of the paths those cells used to write are SHA-256-pinned by the checksum guard.
 models/notebook_demo/
+
+# Horizon-study challenger artifacts (openspec change horizon-study-forward-evaluation, design D10).
+# Large and refitted monthly; the tracked manifest results/horizon_study/artifact_manifest.csv
+# carries every artifact's SHA-256, so provenance survives without committing the weights.
+research_models/

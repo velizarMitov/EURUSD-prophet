@@ -1,0 +1,276 @@
+{
+ "cap_years": 3.0,
+ "challengers": {
+  "daily_gbm_macro": {
+   "cadence": "D1",
+   "feature_set": "macro",
+   "gbm": {
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "n_estimators": 200,
+    "subsample": 0.8
+   },
+   "kind": "direction",
+   "lag_pca_variance": 0.95
+  },
+  "daily_gbm_price": {
+   "cadence": "D1",
+   "feature_set": "price",
+   "gbm": {
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "n_estimators": 200,
+    "subsample": 0.8
+   },
+   "kind": "direction",
+   "lag_pca_variance": 0.95
+  },
+  "daily_lstm_macro": {
+   "cadence": "D1",
+   "feature_set": "macro",
+   "kind": "direction",
+   "lag_pca_variance": 0.95,
+   "lstm": {
+    "batch_size": 64,
+    "dropout": 0.3,
+    "epochs": 100,
+    "learning_rate": 0.001,
+    "patience": 10,
+    "time_steps": 20,
+    "units": 64
+   }
+  },
+  "daily_lstm_price": {
+   "cadence": "D1",
+   "feature_set": "price",
+   "kind": "direction",
+   "lag_pca_variance": 0.95,
+   "lstm": {
+    "batch_size": 64,
+    "dropout": 0.3,
+    "epochs": 100,
+    "learning_rate": 0.001,
+    "patience": 10,
+    "time_steps": 20,
+    "units": 64
+   }
+  },
+  "h1_daily_ensemble": {
+   "cadence": "D1",
+   "gbm": {
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "n_estimators": 200,
+    "subsample": 0.8
+   },
+   "kind": "direction",
+   "lstm": {
+    "lstm_batch": 32,
+    "lstm_dropout": 0.2,
+    "lstm_epochs": 60,
+    "lstm_lr": 0.001,
+    "lstm_patience": 8,
+    "lstm_units": 32
+   },
+   "rf": {
+    "max_depth": 8,
+    "n_estimators": 400
+   },
+   "svm": {
+    "C": 1.0,
+    "gamma": "scale"
+   }
+  },
+  "h1_gbm": {
+   "cadence": "H1",
+   "gbm": {
+    "colsample_bytree": 0.8,
+    "learning_rate": 0.05,
+    "max_depth": 4,
+    "n_estimators": 300,
+    "reg_lambda": 1.0,
+    "subsample": 0.8
+   },
+   "kind": "direction"
+  },
+  "kronos_direction": {
+   "cadence": "H1",
+   "history_stride": 12,
+   "kind": "direction",
+   "model": "mini",
+   "n_paths": 30,
+   "train_free": true
+  },
+  "kronos_volatility": {
+   "cadence": "H1",
+   "history_stride": 12,
+   "horizons": [
+    24
+   ],
+   "kind": "volatility",
+   "model": "mini",
+   "n_paths": 30,
+   "train_free": true
+  },
+  "ti_lstm": {
+   "batch_size": 32,
+   "cadence": "D1",
+   "dropout": 0.25,
+   "epochs": 100,
+   "kind": "direction",
+   "lr": 0.001,
+   "n_layers": 2,
+   "patience": 10,
+   "units": 64
+  },
+  "vol_ensemble": {
+   "cadence": "D1",
+   "feature_set": "price",
+   "kind": "volatility",
+   "lstm": {
+    "batch_size": 64,
+    "dropout": 0.3,
+    "epochs": 100,
+    "learning_rate": 0.001,
+    "patience": 10,
+    "time_steps": 20,
+    "units": 64
+   },
+   "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+   ]
+  }
+ },
+ "config_hashes": {
+  "daily_gbm_macro": "5142ae295f42333e",
+  "daily_gbm_price": "0b684f02c5d5a69e",
+  "daily_lstm_macro": "12227a40a8616fef",
+  "daily_lstm_price": "5939beeaa263dba9",
+  "h1_daily_ensemble": "74dfecea2acf4fe9",
+  "h1_gbm": "14717ab0aa7a5216",
+  "kronos_direction": "0e8a260c8d457478",
+  "kronos_volatility": "27bc2162ead66585",
+  "ti_lstm": "6673121cb9772ca7",
+  "vol_ensemble": "99df7f1a392bce65"
+ },
+ "created_at": "2026-10-01T17:19:51+00:00",
+ "data_ranges": {},
+ "departures": {
+  "daily_gbm_*": "fixed hyperparameters at the centre of the production param_grid (production grid-searches every retrain); the grid itself is the declared TUNING grid",
+  "h1_daily_ensemble": "members are classifiers (production members are return regressors); RF/SVM at fixed values from the production grids",
+  "h1_gbm": "device=cpu (production trains on CUDA); same hyperparameters",
+  "kronos_*": "scored only on bars after its training cutoff (2024-06); clean window starts 2024-07-01. Historically every 12th as-of bar (5.4 s per sampling on GPU: every bar would take ~19 h); forward logging samples every bar",
+  "kronos_volatility": "evaluated at h = 24 H1 bars only (design D13)",
+  "ti_lstm": "CPU path (production run() requires CUDA); architecture = production 2x64",
+  "vol_ensemble": "CPCV with N = 4, k = 2 (6 splits): a 5-seed refit costs ~150 s"
+ },
+ "development": {
+  "cpcv": {
+   "default": {
+    "k": 2,
+    "n_groups": 6
+   },
+   "vol_ensemble": {
+    "k": 2,
+    "n_groups": 4
+   }
+  },
+  "daily_source": "config.json data.history_csv_path",
+  "h1_source": "results/eurusd_h1.csv (production H1 cache)",
+  "macro": "production fetch_macro_features chain (FRED API -> public CSV -> cache); the euro-era row set comes from its leading NaNs, exactly as in production",
+  "min_train_fraction": 0.5,
+  "walk_forward_splits": 5
+ },
+ "first_fit_at": "2026-10-01T17:20:02+00:00",
+ "grid": {
+  "D1": [
+   1,
+   2,
+   5
+  ],
+  "H1": [
+   1,
+   2,
+   4,
+   6,
+   12,
+   24,
+   48,
+   120
+  ]
+ },
+ "label": "DESCRIPTIVE - not a verdict; describes challengers, not production models",
+ "seeds": [
+  42,
+  43,
+  44,
+  45,
+  46
+ ],
+ "study_id": "hs-20261001",
+ "tuning": {
+  "grids": {
+   "daily_gbm_macro": {
+    "learning_rate": [
+     0.01,
+     0.05,
+     0.1
+    ],
+    "max_depth": [
+     3,
+     5
+    ],
+    "n_estimators": [
+     100,
+     200
+    ],
+    "subsample": [
+     0.5,
+     0.8,
+     1.0
+    ]
+   },
+   "daily_gbm_price": {
+    "learning_rate": [
+     0.01,
+     0.05,
+     0.1
+    ],
+    "max_depth": [
+     3,
+     5
+    ],
+    "n_estimators": [
+     100,
+     200
+    ],
+    "subsample": [
+     0.5,
+     0.8,
+     1.0
+    ]
+   },
+   "h1_gbm": {
+    "learning_rate": [
+     0.03,
+     0.05,
+     0.1
+    ],
+    "max_depth": [
+     3,
+     4,
+     6
+    ]
+   }
+  },
+  "rule": {
+   "inner_folds": 4,
+   "max_pbo": 0.5,
+   "min_net_improvement_pct": 10.0
+  }
+ }
+}
