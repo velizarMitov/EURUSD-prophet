@@ -164,6 +164,28 @@ It SHALL read the logs only and SHALL NOT be part of the serving application.
 - **WHEN** a forecast is displayed
 - **THEN** its as-of bar and the window it covers are labelled in Europe/Sofia, not in bar-label time
 
+### Requirement: The view is served read-only from its own loopback port
+The view SHALL also be available from a server separate from the application,
+bound to the loopback interface only, which re-renders the page on each request.
+It SHALL reject every path but the page itself, reject write methods, and import
+no part of the serving application.
+
+#### Scenario: A reload shows the current log
+- **WHEN** a forecast is logged and the page is reloaded
+- **THEN** the new forecast is present, without the view being written to disk first
+
+#### Scenario: Nothing but the page is exposed
+- **WHEN** any other path or a write method is requested
+- **THEN** the request is refused, and no file outside the rendered page can be read
+
+#### Scenario: It is not reachable from the network
+- **WHEN** the server is started
+- **THEN** it is bound to the loopback address only
+
+#### Scenario: A render failure does not take the viewer down
+- **WHEN** rendering raises
+- **THEN** the request fails with a server error and the next request is served normally
+
 ### Requirement: The operator view shows direction, never a cost verdict
 The view SHALL present the direction call and the running accuracy. It SHALL NOT
 display spread, breakeven or net-profit figures, because the owner accounts for

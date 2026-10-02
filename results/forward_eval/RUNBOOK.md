@@ -78,10 +78,18 @@ schtasks /Query /TN EURUSDProphet-ForwardLogger
 
 ## Where to look
 
-Open **[`dashboard.html`](dashboard.html)** in a browser. It is a single
-self-contained file, rewritten at the end of every logging run, so it is never
-more than 15 minutes old (it also refreshes itself every 5 minutes). It shows,
-in **your** clock:
+Double-click **`scripts\forecast_eval\view_forecasts.cmd`**. It starts a small
+read-only viewer on **<http://127.0.0.1:8001/>** and opens a browser at it; the
+page is re-rendered from the logs on every reload, so it is always current.
+Close that console window to stop it.
+
+It is a SEPARATE server, bound to loopback only. It touches no part of the
+application on `127.0.0.1:8000` and imports neither `api.py`, `src/inference.py`
+nor `src/paper_trading.py` — a test enforces that.
+
+Prefer a file? **[`dashboard.html`](dashboard.html)** is the same page written to
+disk at the end of every logging run, so it is never more than 15 minutes old
+(and refreshes itself every 5 minutes). Either way it shows, in **your** clock:
 
 - the latest forecast per model and horizon — `+` or `−`, the probability, and
   the window the move is measured over;
@@ -99,8 +107,15 @@ refuses to produce net figures on an assumed-free spread — they simply decide
 nothing and are not put in front of you. A guard in `report.py` fails the write
 if such a figure ever reaches the page.
 
-Regenerate it by hand with `python -m src.forecast_eval.report`. It reads the
-logs only; it is not part of the dashboard served by `api.py`.
+By hand:
+
+```powershell
+scripts\forecast_eval\view_forecasts.cmd            # viewer on :8001, opens a browser
+python -m src.forecast_eval.report --serve --port 8001   # the same, no browser
+python -m src.forecast_eval.report                  # just rewrite dashboard.html
+```
+
+Both read the logs only and neither is part of the dashboard served by `api.py`.
 
 ## The files
 

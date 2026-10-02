@@ -292,6 +292,100 @@ def test_the_report_module_does_not_import_the_serving_path():
         assert not re.search(r'(^|\.)(api|inference|paper_trading)(\.|$)', n), n
 
 
+# ── 15.3 the local viewer ──────────────────────────────────────────────────
+
+def _get(url, timeout=10):
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.status, r.read().decode('utf-8'), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode('utf-8', 'replace'), dict(e.headers)
+
+
+@pytest.fixture
+def viewer(tmp_path):
+    import threading
+    out = _log(tmp_path, preds=[_pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.53)])
+    httpd, url = RP.serve(0, out, serve_forever=False)       # port 0 = any free port
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    yield url, out, httpd
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_the_viewer_serves_the_page(viewer):
+    url, _out, _httpd = viewer
+    status, body, headers = _get(url)
+    assert status == 200
+    assert headers['Content-Type'] == 'text/html; charset=utf-8'
+    assert headers['Cache-Control'] == 'no-store'
+    assert 'EUR/USD — какво казват моделите' in body and 'h1_gbm' in body
+
+
+def test_the_viewer_re_renders_so_a_reload_shows_new_rows(viewer):
+    """It renders per request rather than serving the last written file."""
+    url, out, _httpd = viewer
+    assert 'm15_session_gbm' not in _get(url)[1]
+    pd.DataFrame([_pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.53),
+                  _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.58)]
+                 ).to_csv(os.path.join(out, 'predictions.csv'), index=False)
+    assert 'm15_session_gbm' in _get(url)[1]
+
+
+def test_the_viewer_is_read_only_and_has_no_other_routes(viewer):
+    import urllib.error
+    import urllib.request
+    url, _out, _httpd = viewer
+    assert _get(url + 'anything-else')[0] == 404
+    req = urllib.request.Request(url, data=b'x', method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            got = r.status
+    except urllib.error.HTTPError as e:
+        got = e.code
+    assert got == 405
+
+
+def test_the_viewer_binds_only_to_loopback(viewer):
+    """These are the owner's private forecasts; nothing here is for the network."""
+    _url, _out, httpd = viewer
+    assert httpd.server_address[0] == '127.0.0.1'
+
+
+def test_a_render_failure_becomes_a_500_not_a_crash(viewer, monkeypatch):
+    url, _out, _httpd = viewer
+    monkeypatch.setattr(RP, 'build_page',
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('boom')))
+    status, body, _h = _get(url)
+    assert status == 500 and 'boom' in body
+    monkeypatch.undo()
+    assert _get(url)[0] == 200, 'and it keeps serving afterwards'
+
+
+def test_the_viewer_does_not_import_the_served_application():
+    import ast
+    src = open(RP.__file__, encoding='utf-8').read()
+    tree = ast.parse(src)
+    mods = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mods += [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            mods.append(node.module or '')
+    assert not any(re.search(r'(^|\.)(api|fastapi|uvicorn|inference|paper_trading)(\.|$)', m)
+                   for m in mods), mods
+
+
+def test_the_launcher_script_points_at_the_viewer():
+    p = os.path.join(RP.REPO, 'scripts', 'forecast_eval', 'view_forecasts.cmd')
+    s = open(p, encoding='utf-8').read()
+    assert 'src.forecast_eval.report --serve' in s and '8001' in s
+    assert 'api' not in s.lower().replace('api.py', '')
+
+
 def test_the_page_is_self_contained():
     s = open(RP.write_dashboard(now=SUMMER_OPEN_UTC,
                                 path=os.path.join(RP.FWD, 'dashboard.html')),

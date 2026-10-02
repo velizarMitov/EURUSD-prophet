@@ -392,29 +392,115 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
 </div></body></html>"""
 
 
-def write_dashboard(out: str = FWD, path: str | None = None, record_path: str = RECORD,
-                    now=None) -> str:
-    path = path or os.path.join(out, 'dashboard.html')
+def build_page(out: str = FWD, record_path: str = RECORD, now=None) -> str:
+    """The rendered page, with the no-cost guard applied. Shared by the file
+    writer and the local server, so both can never drift apart."""
     admitted, alpha, n_req = admitted_cells(record_path)
     generated = owner_time(MD.label_now(now)).strftime('%d.%m.%Y %H:%M')
     page = render(_read('predictions', out), _read('settlements', out), _read('gaps', out),
                   _read('failures', out), admitted, alpha, n_req,
                   session_state(now), generated,
                   direction_only=direction_models(record_path), evidence=history_evidence())
-    low = page.lower()
-    leaked = [w for w in COST_WORDS if w in low]
+    leaked = [w for w in COST_WORDS if w in page.lower()]
     if leaked:
         raise AssertionError(f'cost arithmetic reached the operator view: {leaked}')
+    return page
+
+
+def write_dashboard(out: str = FWD, path: str | None = None, record_path: str = RECORD,
+                    now=None) -> str:
+    path = path or os.path.join(out, 'dashboard.html')
+    page = build_page(out, record_path, now)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write(page)
     return path
 
 
+# ── the local viewer (task 15.3) ────────────────────────────────────────────
+
+DEFAULT_PORT = 8001
+
+
+def make_handler(out: str = FWD, record_path: str = RECORD):
+    """A request handler that re-renders the page on every GET, so a reload
+    always shows the current logs rather than the last written file."""
+    from http.server import BaseHTTPRequestHandler
+
+    class Handler(BaseHTTPRequestHandler):
+        server_version = 'EURUSDProphetForecasts/1.0'
+
+        def do_GET(self):                                # noqa: N802 -- stdlib name
+            if self.path.split('?')[0] not in ('/', '/index.html'):
+                self.send_error(404, 'nothing here but /')
+                return
+            try:
+                body = build_page(out, record_path).encode('utf-8')
+            except Exception as e:                       # noqa: BLE001 -- report, never crash
+                self.send_error(500, f'{type(e).__name__}: {e}')
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):                               # noqa: N802 -- read-only viewer
+            # Drain the body first: replying before the client has finished
+            # sending makes Windows abort the connection instead of delivering
+            # the 405.
+            length = int(self.headers.get('Content-Length') or 0)
+            while length > 0:
+                length -= len(self.rfile.read(min(length, 65536)))
+            self.send_error(405, 'this viewer only reads')
+
+        def log_message(self, fmt, *args):
+            pass                                         # keep the console readable
+
+    return Handler
+
+
+def serve(port: int = DEFAULT_PORT, out: str = FWD, record_path: str = RECORD,
+          host: str = '127.0.0.1', serve_forever: bool = True):
+    """A tiny read-only viewer, separate from the served application.
+
+    Bound to 127.0.0.1 only: these are the owner's private forecasts and nothing
+    here should be reachable from the network. It imports no part of `api.py`,
+    `src/inference.py` or `src/paper_trading.py`, so the production dashboard
+    stays exactly as it was (design Non-Goals).
+    """
+    from http.server import ThreadingHTTPServer
+    httpd = ThreadingHTTPServer((host, int(port)), make_handler(out, record_path))
+    url = f'http://{host}:{httpd.server_address[1]}/'
+    print(f'прогнозите са на {url}   (Ctrl+C спира)', flush=True)
+    if not serve_forever:
+        return httpd, url
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print('спрях')
+    finally:
+        httpd.server_close()
+    return httpd, url
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description='Write the forward-log operator view.')
+    ap = argparse.ArgumentParser(description='The forward-log operator view.')
     ap.add_argument('--out', default=FWD)
+    ap.add_argument('--serve', action='store_true',
+                    help=f'run the local viewer on 127.0.0.1:{DEFAULT_PORT} instead of writing the file')
+    ap.add_argument('--port', type=int, default=DEFAULT_PORT)
+    ap.add_argument('--open', action='store_true', help='open a browser at the viewer')
     a = ap.parse_args(argv)
+    if a.serve:
+        if a.open:
+            import threading
+            import webbrowser
+            threading.Timer(0.7, webbrowser.open,
+                            [f'http://127.0.0.1:{a.port}/']).start()
+        serve(a.port, a.out)
+        return
     print(write_dashboard(a.out))
 
 
