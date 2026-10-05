@@ -14,7 +14,7 @@ The pipeline formally implements, evaluates, and contrasts:
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model, ~20 s
 python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
-python -m pytest -q                    # 862 tests: 861 pass, 1 environment skip
+python -m pytest -q                    # 881 tests: 880 pass, 1 environment skip
 python -m src.dl_model_report          # model card for all 9 trained networks
 ```
 

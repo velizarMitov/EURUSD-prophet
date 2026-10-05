@@ -150,25 +150,34 @@ trade. These figures are informational and SHALL NOT change the verdict.
 A self-contained HTML view SHALL be regenerated from the forward log on every
 logging run, showing the latest forecast per cell with the window it covers, the
 running accuracy against its registered sample size, and the coverage problems.
-It SHALL read the logs only and SHALL NOT be part of the serving application.
+It SHALL read the logs only, and the serving application SHALL reach it through a
+single read-only route and a link from the dashboard, as additions only.
 
 #### Scenario: The view is current without anyone opening the dashboard
 - **WHEN** a logging run finishes
 - **THEN** the view is rewritten from the logs, and it states the time it was generated
 
-#### Scenario: Serving is untouched
-- **WHEN** the view is generated
-- **THEN** no route, template or module of the serving application has changed
+#### Scenario: Serving changes are additive and leave the models alone
+- **WHEN** the view is available inside the application
+- **THEN** the serving files gained lines and lost none, and neither the inference module nor the paper-trading module has changed
+
+#### Scenario: The dashboard reaches it without an extra step
+- **WHEN** the application is started
+- **THEN** the forecast view is served by that same process and linked from its main page
+
+#### Scenario: A view failure does not reach the rest of the application
+- **WHEN** rendering the forecast view raises
+- **THEN** that request fails with a server error and every other route still answers
 
 #### Scenario: Times are shown in the owner's clock
 - **WHEN** a forecast is displayed
 - **THEN** its as-of bar and the window it covers are labelled in Europe/Sofia, not in bar-label time
 
-### Requirement: The view is served read-only from its own loopback port
-The view SHALL also be available from a server separate from the application,
-bound to the loopback interface only, which re-renders the page on each request.
-It SHALL reject every path but the page itself, reject write methods, and import
-no part of the serving application.
+### Requirement: The view is also available from its own loopback port
+The view SHALL also be available from a standalone server, bound to the loopback
+interface only, which re-renders the page on each request. It SHALL reject every
+path but the page itself, reject write methods, and import no part of the serving
+application, so it can be used when the application is not running.
 
 #### Scenario: A reload shows the current log
 - **WHEN** a forecast is logged and the page is reloaded

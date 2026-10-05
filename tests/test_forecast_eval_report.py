@@ -32,6 +32,11 @@ def _log(tmp_path, preds=None, settles=None, gaps=None, fails=None):
     return str(out)
 
 
+def _head(page: str) -> str:
+    """Only the headline region: no CSS from <head>, no folded sections."""
+    return page.split('<body>', 1)[1].split('<h2>Колко да вярваш</h2>')[0]
+
+
 def _pred(model='m15_session_gbm', cadence='M15', horizon=1, as_of='2026-10-01 21:45:00+00:00',
           p_up=0.62, phase='dry_run', key=None):
     return {'key': key or f'{model}|h{horizon}|{as_of}', 'model': model, 'cadence': cadence,
@@ -55,7 +60,7 @@ def test_renders_with_no_forward_rows(tmp_path):
 def test_renders_dry_run_rows_and_says_they_do_not_count(tmp_path):
     out = _log(tmp_path, preds=[_pred(), _pred(horizon=4, p_up=0.41)])
     s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
-    assert 'dry_run' in s and 'нищо не се зачита' in s
+    assert 'пробен период — нищо не се зачита още' in s
     assert '15 мин' in s and '60 мин' in s
     assert s.count('class="cell"') == 2
 
@@ -95,7 +100,7 @@ def test_the_window_spans_the_whole_horizon(tmp_path):
 
 def test_generated_time_is_the_owners_real_clock(tmp_path):
     s = open(RP.write_dashboard(_log(tmp_path), now=SUMMER_OPEN_UTC), encoding='utf-8').read()
-    assert 'Обновено 02.10.2026 15:30 твое време' in s
+    assert '02.10.2026 15:30 твое време' in s
 
 
 @pytest.mark.parametrize('now_utc,expect_in', [(SUMMER_BEFORE_UTC, False),
@@ -107,7 +112,8 @@ def test_the_session_badge_opens_at_1530_sofia_in_both_halves_of_the_year(tmp_pa
     assert st['in_session'] is expect_in
     assert st['owner_now'].endswith('15:30') or st['owner_now'].endswith('15:20')
     s = open(RP.write_dashboard(_log(tmp_path), now=now_utc), encoding='utf-8').read()
-    assert ('>в сесия<' in s) is expect_in
+    assert ('сесията е отворена' in s) is expect_in
+    assert ('сесията е затворена' in s) is not expect_in
 
 
 def test_label_now_is_the_bar_label_not_utc():
@@ -141,7 +147,7 @@ def test_running_accuracy_is_labelled_interim_with_the_remaining_count(tmp_path)
                                 now=SUMMER_OPEN_UTC), encoding='utf-8').read()
     assert 'междинно — остават 3 777' in s, 'the remaining count must be shown'
     assert '50.0%' in s
-    assert 'Регистрирани прогнози за решение: <b>3 817</b>' in s
+    assert 'За решение трябват <b>3 817</b>' in s
     assert 'KEEP' not in s and 'DROP' not in s
     # the remaining count and the stated total must be consistent
     assert 3777 + 40 == 3817
@@ -174,6 +180,89 @@ def test_admitted_cells_are_starred_and_the_others_are_not(tmp_path):
     out = _log(tmp_path, preds=[_pred(horizon=1), _pred(horizon=8)])
     s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
     assert s.count('class="star"') == 1, 'only the admitted cell is starred'
+
+
+# ── the simplified headline ────────────────────────────────────────────────
+
+def test_the_headline_groups_by_horizon_not_by_model(tmp_path):
+    """"What happens in the next hour" is the question; a model name is not an
+    answer. The owner asked for exactly this (2026-10-02)."""
+    out = _log(tmp_path, preds=[
+        _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.44),
+        _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.47),
+        _pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49),
+        _pred(model='h1_gbm', cadence='H1', horizon=4, p_up=0.52)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    head = _head(s)
+    assert 'след 15 минути' in head and 'след 1 час' in head and 'след 4 часа' in head
+    assert 'НАДОЛУ' in head and 'НАГОРЕ' in head
+    assert 'm15_session_gbm' not in head, 'no model names in the headline'
+    assert 'h1_gbm' not in head
+
+
+def test_models_without_historical_evidence_stay_out_of_the_headline(tmp_path):
+    """m15 at 1 hour never cleared a coin on history, so showing it as a call
+    would present noise as a forecast."""
+    out = _log(tmp_path, preds=[
+        _pred(model='m15_session_gbm', cadence='M15', horizon=4, p_up=0.70),
+        _pred(model='kronos_direction', cadence='H1', horizon=1, p_up=1.0)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    head = _head(s)
+    assert 'няма прогноза' in head
+    assert '70%' not in head and '100%' not in head
+    assert 'kronos_direction' in s, 'but it is still logged and shown in the details'
+
+
+def test_long_horizons_are_not_in_the_headline(tmp_path):
+    out = _log(tmp_path, preds=[_pred(model='h1_gbm', cadence='H1', horizon=12, p_up=0.55)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    head = _head(s)
+    assert 'няма прогноза' in head, '12 hours cannot be traded in one sitting'
+    assert RP.minutes_ahead('H1', 12) > RP.HEADLINE_MAX_MINUTES
+
+
+def test_the_headline_never_combines_models_into_one_call(tmp_path):
+    """No ensemble of these models was ever fitted or validated, so a majority
+    vote here would be a forecast nobody measured."""
+    out = _log(tmp_path, preds=[
+        _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.44),
+        _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.47)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    assert s.count('НАДОЛУ') >= 2, 'both calls are listed side by side'
+    assert 'и двата модела казват едно и също' in s
+    assert 'съгласието не е допълнително доказателство' in s
+
+
+def test_disagreement_is_said_plainly(tmp_path):
+    out = _log(tmp_path, preds=[
+        _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.44),
+        _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.56)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    assert 'моделите не са съгласни' in s
+    assert 'НАДОЛУ' in s and 'НАГОРЕ' in s
+
+
+def test_the_trust_block_quotes_a_range_not_the_best_cell(tmp_path):
+    """The headline mixes a 51 % cell with a 53 % one; quoting only the best
+    would overstate the weaker model."""
+    out = _log(tmp_path, preds=[
+        _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.48),
+        _pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    assert 'между 51 и 53 от 100' in s
+    assert 'Монета познава 50 от 100' in s
+    assert 'почти хвърляне на монета' in s
+
+
+def test_everything_else_is_folded_away(tmp_path):
+    out = _log(tmp_path, preds=[_pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49)])
+    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    for summary in ('Всички останали модели и хоризонти', 'Точност по клетки',
+                    'Състояние на записа', 'Как се чете тази страница'):
+        assert f'<summary>{summary}' in s or f'>{summary}<' in s, summary
+    assert s.count('<details>') >= 4
+    # the headline comes before every folded block
+    assert s.index('след 1 час') < s.index('<details>')
 
 
 # ── volatility models and the historical-evidence tag ─────────────────────
@@ -268,12 +357,54 @@ def test_the_view_is_rewritten_by_a_run(tmp_path):
     assert os.path.exists(os.path.join(out, 'dashboard.html'))
 
 
-def test_the_serving_application_is_untouched():
-    """Design Non-Goals: no production serving change."""
-    for rel in ('api.py', 'src/inference.py', 'src/paper_trading.py'):
+def test_serving_changes_are_additive_and_leave_the_models_alone():
+    """The owner lifted the api.py restriction on 2026-10-05 so the view can live
+    on :8000. What stays true: src/inference.py and src/paper_trading.py are
+    byte-identical, and api.py / static/index.html only GAIN lines -- the
+    additive-only contract of test_external_kronos holds."""
+    for rel in ('src/inference.py', 'src/paper_trading.py'):
         r = subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--', rel],
                            cwd=RP.REPO, capture_output=True)
         assert r.returncode == 0, f'{rel} changed'
+    out = subprocess.run(['git', 'diff', '--numstat', 'HEAD', '--', 'api.py', 'static/index.html'],
+                         cwd=RP.REPO, capture_output=True, text=True).stdout
+    for line in out.strip().splitlines():
+        added, removed, path = line.split('\t')
+        assert removed == '0', f'{path} deleted {removed} lines; this change is additive only'
+
+
+def test_the_forecasts_route_lives_in_the_application():
+    import api
+    routes = {r.path for r in api.app.routes}
+    assert '/forecasts' in routes
+    html_ = api.forward_forecasts_page().body.decode('utf-8')
+    assert '<h1>EUR/USD</h1>' in html_
+    assert 'href="/">← към таблото</a>' in html_, 'a way back to the dashboard'
+    for word in RP.COST_WORDS:
+        assert word not in html_.lower(), word
+
+
+def test_the_dashboard_links_to_the_forecasts_page():
+    index = open(os.path.join(RP.REPO, 'static', 'index.html'), encoding='utf-8').read()
+    assert 'href="/forecasts"' in index
+
+
+def test_a_forecast_view_failure_is_a_500_and_does_not_break_other_routes(monkeypatch):
+    import api
+    from fastapi import HTTPException
+    monkeypatch.setattr(RP, 'build_page',
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('boom')))
+    with pytest.raises(HTTPException) as e:
+        api.forward_forecasts_page()
+    assert e.value.status_code == 500 and 'boom' in e.value.detail
+    monkeypatch.undo()
+    assert api.provenance_status()['n_pinned'] >= 40, 'the rest of the app is unaffected'
+
+
+def test_the_standalone_page_has_no_link_home():
+    """A file opened from disk, or the :8001 viewer, has nowhere to link back to."""
+    s = open(RP.write_dashboard(now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    assert '← към таблото' not in s
 
 
 def test_the_report_module_does_not_import_the_serving_path():
@@ -322,7 +453,7 @@ def test_the_viewer_serves_the_page(viewer):
     assert status == 200
     assert headers['Content-Type'] == 'text/html; charset=utf-8'
     assert headers['Cache-Control'] == 'no-store'
-    assert 'EUR/USD — какво казват моделите' in body and 'h1_gbm' in body
+    assert '<h1>EUR/USD</h1>' in body and 'h1_gbm' in body
 
 
 def test_the_viewer_re_renders_so_a_reload_shows_new_rows(viewer):
@@ -384,6 +515,23 @@ def test_the_launcher_script_points_at_the_viewer():
     s = open(p, encoding='utf-8').read()
     assert 'src.forecast_eval.report --serve' in s and '8001' in s
     assert 'api' not in s.lower().replace('api.py', '')
+
+
+def test_scheduled_tasks_run_without_a_console_window():
+    """Regression: the tasks called run_module.cmd directly, and cmd.exe is a
+    console program, so Windows flashed a window every 15 minutes. They must go
+    through wscript.exe //B and a hidden (style 0) launcher."""
+    d = os.path.join(RP.REPO, 'scripts', 'forecast_eval')
+    install = open(os.path.join(d, 'install_tasks.ps1'), encoding='utf-8').read()
+    assert 'wscript.exe' in install and '//B' in install and 'run_hidden.vbs' in install
+    assert "'run_module.cmd'" not in install, 'the task must not call the cmd runner directly'
+    vbs = open(os.path.join(d, 'run_hidden.vbs'), encoding='utf-8').read()
+    assert re.search(r'\.Run\(cmd, 0, True\)', vbs), 'window style 0 = hidden, wait for exit'
+    assert 'run_module.cmd' in vbs
+    # schtasks allows 261 characters in /TR
+    cmd = f'"C:\\Windows\\System32\\wscript.exe" //B //Nologo "{os.path.join(d, "run_hidden.vbs")}" ' \
+          'src.forecast_eval.forward_logger EURUSDProphet-ForwardLogger'
+    assert len(cmd) <= 261, len(cmd)
 
 
 def test_the_page_is_self_contained():

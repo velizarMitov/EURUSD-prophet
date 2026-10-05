@@ -1,2 +1,5 @@
 cadence,bar,reason,logged_at
 H1,2026-10-02 05:00:00+00:00,bar closed while the logger was not running,2026-10-02T05:01:07+00:00
+H1,2026-10-05 05:00:00+00:00,bar closed while the logger was not running,2026-10-05T07:49:56+00:00
+H1,2026-10-05 06:00:00+00:00,bar closed while the logger was not running,2026-10-05T07:49:56+00:00
+H1,2026-10-05 07:00:00+00:00,bar closed while the logger was not running,2026-10-05T07:49:56+00:00

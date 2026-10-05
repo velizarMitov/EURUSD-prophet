@@ -134,9 +134,16 @@ so that nobody can avoid it by choosing the horizon after looking.
   reported descriptively. The family must be fixed before the registration is
   committed, which is why the session layer lands first: one family of 12 is stronger
   than two families of 6.
-- **No production change.** Nothing changes under `models/`, `src/inference.py`,
-  `src/paper_trading.py`, `api.py` or `_train_pipeline.py`. No order, broker, sizing
-  or stop-loss code is added. Research artifacts live outside `models/`.
+- **No production model change.** Nothing changes under `models/`, `src/inference.py`,
+  `src/paper_trading.py` or `_train_pipeline.py`. No order, broker, sizing or
+  stop-loss code is added. Research artifacts live outside `models/`.
+- **One additive serving change, at the owner's request (2026-10-05).** `api.py`
+  gains a single read-only route, `/forecasts`, and `static/index.html` gains a link
+  to it, so the forecast view appears in the program the owner already starts.
+  Both are additions only: no existing line is edited or removed, which the
+  additive-only contract test enforces. The owner had earlier ruled `api.py` out of
+  scope and chose a separate server; they reversed that once the separate server
+  proved easy to miss.
 
 ## Capabilities
 

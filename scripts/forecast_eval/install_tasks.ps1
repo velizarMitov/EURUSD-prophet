@@ -23,11 +23,15 @@ if (-not (Test-Path $python)) { throw "virtualenv python not found: $python" }
 $logDir = Join-Path $repo 'research_models\forward_eval'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-$runner = Join-Path $PSScriptRoot 'run_module.cmd'
+$runner = Join-Path $PSScriptRoot 'run_hidden.vbs'
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
 function New-ProphetTask($name, $module, $schedule) {
     # schtasks caps /TR at 261 characters, so the task calls a short runner.
-    $cmd = "`"$runner`" $module $name"
+    # The runner is a .vbs run by wscript.exe, NOT run_module.cmd directly: cmd.exe
+    # is a console program and flashed a window every 15 minutes. wscript //B has none.
+    $cmd = "`"$wscript`" //B //Nologo `"$runner`" $module $name"
+    if ($cmd.Length -gt 261) { throw "task command is $($cmd.Length) characters; schtasks allows 261" }
     $args = @('/Create', '/F', '/TN', $name, '/TR', $cmd) + $schedule
     & schtasks.exe @args | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "schtasks failed for $name (exit $LASTEXITCODE)" }

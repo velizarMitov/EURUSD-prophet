@@ -575,6 +575,28 @@ def kronos_direction_page():
         '</body></html>' % DIRECTION_RETIRED_REASON))
 
 
+@app.get("/forecasts", response_class=HTMLResponse)
+def forward_forecasts_page():
+    """
+    Operator view of the forward arbiter (openspec change
+    horizon-study-forward-evaluation): what the evidenced challenger models say
+    right now for the next 15 minutes to 4 hours, and how far the live test has
+    got. Re-rendered from the append-only logs in results/forward_eval/ on every
+    request, so a reload is always current.
+
+    READ-ONLY and observational. It reads CSV logs written by the scheduled
+    logger, imports nothing from src/inference.py, and carries no spread,
+    breakeven or profit figure. Imported lazily so the dashboard still starts if
+    the research package is ever unavailable.
+    """
+    try:
+        from src.forecast_eval.report import build_page
+        page = build_page(back_href="/")
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"forecast view unavailable: {type(e).__name__}: {e}")
+    return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
+
+
 if __name__ == "__main__":
     # Makes this file directly runnable: `python api.py` (or a double-click via
     # start.bat) launches the server, instead of silently importing the module

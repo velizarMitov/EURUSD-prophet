@@ -50,8 +50,12 @@ A `ClockMismatch` failure row means the broker's server clock no longer matches
 Europe/Berlin: **stop and re-establish the clock before trusting any session
 rule**, because every session boundary rests on it.
 
-Both call `scripts/forecast_eval/run_module.cmd`. Their console output is
-appended to `research_models/forward_eval/<task name>.log`.
+Both run **hidden**: the task calls `wscript.exe //B` on
+`scripts/forecast_eval/run_hidden.vbs`, which runs `run_module.cmd` with window
+style 0. They used to call the `.cmd` directly, and because `cmd.exe` is a
+console program Windows flashed a window every 15 minutes. Their console output
+is appended to `research_models/forward_eval/<task name>.log`. After editing the
+task command, rerun `install_tasks.ps1`.
 
 ## Install / remove
 
@@ -78,14 +82,28 @@ schtasks /Query /TN EURUSDProphet-ForwardLogger
 
 ## Where to look
 
-Double-click **`scripts\forecast_eval\view_forecasts.cmd`**. It starts a small
-read-only viewer on **<http://127.0.0.1:8001/>** and opens a browser at it; the
-page is re-rendered from the logs on every reload, so it is always current.
-Close that console window to stop it.
+**Start the program as you always do and open <http://127.0.0.1:8000/>.** The main
+page has a bold link at the top of its link row — *Прогнози за сесията* — which
+opens **<http://127.0.0.1:8000/forecasts>**. The page is re-rendered from the logs
+on every reload, so it is always current.
 
-It is a SEPARATE server, bound to loopback only. It touches no part of the
-application on `127.0.0.1:8000` and imports neither `api.py`, `src/inference.py`
-nor `src/paper_trading.py` — a test enforces that.
+If the program was already running before this was added, **restart it once**:
+a running `python api.py` does not reload its code, and until then `/forecasts`
+answers 404.
+
+The route is read-only, imports nothing from `src/inference.py`, and a failure in
+it is a 500 on that one page — every other route keeps answering. It was added to
+`api.py` and `static/index.html` as new lines only, at the owner's request
+(2026-10-05); no existing line was edited.
+
+### Fallback: the standalone viewer
+
+If the program is not running, double-click
+**`scripts\forecast_eval\view_forecasts.cmd`**. It starts a small read-only viewer
+on **<http://127.0.0.1:8001/>** and opens a browser at it. It is a SEPARATE
+server, bound to loopback only, and imports neither `api.py`, `src/inference.py`
+nor `src/paper_trading.py` — a test enforces that. Close its console window to
+stop it.
 
 Prefer a file? **[`dashboard.html`](dashboard.html)** is the same page written to
 disk at the end of every logging run, so it is never more than 15 minutes old
@@ -115,7 +133,8 @@ python -m src.forecast_eval.report --serve --port 8001   # the same, no browser
 python -m src.forecast_eval.report                  # just rewrite dashboard.html
 ```
 
-Both read the logs only and neither is part of the dashboard served by `api.py`.
+All three read the logs only. The `/forecasts` route inside the application uses
+the same renderer (`report.build_page`), so the three can never show different things.
 
 ## The files
 

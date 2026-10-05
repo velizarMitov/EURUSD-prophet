@@ -53,6 +53,14 @@ CURVES = os.path.join(REPO, 'results', 'horizon_study', 'horizon_curves.csv')
 # Below this many settled forecasts an accuracy is noise, not a number worth
 # reading: the study itself refuses to score a cell with fewer.
 MIN_SETTLED_TO_SHOW = 30
+# The headline shows only cells that (a) cleared a coin on history and (b) end
+# within this many minutes, which is what the owner can act on in one sitting.
+# Everything else is real data but not a decision aid, so it is collapsed.
+HEADLINE_MAX_MINUTES = 240
+EVIDENCE_OK = 'над монета на историята'
+EVIDENCE_NO = 'монета на историята'
+AHEAD = {15: 'след 15 минути', 30: 'след 30 минути', 60: 'след 1 час',
+         120: 'след 2 часа', 240: 'след 4 часа'}
 # Columns that must never be rendered (spec: no cost arithmetic on the screen).
 COST_WORDS = ('spread', 'breakeven', 'net_per_trade', 'swap', 'cost', 'pip')
 
@@ -102,6 +110,12 @@ def direction_models(record_path: str = RECORD) -> set:
     return {name for name, cfg in rec['challengers'].items() if cfg.get('kind') == 'direction'}
 
 
+def minutes_ahead(cadence: str, h: int) -> int:
+    """How far ahead a cell forecasts, in minutes -- the only unit the owner
+    needs, so horizons from different cadences line up on one scale."""
+    return int(BAR[cadence].total_seconds() // 60) * int(h)
+
+
 def history_evidence(curves_path: str = CURVES) -> dict:
     """{(model, horizon): label} from the historical study.
 
@@ -116,8 +130,20 @@ def history_evidence(curves_path: str = CURVES) -> dict:
         lo = pd.to_numeric(r.get('acc_ci_low'), errors='coerce')
         if not np.isfinite(lo):
             continue
-        out[(r['model'], int(r['horizon']))] = (
-            'над монета на историята' if lo > 0.5 else 'монета на историята')
+        out[(r['model'], int(r['horizon']))] = EVIDENCE_OK if lo > 0.5 else EVIDENCE_NO
+    return out
+
+
+def study_accuracy(curves_path: str = CURVES) -> dict:
+    """{(model, horizon): accuracy on history} -- the number behind the tag."""
+    if not os.path.exists(curves_path) or not os.path.getsize(curves_path):
+        return {}
+    d = pd.read_csv(curves_path)
+    out = {}
+    for _, r in d.iterrows():
+        acc = pd.to_numeric(r.get('accuracy'), errors='coerce')
+        if np.isfinite(acc):
+            out[(r['model'], int(r['horizon']))] = float(acc)
     return out
 
 
@@ -197,8 +223,9 @@ CSS = """
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,
 Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:16px}
 .wrap{max-width:900px;margin:0 auto}
-h1{font-size:21px;margin:0 0 2px}
+h1{font-size:26px;margin:0 0 2px;letter-spacing:-.01em}
 h2{font-size:16px;margin:26px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{font-size:13px;color:var(--mut);margin:16px 0 8px;font-weight:600}
 .sub{color:var(--mut);font-size:13px;margin-bottom:18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
 padding:14px 16px;margin-bottom:12px}
@@ -214,6 +241,26 @@ font-weight:600;border:1px solid var(--line)}
 .win{font-size:12px;color:var(--mut);margin-top:6px}
 .ev{font-size:11px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)}
 .ev.ok{color:var(--up)}.ev.no{color:var(--mut)}
+/* the headline: one block per horizon */
+.hl{background:var(--card);border:1px solid var(--line);border-radius:12px;
+padding:16px 18px;margin-bottom:12px}
+.when{font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;
+margin-bottom:10px}
+.calls{display:flex;flex-wrap:wrap;gap:22px}
+.call{display:flex;align-items:baseline;gap:9px}
+.call .ar{font-size:34px;line-height:1}
+.call .wd{font-size:19px;font-weight:700;letter-spacing:.02em}
+.call .pq{font-size:13px;color:var(--mut)}
+.call.up .ar,.call.up .wd{color:var(--up)}
+.call.dn .ar,.call.dn .wd{color:var(--dn)}
+.call.off .ar,.call.off .wd{color:var(--mut)}
+.agree{font-size:12px;color:var(--mut);margin-top:10px}
+details{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:10px 14px;margin-bottom:10px}
+details>summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--mut)}
+details[open]>summary{margin-bottom:12px}
+.trust p{margin:0 0 10px}
+.trust p:last-child{margin-bottom:0;color:var(--mut);font-size:13px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
 th{font-size:12px;color:var(--mut);font-weight:600}
@@ -226,6 +273,88 @@ ul{margin:8px 0 0;padding-left:20px}li{margin:4px 0}
 .warn{color:var(--warn)}
 .empty{color:var(--mut);font-style:italic}
 """
+
+
+def _headline(latest: pd.DataFrame, evidence: dict) -> tuple:
+    """The whole point of the page: for each horizon the owner can act on, what
+    the models that actually cleared a coin on history are saying right now.
+
+    Grouped by HOW FAR AHEAD, not by model: "what happens in the next hour" is
+    the question, and a model's name is not an answer. Models with no historical
+    evidence are left out entirely -- they are logged, but putting them here
+    would present noise as a forecast.
+
+    The calls are listed side by side and never combined into one arrow: no
+    ensemble of these models was ever fitted or validated, so inventing a
+    majority vote here would be a forecast nobody measured.
+    """
+    if latest.empty:
+        return '', []
+    rows = []
+    for _, r in latest.iterrows():
+        h = int(r['horizon'])
+        if evidence.get((r['model'], h)) != EVIDENCE_OK:
+            continue
+        mins = minutes_ahead(r['cadence'], h)
+        if mins > HEADLINE_MAX_MINUTES or mins not in AHEAD:
+            continue
+        rows.append({'mins': mins, **r})
+    if not rows:
+        return '', []
+    blocks = []
+    for mins in sorted({x['mins'] for x in rows}):
+        group = [x for x in rows if x['mins'] == mins]
+        calls = []
+        for x in group:
+            up = x['direction'] == '+'
+            word = 'НАГОРЕ' if up else ('НАДОЛУ' if x['direction'] == '−' else 'НЯМА ОТГОВОР')
+            cls = 'up' if up else ('dn' if x['direction'] == '−' else 'off')
+            pct = '' if pd.isna(x['p_up']) else f'<span class="pq">{_pct(x["p_up"], 0)} за нагоре</span>'
+            calls.append(f'<div class="call {cls}"><span class="ar">'
+                         f'{"↑" if up else "↓" if x["direction"] == "−" else "·"}</span>'
+                         f'<span class="wd">{word}</span>{pct}</div>')
+        agree = ''
+        if len(group) > 1:
+            same = len({x['direction'] for x in group}) == 1
+            agree = (f'<div class="agree">{"и двата модела казват едно и също" if same else "моделите не са съгласни"}'
+                     f' — съгласието не е допълнително доказателство</div>')
+        win = f'{_fmt(group[0]["from"])} → {_fmt(group[0]["until"])}'
+        blocks.append(f'<div class="hl"><div class="when">{AHEAD[mins]}</div>'
+                      f'<div class="calls">{"".join(calls)}</div>'
+                      f'{agree}<div class="win">важи {win}</div></div>')
+    return ''.join(blocks), rows
+
+
+def _trust(headline_rows, acc: pd.DataFrame, study: dict, n_req) -> str:
+    """Three plain sentences: how good these models were, how far the live test
+    has got, and what that means. No jargon, no table."""
+    if not headline_rows:
+        return ('<p>Сесията ти още не е отворена или няма записана прогноза от модел '
+                'с доказана стойност.</p>')
+    # A RANGE, not the best cell: the headline mixes models that scored 51 and
+    # 53 on history, and quoting only the best would overstate the weaker ones.
+    scores = [study[(x['model'], int(x['horizon']))] for x in headline_rows
+              if (x['model'], int(x['horizon'])) in study
+              and np.isfinite(study[(x['model'], int(x['horizon']))])]
+    if not scores:
+        hits = '—'
+    else:
+        lo, hi = round(T._to_pct(min(scores))), round(T._to_pct(max(scores)))
+        hits = f'{lo} от 100' if lo == hi else f'между {lo} и {hi} от 100'
+    done = 0
+    if not acc.empty:
+        keys = {(x['model'], int(x['horizon'])) for x in headline_rows}
+        sel = acc[[(m, int(h)) in keys for m, h in zip(acc['model'], acc['horizon'])]]
+        done = int(sel['n'].max()) if len(sel) else 0
+    target = round(float(n_req)) if np.isfinite(n_req) else None
+    left = max(target - done, 0) if target else None
+    return (
+        f'<p><b>На историята тези модели познаваха {hits} пъти.</b> '
+        f'Монета познава 50 от 100. Разликата е малка и се вижда само в хиляди прогнози — '
+        f'всяка отделна прогноза горе е почти хвърляне на монета.</p>'
+        f'<p><b>На живо още не е доказано.</b> Приключили прогнози: {_num(done)} от '
+        f'{_num(target)}. Остават {_num(left)}.</p>'
+        f'<p>Докато броячът не се напълни, нищо тук не е присъда — само наблюдение.</p>')
 
 
 def _cell_card(r, admitted: set, evidence: dict) -> str:
@@ -297,8 +426,7 @@ def _problems(gaps: pd.DataFrame, fails: pd.DataFrame) -> str:
 
 
 EXPLAINER = """
-<h2>Как се гледа</h2>
-<div class="card">
+<details><summary>Как се чете тази страница</summary>
 <ul>
 <li><b>+ или −</b> е посоката, която моделът очаква. Процентът под нея е неговата
 вероятност за „нагоре“: над 50% значи +, под 50% значи −.</li>
@@ -322,13 +450,17 @@ EXPLAINER = """
 <li><b>Разходите не са тук.</b> Спредът и нетната печалба ги сметкаш ти; остават
 записани в CSV файловете, но не се показват и не решават нищо.</li>
 </ul>
-</div>
+</details>
 """
 
 
 def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated,
-           direction_only=None, evidence=None) -> str:
+           direction_only=None, evidence=None, study=None, back_href=None) -> str:
+    """One screen: what the evidenced models say, and how far the live test has
+    got. Everything else is real data but not a decision aid, so it is folded
+    away behind a summary rather than competing for attention."""
     evidence = evidence or {}
+    study = study or {}
     latest = latest_forecasts(preds)
     acc = running_accuracy(preds, settles)
     if direction_only:
@@ -336,18 +468,22 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
             latest = latest[latest['model'].isin(direction_only)]
         if not acc.empty:
             acc = acc[acc['model'].isin(direction_only)]
-    sess = ('<span class="badge on">в сесия</span>' if state['in_session']
-            else '<span class="badge off">извън сесия</span>')
+    sess = ('<span class="badge on">сесията е отворена</span>' if state['in_session']
+            else '<span class="badge off">сесията е затворена</span>')
     phase = 'dry_run'
     if not preds.empty and 'phase' in preds:
         phase = str(preds['phase'].iloc[-1])
-    phase_note = ('пробен запис — нищо не се зачита' if phase == 'dry_run'
+    phase_note = ('пробен период — нищо не се зачита още' if phase == 'dry_run'
                   else 'зачита се')
 
-    if latest.empty:
-        cards = '<p class="empty">Още няма записана прогноза.</p>'
-    else:
-        # The cells that can reach a verdict come first inside each cadence.
+    headline, headline_rows = _headline(latest, evidence)
+    if not headline:
+        headline = ('<div class="hl"><div class="when">няма прогноза</div>'
+                    '<p class="note">Моделите с доказана стойност работят само в сесията '
+                    f'({state["window"]} твое време). Извън нея тук е празно.</p></div>')
+
+    rest = '<p class="empty">Още няма записана прогноза.</p>'
+    if not latest.empty:
         latest = latest.assign(
             _rank=[0 if (r['model'], r['cadence'], int(r['horizon'])) in admitted else 1
                    for _, r in latest.iterrows()]
@@ -357,12 +493,12 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
             part = latest[latest['cadence'] == cad]
             if part.empty:
                 continue
-            title = {'M15': '15-минутни барове — твоята сесия',
-                     'H1': 'Часови барове', 'D1': 'Дневни барове'}[cad]
-            blocks.append(f'<h2>{title}</h2>\n<div class="grid">' +
+            title = {'M15': '15-минутни барове', 'H1': 'Часови барове',
+                     'D1': 'Дневни барове'}[cad]
+            blocks.append(f'<h3>{title}</h3>\n<div class="grid">' +
                           ''.join(_cell_card(r, admitted, evidence) for _, r in part.iterrows()) +
                           '</div>')
-        cards = ''.join(blocks)
+        rest = ''.join(blocks)
 
     return f"""<!doctype html>
 <html lang="bg"><head><meta charset="utf-8">
@@ -370,21 +506,30 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
 <meta http-equiv="refresh" content="300">
 <title>EUR/USD прогнози</title><style>{CSS}</style></head>
 <body><div class="wrap">
-<h1>EUR/USD — какво казват моделите</h1>
-<div class="sub">Обновено {generated} твое време · {sess} ·
-сесия {state['window']} · режим <b>{html.escape(phase)}</b> ({phase_note})</div>
+{f'<p class="note"><a href="{html.escape(back_href)}">← към таблото</a></p>' if back_href else ''}
+<h1>EUR/USD</h1>
+<div class="sub">{generated} твое време · {sess} · {phase_note}</div>
 
-{cards}
+{headline}
 
-<h2>Точност досега</h2>
-<div class="card">{_accuracy_table(acc, admitted, n_req)}
-<p class="note">Регистрирани прогнози за решение: <b>{_num(n_req)}</b> на клетка,
-при alpha {alpha:.6f}.</p></div>
+<h2>Колко да вярваш</h2>
+<div class="card trust">{_trust(headline_rows, acc, study, n_req)}</div>
 
-<h2>Състояние на записа</h2>
-<div class="card">{_problems(gaps, fails)}
+<details><summary>Всички останали модели и хоризонти</summary>
+<p class="note">Записват се, но нито един от тях не е показал предимство над монета
+на историята на този хоризонт, или е прекалено дълъг, за да го изтъргуваш в една
+сесия. Тук са за пълнота.</p>
+{rest}</details>
+
+<details><summary>Точност по клетки — числата</summary>
+{_accuracy_table(acc, admitted, n_req)}
+<p class="note">За решение трябват <b>{_num(n_req)}</b> приключили прогнози на клетка.</p>
+</details>
+
+<details><summary>Състояние на записа</summary>
+{_problems(gaps, fails)}
 <p class="note">Записани прогнози: {_num(len(preds))} ·
-приключили: {_num(len(settles))}</p></div>
+приключили: {_num(len(settles))}</p></details>
 
 {EXPLAINER}
 <div class="sub" style="margin-top:22px">Описателно. Присъда се издава само при
@@ -392,15 +537,18 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
 </div></body></html>"""
 
 
-def build_page(out: str = FWD, record_path: str = RECORD, now=None) -> str:
+def build_page(out: str = FWD, record_path: str = RECORD, now=None, back_href=None) -> str:
     """The rendered page, with the no-cost guard applied. Shared by the file
-    writer and the local server, so both can never drift apart."""
+    writer, the local viewer and the /forecasts route in api.py, so none of them
+    can drift apart. `back_href` adds a link home when it is served inside the
+    application; a standalone file or the :8001 viewer passes none."""
     admitted, alpha, n_req = admitted_cells(record_path)
     generated = owner_time(MD.label_now(now)).strftime('%d.%m.%Y %H:%M')
     page = render(_read('predictions', out), _read('settlements', out), _read('gaps', out),
                   _read('failures', out), admitted, alpha, n_req,
                   session_state(now), generated,
-                  direction_only=direction_models(record_path), evidence=history_evidence())
+                  direction_only=direction_models(record_path), evidence=history_evidence(),
+                  study=study_accuracy(), back_href=back_href)
     leaked = [w for w in COST_WORDS if w in page.lower()]
     if leaked:
         raise AssertionError(f'cost arithmetic reached the operator view: {leaked}')

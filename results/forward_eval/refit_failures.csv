@@ -1,0 +1,16 @@
+model,cadence,horizon,as_of_bar,error,logged_at
+daily_gbm_macro,D1,1,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:11+00:00
+daily_gbm_macro,D1,2,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:12+00:00
+daily_gbm_macro,D1,5,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:12+00:00
+daily_gbm_price,D1,1,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:12+00:00
+daily_gbm_price,D1,2,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:13+00:00
+daily_gbm_price,D1,5,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:13+00:00
+daily_lstm_macro,D1,1,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:33+00:00
+daily_lstm_macro,D1,2,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:46+00:00
+daily_lstm_macro,D1,5,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:00:54+00:00
+daily_lstm_price,D1,1,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:01:09+00:00
+daily_lstm_price,D1,2,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:01:19+00:00
+daily_lstm_price,D1,5,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:01:27+00:00
+vol_ensemble,D1,1,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:04:51+00:00
+vol_ensemble,D1,2,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:05:43+00:00
+vol_ensemble,D1,5,2026-10-02 23:59:59+00:00,TypeError: Cannot compare tz-naive and tz-aware timestamps,2026-10-03T03:06:27+00:00
