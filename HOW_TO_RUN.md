@@ -119,7 +119,9 @@ Whichever option you choose, then open **http://127.0.0.1:8000** in your browser
 
 | Route | What it does |
 |---|---|
-| `GET /` | The dashboard (`static/index.html`) — predict button, retrain button, link to history |
+| `GET /` | The plain-language home page (`static/home.html`): tomorrow's direction in words, today's session forecasts, the expected movement, and how reliable the forecasts have been so far. Bulgarian / English switch |
+| `GET /advanced` | The research dashboard (`static/index.html`) that used to live at `/`: both model variants, evidence notes, H1, Kronos, retrain button |
+| `GET /api/home` | JSON behind the home page. Read-only: runs no model and writes no file (`?part=reliability` returns only the hit-rate block) |
 | `POST /api/predict` | Runs the real prediction (JSON response) |
 | `GET /history` | HTML table comparing every past prediction against the actual market outcome |
 | `POST /api/retrain` | Starts model retraining as a background process (15–30 min, non-blocking) |
@@ -198,6 +200,6 @@ venv\Scripts\activate
 pip install -r requirements.txt
 python api.py
 ```
-→ open **http://127.0.0.1:8000** (this runs `api.py` — the full interface with predict, history, and retrain)
+→ open **http://127.0.0.1:8000** (this runs `api.py`; `/` is the plain-language home page, and the full research interface with retrain is at `/advanced`)
 
 Or, on Windows, just **double-click `start.bat`** after the one-time `pip install`.

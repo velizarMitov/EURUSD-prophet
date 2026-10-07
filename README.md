@@ -13,7 +13,7 @@ The pipeline formally implements, evaluates, and contrasts:
 ```bash
 pip install -r requirements.txt
 python verify_installation.py          # environment + data + headline model, ~20 s
-python -m uvicorn api:app --reload     # dashboard at http://127.0.0.1:8000
+python -m uvicorn api:app --reload     # home page at http://127.0.0.1:8000, research console at /advanced
 python -m pytest -q                    # 881 tests: 880 pass, 1 environment skip
 python -m src.dl_model_report          # model card for all 9 trained networks
 ```
@@ -53,7 +53,7 @@ blocks** (Section 22.6) — the clearest statement of the project's thesis it ha
 
 ## Project Structure
 * **`notebooks/01_data_preparation.ipynb`**: The primary research environment. Contains mathematical formulations in LaTeX, rigorous exploratory data analysis (EDA / ADF / ACF), PCA dimensionality reduction, explicit Multi-Task model construction logic (GBM dual pipeline + Functional API LSTM), hyperparameter tuning, and evaluation plotting.
-* **`api.py`**: The FastAPI web server — the application's single entry point. Serves the interactive dashboard (`static/index.html`), the `/api/predict` endpoint, the `/history` prediction-vs-actual page, and the background `/api/retrain` controls.
+* **`api.py`**: The FastAPI web server — the application's single entry point. Serves the plain-language home page at `/` (`static/home.html`, data from the read-only `/api/home`), the research dashboard at `/advanced` (`static/index.html`), the `/api/predict` endpoint, the `/history` prediction-vs-actual page, and the background `/api/retrain` controls.
 * **`config.json`**: Centralized hyperparameters and file paths (PCA variance threshold, GBM/LSTM settings, data paths) loaded dynamically by both the notebook and the production scripts.
 * **`models/`**: Contains the trained joblib/Keras artifacts (GBM classifier+regressor, Multi-Task LSTM, PCA + scalers).
 * **`results/`**: Analytical diagnostic exports including Confusion Matrices, Learning Curves, and the compiled feature subsets.

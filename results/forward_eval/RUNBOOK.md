@@ -82,9 +82,11 @@ schtasks /Query /TN EURUSDProphet-ForwardLogger
 
 ## Where to look
 
-**Start the program as you always do and open <http://127.0.0.1:8000/>.** The main
-page has a bold link at the top of its link row — *Прогнози за сесията* — which
-opens **<http://127.0.0.1:8000/forecasts>**. The page is re-rendered from the logs
+**Start the program as you always do and open <http://127.0.0.1:8000/>.** Since
+2026-10-06 that is the plain-language home page: its *Днешната сесия* tile shows the
+registered cells' current calls, and *Подробно по модели* (and *Прогнози за сесията*
+in the footer) opens **<http://127.0.0.1:8000/forecasts>**. The research dashboard
+with the same bold link moved to <http://127.0.0.1:8000/advanced>. The page is re-rendered from the logs
 on every reload, so it is always current.
 
 If the program was already running before this was added, **restart it once**:

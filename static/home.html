@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EUR/USD Prophet</title>
+<!-- Plain-language home page (openspec change friendly-home-page, capability
+     home-overview). Everything shown comes from GET /api/home, which runs no
+     model and writes nothing. The only action that predicts is the refresh
+     button, which calls the existing POST /api/predict. No external scripts or
+     fonts: this page must work offline on loopback. -->
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --ink:#15181c; --mut:#5f6873; --line:#e2e5e9;
+  --up:#1d7a4c; --up-bg:#e8f4ee; --dn:#a8322b; --dn-bg:#f9ebea;
+  --flat:#5f6873; --flat-bg:#eef0f3; --accent:#1f4e9c; --accent-ink:#ffffff;
+  --note-bg:#fff6e0; --note-ink:#6b4a00; --note-line:#e9c46a; --skel:#e9ecef;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121417; --card:#1b1e22; --ink:#e7e9ec; --mut:#9aa3ad; --line:#2a2f35;
+    --up:#5cc98f; --up-bg:#16291f; --dn:#ff8a80; --dn-bg:#2e1b1a;
+    --flat:#9aa3ad; --flat-bg:#23272c; --accent:#7aa7ef; --accent-ink:#0d1420;
+    --note-bg:#2a2412; --note-ink:#ecc870; --note-line:#6b5a22; --skel:#262a30;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121417; --card:#1b1e22; --ink:#e7e9ec; --mut:#9aa3ad; --line:#2a2f35;
+  --up:#5cc98f; --up-bg:#16291f; --dn:#ff8a80; --dn-bg:#2e1b1a;
+  --flat:#9aa3ad; --flat-bg:#23272c; --accent:#7aa7ef; --accent-ink:#0d1420;
+  --note-bg:#2a2412; --note-ink:#ecc870; --note-line:#6b5a22; --skel:#262a30;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);
+  font:16px/1.5 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:16px}
+.wrap{max-width:1040px;margin:0 auto}
+a{color:var(--accent)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:12px}
+header h1{font-size:22px;margin:0;letter-spacing:-.01em;flex:1 1 auto}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--mut);border:0;padding:6px 12px;font:inherit;
+  font-size:14px;font-weight:600;cursor:pointer}
+.lang button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.adv{font-size:14px;white-space:nowrap}
+.notice{background:var(--note-bg);color:var(--note-ink);border:1px solid var(--note-line);
+  border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:16px}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:820px){.tiles{grid-template-columns:1fr}}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;
+  display:flex;flex-direction:column;gap:6px;min-width:0}
+.tile h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:0}
+.big{font-size:30px;font-weight:700;line-height:1.15;display:flex;align-items:center;gap:10px}
+.big .ic{font-size:30px;width:1.1em;text-align:center}
+.tone-up .big{color:var(--up)} .tone-dn .big{color:var(--dn)} .tone-flat .big{color:var(--flat)}
+.tile.tone-up{background:linear-gradient(var(--up-bg),var(--card) 70%)}
+.tile.tone-dn{background:linear-gradient(var(--dn-bg),var(--card) 70%)}
+.plain{font-size:15px}
+.meta{font-size:13px;color:var(--mut)}
+.tag{display:inline-block;font-size:12px;font-weight:700;border-radius:999px;padding:2px 9px;
+  background:var(--flat-bg);color:var(--mut);margin-right:6px}
+.tile.outdated .big{opacity:.45}
+.btn{margin-top:auto;align-self:flex-start;background:transparent;color:var(--accent);
+  border:1px solid var(--accent);border-radius:8px;padding:8px 14px;font:inherit;font-size:14px;
+  font-weight:600;cursor:pointer}
+.btn.hot{background:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.6;cursor:wait}
+.rows{display:flex;flex-direction:column;gap:6px;margin-top:2px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;
+  border-top:1px solid var(--line);padding-top:6px}
+.row:first-child{border-top:0;padding-top:0}
+.row .win{font-size:14px;font-variant-numeric:tabular-nums}
+.row .win small{color:var(--mut);display:block;font-size:12px}
+.calls{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.call{font-size:13px;font-weight:700;border-radius:6px;padding:2px 8px}
+.call.up{color:var(--up);background:var(--up-bg)} .call.down{color:var(--dn);background:var(--dn-bg)}
+.rel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-top:14px}
+.rel h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:0 0 8px}
+.rel .headline{font-size:20px;font-weight:700}
+.track{position:relative;height:14px;background:var(--flat-bg);border-radius:7px;margin:14px 0 6px;overflow:visible}
+.fill{height:100%;border-radius:7px;background:var(--flat);width:0;transition:width .4s}
+.rel.above .fill{background:var(--up)}
+.tick{position:absolute;left:50%;top:-6px;bottom:-6px;width:2px;background:var(--ink)}
+.ticklbl{position:absolute;left:50%;top:20px;transform:translateX(-50%);font-size:12px;color:var(--mut);white-space:nowrap}
+.scale{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:22px}
+.skel{background:var(--skel);border-radius:6px;color:transparent!important;min-height:1em}
+.err{color:var(--dn);font-size:14px}
+footer{margin-top:18px;font-size:14px;display:flex;flex-wrap:wrap;gap:6px 18px}
+footer .meta{flex-basis:100%}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>EUR/USD Prophet</h1>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="bg" aria-pressed="true">BG</button>
+      <button type="button" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+    <a class="adv" href="/advanced" data-i18n="advanced"></a>
+  </header>
+
+  <div class="notice" role="note" data-i18n="notice"></div>
+
+  <section class="tiles">
+    <article class="tile" id="tTomorrow">
+      <h2 data-i18n="tomorrow_title"></h2>
+      <div class="big skel" id="tomorrowBig">&nbsp;</div>
+      <div class="plain" id="tomorrowPlain"></div>
+      <div class="meta" id="tomorrowMeta"></div>
+      <button type="button" class="btn" id="refreshBtn" data-i18n="refresh"></button>
+      <div class="err" id="refreshErr" hidden></div>
+    </article>
+
+    <article class="tile" id="tSession">
+      <h2 data-i18n="session_title"></h2>
+      <div class="big skel" id="sessionBig">&nbsp;</div>
+      <div class="rows" id="sessionRows"></div>
+      <div class="meta" id="sessionMeta"></div>
+      <a class="meta" href="/forecasts" data-i18n="session_more"></a>
+    </article>
+
+    <article class="tile" id="tMove">
+      <h2 data-i18n="move_title"></h2>
+      <div class="big skel" id="moveBig">&nbsp;</div>
+      <div class="plain" id="movePlain"></div>
+      <div class="meta" id="moveMeta"></div>
+    </article>
+  </section>
+
+  <section class="rel" id="rel">
+    <h2 data-i18n="rel_title"></h2>
+    <div class="headline skel" id="relHeadline">&nbsp;</div>
+    <div class="plain" id="relState"></div>
+    <div class="track" aria-hidden="true">
+      <div class="fill" id="relFill"></div>
+      <div class="tick"></div>
+      <div class="ticklbl" data-i18n="coin"></div>
+    </div>
+    <div class="scale" aria-hidden="true"><span>0%</span><span>100%</span></div>
+    <div class="meta" id="relMeta"></div>
+  </section>
+
+  <footer>
+    <a href="/forecasts" data-i18n="link_forecasts"></a>
+    <a href="/history" data-i18n="link_history"></a>
+    <a href="/paper-trading" data-i18n="link_ledgers"></a>
+    <a href="/h1-direction" data-i18n="link_h1"></a>
+    <a href="/kronos-volatility" data-i18n="link_kronos"></a>
+    <a href="/advanced" data-i18n="advanced"></a>
+    <div class="meta" id="generated"></div>
+  </footer>
+</div>
+
+<script>
+// Every user-visible word on this page, in both languages. The state keys
+// (no_signal, too_early, ...) are emitted by src/home_summary.py; a test checks
+// that each of them is here and that no entry is blank in either language.
+const I18N = {
+  advanced:        {bg: 'Разширен изглед →', en: 'Advanced view →'},
+  notice:          {bg: 'Все още няма доказано предимство. Това не е финансов съвет. Всички резултати са симулирани.',
+                    en: 'No proven edge yet. This is not financial advice. All tracking is simulated.'},
+  tomorrow_title:  {bg: 'Утре', en: 'Tomorrow'},
+  session_title:   {bg: 'Днешната сесия', en: "Today's session"},
+  move_title:      {bg: 'Очаквано движение', en: 'Expected movement'},
+  rel_title:       {bg: 'Колко надеждно е досега?', en: 'How reliable so far?'},
+  refresh:         {bg: 'Обнови прогнозата', en: 'Update forecast'},
+  refreshing:      {bg: 'Обновява се… (до минута)', en: 'Updating… (up to a minute)'},
+  refresh_failed:  {bg: 'Обновяването не успя:', en: 'Update failed:'},
+  no_signal:       {bg: 'Няма ясен сигнал', en: 'No clear signal'},
+  slightly_up:     {bg: 'Леко нагоре', en: 'Slightly up'},
+  slightly_down:   {bg: 'Леко надолу', en: 'Slightly down'},
+  no_signal_plain: {bg: 'Моделите са почти 50 на 50 — днес не казват нищо полезно.',
+                    en: 'The models are close to 50/50 — nothing useful to say today.'},
+  lean_plain:      {bg: 'Моделите леко клонят натам. Една отделна прогноза е близо до хвърляне на монета.',
+                    en: 'The models lean this way. A single forecast is close to a coin toss.'},
+  for_day:         {bg: 'за', en: 'for'},
+  computed:        {bg: 'изчислено', en: 'computed'},
+  outdated:        {bg: 'остаряла', en: 'outdated'},
+  outdated_plain:  {bg: 'Тази прогноза е за ден, който вече мина. Натисни „Обнови прогнозата“.',
+                    en: 'This forecast is for a day that has passed. Press “Update forecast”.'},
+  variants_disagree: {bg: 'Двете версии на модела днес не са съгласни.',
+                      en: 'The two model versions disagree today.'},
+  fallback_variant: {bg: 'Показана е версията с макро данни (по-стар запис).',
+                     en: 'Showing the macro version (older record).'},
+  session_open:    {bg: 'Сесията е отворена', en: 'Session open'},
+  session_closed:  {bg: 'Сесията е затворена', en: 'Session closed'},
+  opens:           {bg: 'Отваря', en: 'Opens'},
+  session_hours:   {bg: 'Сесия: 15:30–23:00, понеделник–петък', en: 'Session: 15:30–23:00, Monday–Friday'},
+  session_none:    {bg: 'Още няма прогноза за текущия прозорец.', en: 'No forecast for the current window yet.'},
+  session_more:    {bg: 'Подробно по модели →', en: 'Details by model →'},
+  ahead:           {bg: 'напред', en: 'ahead'},
+  min:             {bg: 'мин', en: 'min'},
+  hour:            {bg: 'ч', en: 'h'},
+  up:              {bg: 'нагоре', en: 'up'},
+  down:            {bg: 'надолу', en: 'down'},
+  move_plain:      {bg: 'Колко може да се движи EUR/USD утре — не в коя посока.',
+                    en: 'How much EUR/USD may move tomorrow — not which way.'},
+  coin:            {bg: '50% = монета', en: '50% = coin flip'},
+  right_of:        {bg: 'познати от', en: 'right out of'},
+  too_early:       {bg: 'Твърде рано за извод', en: 'Too early to tell'},
+  coin_range:      {bg: 'В рамките на хвърляне на монета', en: 'Within coin-flip range'},
+  above_coin:      {bg: 'Над монетата засега — още не е доказано', en: 'Above coin-flip so far — not yet proven'},
+  too_early_plain: {bg: 'Нужни са поне {n} приключили прогнози, преди числото да значи нещо.',
+                    en: 'At least {n} settled forecasts are needed before this number means anything.'},
+  coin_range_plain:{bg: 'Засега резултатът не се отличава от случайност.',
+                    en: 'So far the result cannot be told apart from chance.'},
+  above_coin_plain:{bg: 'Обнадеждаващо, но решението се взема само от дългосрочния запис.',
+                    en: 'Encouraging, but only the long-run record decides.'},
+  rel_basis:       {bg: 'Дневни прогнози на ценовия модел; дните без сигнал не се броят.',
+                    en: 'Daily calls of the price model; days with no signal are not counted.'},
+  unavailable:     {bg: 'Няма данни', en: 'Not available'},
+  loading_error:   {bg: 'Данните не можаха да се заредят.', en: 'The data could not be loaded.'},
+  updated:         {bg: 'Обновено', en: 'Updated'},
+  your_time:       {bg: 'твое време (София)', en: 'your time (Sofia)'},
+  link_forecasts:  {bg: 'Прогнози за сесията', en: 'Session forecasts'},
+  link_history:    {bg: 'История: прогноза срещу реалност', en: 'History: forecast vs actual'},
+  link_ledgers:    {bg: 'Симулирани дневници', en: 'Simulated ledgers'},
+  link_h1:         {bg: 'Часова посока (наблюдение)', en: 'Hourly direction (observational)'},
+  link_kronos:     {bg: 'Kronos волатилност (наблюдение)', en: 'Kronos volatility (observational)'},
+  day_names:       {bg: 'нд,пн,вт,ср,чт,пт,сб', en: 'Sun,Mon,Tue,Wed,Thu,Fri,Sat'},
+};
+
+const STORE_KEY = 'eurusd.home.lang';
+let lang = 'bg';
+try { const saved = localStorage.getItem(STORE_KEY); if (saved === 'en' || saved === 'bg') lang = saved; } catch (e) { /* private mode */ }
+
+let home = null;          // last /api/home payload
+let reliability = null;   // last /api/home?part=reliability payload
+
+const t = (k) => (I18N[k] && I18N[k][lang]) || k;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function dayLabel(iso) {
+  // "2026-10-07" -> "вт 07.10" / "Tue 07.10". Parsed by hand: Date('YYYY-MM-DD')
+  // is UTC midnight and could print the previous day west of Greenwich.
+  const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  if (!y) return String(iso);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${t('day_names').split(',')[wd]} ${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}`;
+}
+
+function setLang(next) {
+  lang = next;
+  try { localStorage.setItem(STORE_KEY, next); } catch (e) { /* storage blocked: still switch for this visit */ }
+  document.documentElement.lang = next;
+  document.querySelectorAll('.lang button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === next)));
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  render();
+}
+
+function unavailable(bigId, extraIds) {
+  const big = $(bigId);
+  big.classList.remove('skel');
+  big.innerHTML = `<span class="ic">·</span>${esc(t('unavailable'))}`;
+  (extraIds || []).forEach((id) => { $(id).textContent = ''; });
+}
+
+function renderTomorrow(b) {
+  const tile = $('tTomorrow');
+  tile.classList.remove('tone-up', 'tone-dn', 'tone-flat', 'outdated');
+  const btn = $('refreshBtn');
+  btn.classList.remove('hot');
+  if (!b || !b.available) { tile.classList.add('tone-flat'); unavailable('tomorrowBig', ['tomorrowPlain', 'tomorrowMeta']); btn.classList.add('hot'); return; }
+  const tone = {slightly_up: 'tone-up', slightly_down: 'tone-dn'}[b.key] || 'tone-flat';
+  const icon = {slightly_up: '↗', slightly_down: '↘'}[b.key] || '–';
+  tile.classList.add(tone);
+  const big = $('tomorrowBig');
+  big.classList.remove('skel');
+  big.innerHTML = `<span class="ic">${icon}</span>${esc(t(b.key))}`;
+  const notes = [b.key === 'no_signal' ? t('no_signal_plain') : t('lean_plain')];
+  if (b.variants_disagree) notes.push(t('variants_disagree'));
+  if (b.variant === 'with_macro') notes.push(t('fallback_variant'));
+  if (b.outdated) { tile.classList.add('outdated'); notes.unshift(t('outdated_plain')); btn.classList.add('hot'); }
+  $('tomorrowPlain').textContent = notes.join(' ');
+  const tag = b.outdated ? `<span class="tag">${esc(t('outdated'))}</span>` : '';
+  $('tomorrowMeta').innerHTML = `${tag}${esc(t('for_day'))} ${esc(dayLabel(b.forecasting_date))}` +
+    (b.logged_at ? ` · ${esc(t('computed'))} ${esc(b.logged_at.slice(8, 10) + '.' + b.logged_at.slice(5, 7) + ' ' + b.logged_at.slice(11, 16))}` : '');
+}
+
+function horizonLabel(mins) {
+  return mins < 60 ? `${mins} ${t('min')}` : `${mins / 60} ${t('hour')}`;
+}
+
+function renderSession(b) {
+  const big = $('sessionBig');
+  big.classList.remove('skel');
+  const rows = $('sessionRows');
+  rows.innerHTML = '';
+  $('tSession').classList.remove('tone-flat');
+  if (!b || !b.available) { unavailable('sessionBig', ['sessionMeta']); return; }
+  if (!b.open) {
+    $('tSession').classList.add('tone-flat');
+    big.innerHTML = `<span class="ic">☾</span>${esc(t('session_closed'))}`;
+    const at = String(b.next_open || '');
+    $('sessionMeta').textContent = `${t('opens')} ${dayLabel(at)} ${at.slice(11, 16)} · ${t('session_hours')}`;
+    return;
+  }
+  big.innerHTML = `<span class="ic">●</span>${esc(t('session_open'))}`;
+  if (!b.horizons || !b.horizons.length) {
+    rows.innerHTML = `<div class="meta">${esc(t('session_none'))}</div>`;
+  } else {
+    rows.innerHTML = b.horizons.map((h) => {
+      const calls = h.calls.map((c) =>
+        `<span class="call ${c.key === 'up' ? 'up' : 'down'}" title="${esc(c.model)}">${c.key === 'up' ? '↑' : '↓'} ${esc(t(c.key))}</span>`).join('');
+      return `<div class="row"><div class="win">${esc(h.from)}–${esc(h.until)}<small>${esc(horizonLabel(h.minutes))} ${esc(t('ahead'))}</small></div><div class="calls">${calls}</div></div>`;
+    }).join('');
+  }
+  $('sessionMeta').textContent = t('session_hours');
+}
+
+function renderMovement(b) {
+  if (!b || !b.available) { unavailable('moveBig', ['movePlain', 'moveMeta']); return; }
+  const big = $('moveBig');
+  big.classList.remove('skel');
+  big.innerHTML = `<span class="ic">↕</span>± ${Number(b.vol_pct).toFixed(2)} %`;
+  $('movePlain').textContent = t('move_plain');
+  $('moveMeta').textContent = `${t('for_day')} ${dayLabel(b.forecasting_date)}`;
+}
+
+function renderReliability(b) {
+  const box = $('rel');
+  box.classList.remove('above');
+  const head = $('relHeadline');
+  if (!b) return;                         // still loading: keep the skeleton
+  head.classList.remove('skel');
+  if (!b.available) {
+    head.textContent = t('unavailable');
+    $('relState').textContent = ''; $('relMeta').textContent = '';
+    $('relFill').style.width = '0';
+    return;
+  }
+  const pct = b.rate == null ? null : Math.round(b.rate * 100);
+  head.textContent = `${b.hits} ${t('right_of')} ${b.n}` + (pct == null ? '' : ` (${pct}%)`);
+  const plain = {too_early: 'too_early_plain', coin_range: 'coin_range_plain', above_coin: 'above_coin_plain'}[b.key];
+  $('relState').innerHTML = `<b>${esc(t(b.key))}</b> — ${esc(t(plain).replace('{n}', b.min_settled))}` +
+    (b.key === 'above_coin' ? ` <a href="/paper-trading">${esc(t('link_ledgers'))} →</a>` : '');
+  if (b.key === 'above_coin') box.classList.add('above');
+  $('relFill').style.width = pct == null ? '0' : `${pct}%`;
+  $('relMeta').textContent = t('rel_basis');
+}
+
+function render() {
+  if (home) {
+    renderTomorrow(home.tomorrow);
+    renderSession(home.session);
+    renderMovement(home.movement);
+    $('generated').textContent = `${t('updated')} ${home.generated_at.slice(11, 16)} · ${t('your_time')}`;
+  }
+  renderReliability(reliability);
+}
+
+async function loadHome() {
+  try {
+    const r = await fetch('/api/home', {cache: 'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    home = await r.json();
+  } catch (e) {
+    home = {generated_at: '', tomorrow: null, session: null, movement: null};
+    $('generated').textContent = t('loading_error');
+  }
+  render();
+}
+
+async function loadReliability() {
+  try {
+    const r = await fetch('/api/home?part=reliability', {cache: 'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    reliability = (await r.json()).reliability;
+  } catch (e) {
+    reliability = {available: false};
+  }
+  render();
+}
+
+async function refreshForecast() {
+  const btn = $('refreshBtn');
+  const err = $('refreshErr');
+  err.hidden = true;
+  btn.disabled = true;
+  btn.textContent = t('refreshing');
+  try {
+    const r = await fetch('/api/predict', {method: 'POST'});
+    if (!r.ok) {
+      let detail = String(r.status);
+      try { detail = (await r.json()).detail || detail; } catch (e) { /* non-JSON error */ }
+      throw new Error(detail);
+    }
+    await loadHome();
+    loadReliability();
+  } catch (e) {
+    err.textContent = `${t('refresh_failed')} ${e.message}`;
+    err.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('refresh');
+  }
+}
+
+document.querySelectorAll('.lang button').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+$('refreshBtn').addEventListener('click', refreshForecast);
+setLang(lang);
+loadHome();
+loadReliability();
+</script>
+</body>
+</html>

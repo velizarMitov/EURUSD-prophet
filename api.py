@@ -66,6 +66,12 @@ def read_root():
     """Serve the zero-input dashboard (static/index.html) at the API root,
     or a minimal JSON health summary if the static/ directory is absent."""
     index_path = os.path.join(static_dir, "index.html")
+    # Plain-language home page (openspec change friendly-home-page). Inserted
+    # rather than replacing the lines around it, so api.py stays additive-only:
+    # when home.html is absent, / falls back to the research console as before.
+    home_path = os.path.join(static_dir, "home.html")
+    if os.path.exists(home_path):
+        return FileResponse(home_path, headers={"Cache-Control": "no-store"})
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"message": "API Active. Baseline (price-only) ready: " + str(service.baseline_ready) +
@@ -595,6 +601,34 @@ def forward_forecasts_page():
     except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
         raise HTTPException(status_code=500, detail=f"forecast view unavailable: {type(e).__name__}: {e}")
     return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/advanced")
+def advanced_dashboard():
+    """The research console that used to live at /: both model variants side by
+    side, the evidence notes, H1, Kronos, retrain and the provenance banner.
+    Served byte-for-byte from static/index.html, which this change does not
+    touch."""
+    index_path = os.path.join(static_dir, "index.html")
+    if not os.path.exists(index_path):
+        raise HTTPException(status_code=404, detail="static/index.html is missing")
+    return FileResponse(index_path)
+
+
+@app.get("/api/home")
+def home_summary_endpoint(part: str | None = None):
+    """
+    Everything the plain-language home page shows, from logs that already exist.
+
+    READ-ONLY: it runs no model and writes no file, so the page is safe to open
+    any number of times; the page's refresh button is what calls POST
+    /api/predict. `part=reliability` returns only the hit-rate block, which needs
+    realised prices and can be slow, so the fast tiles never wait on it. A block
+    whose source fails comes back as {available: false, reason} and the rest
+    still render. Imported lazily like /forecasts.
+    """
+    from src.home_summary import build_home
+    return build_home(part=part)
 
 
 if __name__ == "__main__":
