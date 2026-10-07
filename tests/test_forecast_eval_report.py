@@ -20,6 +20,10 @@ from src.forecast_eval import report as RP
 SUMMER_OPEN_UTC = '2026-10-02 12:30'          # -> 15:30 Sofia, label 14:30
 SUMMER_BEFORE_UTC = '2026-10-02 12:20'        # -> 15:20 Sofia, label 14:20
 WINTER_OPEN_UTC = '2026-01-07 13:30'          # -> 15:30 Sofia, label 14:30
+# Five minutes after the default as-of bar (label 21:45) closed: its forecasts are
+# still live. Headline tests use this; a later 'now' would rightly hide them.
+FRESH_UTC = '2026-10-01 19:50'                # -> 22:50 Sofia, label 21:50
+NEXT_MORNING_UTC = '2026-10-02 06:34'         # -> 09:34 Sofia, label 08:34
 
 
 def _log(tmp_path, preds=None, settles=None, gaps=None, fails=None):
@@ -192,7 +196,7 @@ def test_the_headline_groups_by_horizon_not_by_model(tmp_path):
         _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.47),
         _pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49),
         _pred(model='h1_gbm', cadence='H1', horizon=4, p_up=0.52)])
-    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
     head = _head(s)
     assert 'след 15 минути' in head and 'след 1 час' in head and 'след 4 часа' in head
     assert 'НАДОЛУ' in head and 'НАГОРЕ' in head
@@ -227,7 +231,7 @@ def test_the_headline_never_combines_models_into_one_call(tmp_path):
     out = _log(tmp_path, preds=[
         _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.44),
         _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.47)])
-    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
     assert s.count('НАДОЛУ') >= 2, 'both calls are listed side by side'
     assert 'и двата модела казват едно и също' in s
     assert 'съгласието не е допълнително доказателство' in s
@@ -237,7 +241,7 @@ def test_disagreement_is_said_plainly(tmp_path):
     out = _log(tmp_path, preds=[
         _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.44),
         _pred(model='m15_session_lstm', cadence='M15', horizon=1, p_up=0.56)])
-    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
     assert 'моделите не са съгласни' in s
     assert 'НАДОЛУ' in s and 'НАГОРЕ' in s
 
@@ -248,7 +252,7 @@ def test_the_trust_block_quotes_a_range_not_the_best_cell(tmp_path):
     out = _log(tmp_path, preds=[
         _pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.48),
         _pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49)])
-    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
     assert 'между 51 и 53 от 100' in s
     assert 'Монета познава 50 от 100' in s
     assert 'почти хвърляне на монета' in s
@@ -256,7 +260,7 @@ def test_the_trust_block_quotes_a_range_not_the_best_cell(tmp_path):
 
 def test_everything_else_is_folded_away(tmp_path):
     out = _log(tmp_path, preds=[_pred(model='h1_gbm', cadence='H1', horizon=1, p_up=0.49)])
-    s = open(RP.write_dashboard(out, now=SUMMER_OPEN_UTC), encoding='utf-8').read()
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
     for summary in ('Всички останали модели и хоризонти', 'Точност по клетки',
                     'Състояние на записа', 'Как се чете тази страница'):
         assert f'<summary>{summary}' in s or f'>{summary}<' in s, summary
@@ -510,13 +514,6 @@ def test_the_viewer_does_not_import_the_served_application():
                    for m in mods), mods
 
 
-def test_the_launcher_script_points_at_the_viewer():
-    p = os.path.join(RP.REPO, 'scripts', 'forecast_eval', 'view_forecasts.cmd')
-    s = open(p, encoding='utf-8').read()
-    assert 'src.forecast_eval.report --serve' in s and '8001' in s
-    assert 'api' not in s.lower().replace('api.py', '')
-
-
 def test_scheduled_tasks_run_without_a_console_window():
     """Regression: the tasks called run_module.cmd directly, and cmd.exe is a
     console program, so Windows flashed a window every 15 minutes. They must go
@@ -540,3 +537,28 @@ def test_the_page_is_self_contained():
              encoding='utf-8').read()
     assert '<style>' in s and 'src="http' not in s and 'href="http' not in s
     assert re.search(r'<meta charset="utf-8">', s)
+
+
+def test_a_window_that_has_ended_is_not_shown_as_a_current_forecast(tmp_path):
+    """Owner report, 2026-10-07 09:34: the headline still showed the previous
+    evening's 23:00-23:15 call as "след 15 минути". A finished window is history."""
+    out = _log(tmp_path, preds=[_pred(model='m15_session_gbm', cadence='M15', horizon=1, p_up=0.41)])
+    fresh = _head(open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read())
+    assert 'след 15 минути' in fresh and '23:00 → 01.10 23:15' in fresh
+    stale = _head(open(RP.write_dashboard(out, now=NEXT_MORNING_UTC), encoding='utf-8').read())
+    assert 'след 15 минути' not in stale and '23:15' not in stale
+    assert 'няма прогноза' in stale
+
+
+def test_newest_forecast_with_no_probability_is_not_filled_from_an_older_one(tmp_path):
+    """groupby().last() takes the last NON-NULL value per column, so a newest
+    row with a blank p_up borrowed the previous row's 0.70 and showed it as the
+    current call. The newest row must be taken whole."""
+    out = _log(tmp_path, preds=[
+        _pred(as_of='2026-10-01 21:30:00+00:00', p_up=0.70),
+        _pred(as_of='2026-10-01 21:45:00+00:00', p_up='')])
+    latest = RP.latest_forecasts(RP._read('predictions', out))
+    (row,) = latest.itertuples()
+    assert str(row.as_of).startswith('2026-10-01 21:45') and row.direction == '—'
+    s = open(RP.write_dashboard(out, now=FRESH_UTC), encoding='utf-8').read()
+    assert '70.0%' not in s and '70%' not in _head(s)

@@ -20,6 +20,8 @@ python -m pytest -q                                  # full suite (~19 tests)
 python -m pytest -q tests/test_unit.py               # one file
 python -m pytest -q -k fetch_yield_differential      # one test / pattern
 
+# Owner's way: desktop icon -> scripts/launch.vbs (hidden; reuses the server, restarts it when .py files are newer;
+# log research_models/server/server.log). Create it once with scripts/install_shortcut.ps1. There is no start.bat.
 # Run the app (FastAPI is the single entry point; serves dashboard + /api/predict + /history + /api/retrain)
 python -m uvicorn api:app --reload                   # -> http://127.0.0.1:8000
 

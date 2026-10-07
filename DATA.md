@@ -25,7 +25,7 @@ change — see §1.1.
 | File | Rows | Size | Content |
 |---|---:|---:|---|
 | `results/eurusd_features.csv` | 15,760 | 4.4 MB | EUR/USD **daily** OHLCV + engineered features, 1971-01-11 → 2026-08-10 |
-| `results/eurusd_h1.csv` | 60,383 | 4.1 MB | EUR/USD **hourly** OHLCV with tick volume, 2017-01-20 02:00 → 2026-10-05 05:00 UTC — **rolling cache, see §1.1** |
+| `results/eurusd_h1.csv` | 60,434 | 4.1 MB | EUR/USD **hourly** OHLCV with tick volume, 2017-01-20 02:00 → 2026-10-07 08:00 UTC — **rolling cache, see §1.1** |
 | `results/eurusd_m15.csv` | 350,000 | 22.9 MB | EUR/USD **15-minute** OHLCV with tick volume, 2012-06-25 21:30 → 2026-07-24 22:45 UTC |
 | `results/pooled_h1/EURUSD_h1.csv` | 70,000 | 4.2 MB | EUR/USD hourly — **frozen** pooled snapshot, 2015-04-27 → 2026-07-28 UTC |
 | `results/pooled_h1/GBPUSD_h1.csv` | 70,000 | 4.5 MB | GBP/USD hourly — replication instrument, same window |

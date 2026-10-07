@@ -82,16 +82,17 @@ schtasks /Query /TN EURUSDProphet-ForwardLogger
 
 ## Where to look
 
-**Start the program as you always do and open <http://127.0.0.1:8000/>.** Since
+**Double-click the *EUR-USD Prophet* icon on the desktop.** It starts the program
+hidden (or reuses it) and opens <http://127.0.0.1:8000/>. Since
 2026-10-06 that is the plain-language home page: its *Днешната сесия* tile shows the
 registered cells' current calls, and *Подробно по модели* (and *Прогнози за сесията*
 in the footer) opens **<http://127.0.0.1:8000/forecasts>**. The research dashboard
 with the same bold link moved to <http://127.0.0.1:8000/advanced>. The page is re-rendered from the logs
 on every reload, so it is always current.
 
-If the program was already running before this was added, **restart it once**:
-a running `python api.py` does not reload its code, and until then `/forecasts`
-answers 404.
+No manual restart is needed after a code update: the icon notices when a
+`.py` file is newer than the running server and restarts it (openspec change
+`one-click-launcher`). Server output goes to `research_models\server\server.log`.
 
 The route is read-only, imports nothing from `src/inference.py`, and a failure in
 it is a 500 on that one page — every other route keeps answering. It was added to
@@ -100,12 +101,12 @@ it is a 500 on that one page — every other route keeps answering. It was added
 
 ### Fallback: the standalone viewer
 
-If the program is not running, double-click
-**`scripts\forecast_eval\view_forecasts.cmd`**. It starts a small read-only viewer
-on **<http://127.0.0.1:8001/>** and opens a browser at it. It is a SEPARATE
-server, bound to loopback only, and imports neither `api.py`, `src/inference.py`
-nor `src/paper_trading.py` — a test enforces that. Close its console window to
-stop it.
+If the main program cannot start, `python -m src.forecast_eval.report --serve --open
+--port 8001` runs a small read-only viewer on **<http://127.0.0.1:8001/>**. It is a
+SEPARATE server, bound to loopback only, and imports neither `api.py`,
+`src/inference.py` nor `src/paper_trading.py` — a test enforces that. Ctrl+C stops
+it. (Its double-click wrapper was removed on 2026-10-07; the desktop icon covers
+the normal case.)
 
 Prefer a file? **[`dashboard.html`](dashboard.html)** is the same page written to
 disk at the end of every logging run, so it is never more than 15 minutes old
@@ -130,8 +131,8 @@ if such a figure ever reaches the page.
 By hand:
 
 ```powershell
-scripts\forecast_eval\view_forecasts.cmd            # viewer on :8001, opens a browser
-python -m src.forecast_eval.report --serve --port 8001   # the same, no browser
+python -m src.forecast_eval.report --serve --open --port 8001   # viewer on :8001, opens a browser
+python -m src.forecast_eval.report --serve --port 8001          # the same, no browser
 python -m src.forecast_eval.report                  # just rewrite dashboard.html
 ```
 

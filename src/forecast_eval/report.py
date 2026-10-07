@@ -168,7 +168,12 @@ def latest_forecasts(preds: pd.DataFrame) -> pd.DataFrame:
     d = preds.copy()
     d['as_of'] = pd.to_datetime(d['as_of_bar'], utc=True, format='mixed')
     d['horizon'] = d['horizon'].astype(int)
-    d = d.sort_values('as_of').groupby(['model', 'horizon'], as_index=False).last()
+    # The newest row WHOLE. groupby().last() takes the last non-null value per
+    # column, so a newest forecast with no probability borrowed an older one's
+    # and showed it as current.
+    d = (d.sort_values('as_of', kind='stable')
+         .drop_duplicates(['model', 'horizon'], keep='last')
+         .reset_index(drop=True))
     dur = d['cadence'].map(BAR)
     d['from'] = d['as_of'] + dur
     d['until'] = d['as_of'] + (d['horizon'] + 1) * dur
@@ -275,7 +280,7 @@ ul{margin:8px 0 0;padding-left:20px}li{margin:4px 0}
 """
 
 
-def _headline(latest: pd.DataFrame, evidence: dict) -> tuple:
+def _headline(latest: pd.DataFrame, evidence: dict, label_now=None) -> tuple:
     """The whole point of the page: for each horizon the owner can act on, what
     the models that actually cleared a coin on history are saying right now.
 
@@ -292,6 +297,11 @@ def _headline(latest: pd.DataFrame, evidence: dict) -> tuple:
         return '', []
     rows = []
     for _, r in latest.iterrows():
+        # A window that has already ended is history, not a forecast. Without
+        # this, the morning after a session the headline still showed the last
+        # 23:00-23:15 call as if it were current (owner report, 2026-10-07).
+        if label_now is not None and r['until'] <= label_now:
+            continue
         h = int(r['horizon'])
         if evidence.get((r['model'], h)) != EVIDENCE_OK:
             continue
@@ -455,7 +465,8 @@ EXPLAINER = """
 
 
 def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated,
-           direction_only=None, evidence=None, study=None, back_href=None) -> str:
+           direction_only=None, evidence=None, study=None, back_href=None,
+           label_now=None) -> str:
     """One screen: what the evidenced models say, and how far the live test has
     got. Everything else is real data but not a decision aid, so it is folded
     away behind a summary rather than competing for attention."""
@@ -476,7 +487,7 @@ def render(preds, settles, gaps, fails, admitted, alpha, n_req, state, generated
     phase_note = ('пробен период — нищо не се зачита още' if phase == 'dry_run'
                   else 'зачита се')
 
-    headline, headline_rows = _headline(latest, evidence)
+    headline, headline_rows = _headline(latest, evidence, label_now)
     if not headline:
         headline = ('<div class="hl"><div class="when">няма прогноза</div>'
                     '<p class="note">Моделите с доказана стойност работят само в сесията '
@@ -548,7 +559,8 @@ def build_page(out: str = FWD, record_path: str = RECORD, now=None, back_href=No
                   _read('failures', out), admitted, alpha, n_req,
                   session_state(now), generated,
                   direction_only=direction_models(record_path), evidence=history_evidence(),
-                  study=study_accuracy(), back_href=back_href)
+                  study=study_accuracy(), back_href=back_href,
+                  label_now=MD.label_now(now))
     leaked = [w for w in COST_WORDS if w in page.lower()]
     if leaked:
         raise AssertionError(f'cost arithmetic reached the operator view: {leaked}')

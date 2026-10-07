@@ -98,7 +98,7 @@ pip install -r requirements.txt
 ```bash
 python api.py
 ```
-*This starts the FastAPI server, by default accessible at `http://127.0.0.1:8000` (the dashboard, the `/api/predict` endpoint, `/history`, and the retrain controls). On Windows you can instead just double-click **`start.bat`**. For development with auto-reload, use `python -m uvicorn api:app --reload`.*
+*This starts the FastAPI server, by default accessible at `http://127.0.0.1:8000` (the dashboard, the `/api/predict` endpoint, `/history`, and the retrain controls). On Windows you can instead create a desktop icon once with `scripts\install_shortcut.ps1` and double-click it: it starts the server hidden and opens the browser. For development with auto-reload, use `python -m uvicorn api:app --reload`.*
 
 The research notebook uses the same activated environment:
 ```bash

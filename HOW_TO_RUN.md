@@ -83,28 +83,34 @@ Leaving these blank is fine — the system automatically uses the public/fallbac
 
 The application has a single entry point: **`api.py`** (a FastAPI web server). There are three equivalent ways to start it — pick whichever is easiest for you.
 
-### Option A — Double-click (simplest, Windows)
+### Option A — The desktop icon (simplest, Windows)
 
-Double-click **`start.bat`** in the project folder. It automatically:
-- picks the virtual environment (`.venv` or `venv`) if one exists,
-- sets the UTF-8 console encoding,
-- frees port 8000 if an old server is still holding it,
-- launches the server, and
-- **opens the dashboard in your default browser** (`http://127.0.0.1:8000`) once it has started.
+Create the icon once:
 
-A terminal window opens and stays open while the app runs; close it to stop the server.
-
-You can also run it from a terminal:
-```bash
-start.bat
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_shortcut.ps1
 ```
+
+Then double-click **EUR-USD Prophet** on the desktop. It:
+- starts the server **hidden**, with no console window, using the project's `.venv`;
+- opens the home page in your browser as soon as the server answers (a cold
+  start loads TensorFlow and every model: ~30–60 seconds);
+- when the server is already running, just opens the browser;
+- when a `.py` file changed since the server started, restarts it first, so
+  you never see stale code. HTML changes need no restart;
+- when port 8000 is held by another program, says so and leaves it alone;
+- when the server fails to start within 3 minutes, shows a message naming the
+  log file, `research_models\server\server.log`.
+
+There is no stop button: the server runs until you log off or shut down. To
+stop it earlier, end the `python.exe` processes in Task Manager.
 
 ### Option B — Run the file directly
 
 ```bash
 python api.py
 ```
-`api.py` now has a `__main__` launcher, so running it directly starts the web server (equivalent to Option C, without auto-reload). You can override the host/port with environment variables, e.g. `set PORT=8001` then `python api.py`.
+`api.py` now has a `__main__` launcher, so running it directly starts the web server in the terminal (equivalent to Option C, without auto-reload). Use this to watch the server's output while debugging. You can override the host/port with environment variables, e.g. `set PORT=8001` then `python api.py`.
 
 ### Option C — Uvicorn with auto-reload (for development)
 
@@ -113,7 +119,7 @@ python -m uvicorn api:app --reload
 ```
 Use this while editing code — `--reload` restarts the server automatically on file changes.
 
-> **Why did `python api.py` do nothing before?** Earlier the file had no `__main__` block, so running it just imported the module and exited without ever starting the server — it *looked* like the project wouldn't start. That is now fixed: `python api.py` (and `start.bat`) launch the server properly.
+> **Why did `python api.py` do nothing before?** Earlier the file had no `__main__` block, so running it just imported the module and exited without ever starting the server — it *looked* like the project wouldn't start. That is now fixed: `python api.py` (and the desktop icon) launch the server properly.
 
 Whichever option you choose, then open **http://127.0.0.1:8000** in your browser. Available routes:
 
@@ -183,7 +189,7 @@ The hook itself is tested: `python -m pytest -q tests/test_retrain_commit_guard.
 
 | Issue | Cause / Fix |
 |---|---|
-| `OSError: [WinError 10048]` when starting the server | Port 8000 is still held by a previous server. **`start.bat` now frees it automatically before launching.** If starting another way, find the process with `netstat -ano \| findstr :8000` and stop it with `taskkill /PID <pid> /F`, or use a different port: `set PORT=8001` then `python api.py` |
+| `OSError: [WinError 10048]` when starting the server | Port 8000 is still held by a previous server. **The desktop icon reuses or restarts its own server automatically, and never kills another program.** If starting another way, find the process with `netstat -ano \| findstr :8000` and stop it with `taskkill /PID <pid> /F`, or use a different port: `set PORT=8001` then `python api.py` |
 | `UnicodeEncodeError` when running a Python script with Cyrillic/emoji output | The Windows console uses `cp1252`. Set `set PYTHONIOENCODING=utf-8` before the command |
 | A notebook cell errors out when running the test suite | Pytest must run from the project **root**, not from `notebooks/`. The Section 20 cells already handle this automatically |
 | `pip install -r requirements.txt` fails on Mac/Linux | Expected — `MetaTrader5` has no package for those platforms. This project targets Windows only |
@@ -202,4 +208,4 @@ python api.py
 ```
 → open **http://127.0.0.1:8000** (this runs `api.py`; `/` is the plain-language home page, and the full research interface with retrain is at `/advanced`)
 
-Or, on Windows, just **double-click `start.bat`** after the one-time `pip install`.
+Or, on Windows, run `scripts\install_shortcut.ps1` once and then just **double-click the EUR-USD Prophet icon**.

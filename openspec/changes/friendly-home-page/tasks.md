@@ -29,5 +29,5 @@
 
 ## 5. Integration check
 
-- [ ] 5.1 Run `python -m pytest -q`. Expect the previous 880 passed / 1 skipped plus the new home tests, with no other change. Confirm `git diff --quiet HEAD -- src/inference.py src/paper_trading.py src/tracking.py static/index.html models/` is clean.
-- [ ] 5.2 Restart `python api.py`, open `/` in both languages, press refresh once, and open `/advanced`, `/forecasts`, `/history` and `/paper-trading` from the page. Record any wording the owner wants changed as dictionary edits only.
+- [x] 5.1 (2026-10-07, closed under one-click-launcher 4.2/5.1: the one failure was the DATA.md row count for the rolling H1 cache, which grows with every prediction. Decision: keep the real bars and update DATA.md to the committed size, 60,434 rows to 2026-10-07 08:00; the guard is unchanged.) Run `python -m pytest -q`. Expect the previous 880 passed / 1 skipped plus the new home tests, with no other change. Confirm `git diff --quiet HEAD -- src/inference.py src/paper_trading.py src/tracking.py static/index.html models/` is clean.
+- [x] 5.2 (2026-10-07, wording review done for the owner at their request: "Утре" became "Дневна прогноза" because the tile showed today's session in the morning; the Kronos link, the older-variant note and the reliability basis line were reworded. See one-click-launcher design Decision 8.) Restart `python api.py`, open `/` in both languages, press refresh once, and open `/advanced`, `/forecasts`, `/history` and `/paper-trading` from the page. Record any wording the owner wants changed as dictionary edits only.

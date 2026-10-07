@@ -6,3 +6,5 @@
 *.csv text eol=lf
 *.md text eol=lf
 .githooks/* text eol=lf
+# wscript reads non-ASCII only from UTF-16; git stores UTF-8 so diffs stay readable.
+scripts/launch.vbs text working-tree-encoding=UTF-16LE-BOM eol=crlf
