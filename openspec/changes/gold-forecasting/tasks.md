@@ -76,12 +76,13 @@
   Verify with tests that scoring refuses without a committed pre-registration and that
   registry rows are appended, never rewritten. Then run it live and confirm every
   admitted cell has exactly one registry row.
-- [ ] 6.2 Commit the validation registries and report by hand, with an explicit message. Write any correction to `results/gold/RESULTS.md`, never into the pre-registration. Verify `git diff HEAD~1 -- results/gold/PRE_REGISTRATION.md` is empty.
+- [x] 6.2 Commit the validation registries and report by hand, with an explicit message. Write any correction to `results/gold/RESULTS.md`, never into the pre-registration. Verify `git diff HEAD~1 -- results/gold/PRE_REGISTRATION.md` is empty.
+  - Done 2026-10-21 in `9b4c1fe`, made outside this session and pushed, together with the code rather than in its own commit. The registration and `gold_config.json` are byte-identical to `ab420d3`, and the test-stage guard accepts the committed verdicts.
 
 ## 7. One-shot test and final artifacts
 
-- [ ] 7.1 Implement `--stage test`. It refuses when `results/gold/test_report.json` exists in HEAD or when any validation registry row is uncommitted. Otherwise it refits on [0:80], scores [80:100] once, and writes the report. Verify with tests that a second run refuses and changes nothing. Then run it live once and commit the report.
-- [ ] 7.2 Implement `--stage final`. It refits on [0:100] into `research_models/gold/<cell>/` and writes SHA-256 digests to `results/gold/artifact_manifest.csv`. Verify that the manifest digests match the files on disk and that `git status` shows nothing under `models/`.
+- [x] 7.1 Implement `--stage test`. It refuses when `results/gold/test_report.json` exists in HEAD or when any validation registry row is uncommitted. Otherwise it refits on [0:80], scores [80:100] once, and writes the report. Verify with tests that a second run refuses and changes nothing. Then run it live once and commit the report.
+- [x] 7.2 Implement `--stage final`. It refits on [0:100] into `research_models/gold/<cell>/` and writes SHA-256 digests to `results/gold/artifact_manifest.csv`. Verify that the manifest digests match the files on disk and that `git status` shows nothing under `models/`.
 
 ## 8. Forward logger
 
@@ -95,7 +96,7 @@
   Verify with tests: no row is written when the target bar has closed; a digest mismatch
   fails only that cell; a missed bar yields a gap and no back-fill; rows that border a
   break settle as ineligible; nothing under `results/forward_eval/` is touched.
-- [ ] 8.2 Add `scripts/gold/install_task.ps1` and `uninstall_task.ps1` for `EURUSDProphet-GoldLogger` (hourly at :03, using the repo's `.venv` Python). Add `results/gold/forward/RUNBOOK.md`. Verify that `Get-ScheduledTask EURUSDProphet-GoldLogger` exists after install and is gone after uninstall, and that one manual run appends rows with `phase=dry_run`.
+- [x] 8.2 Add `scripts/gold/install_task.ps1` and `uninstall_task.ps1` for `EURUSDProphet-GoldLogger` (hourly at :03, using the repo's `.venv` Python). Add `results/gold/forward/RUNBOOK.md`. Verify that `Get-ScheduledTask EURUSDProphet-GoldLogger` exists after install and is gone after uninstall, and that one manual run appends rows with `phase=dry_run`.
 - [ ] 8.3 Run the dry run for at least two weeks. Then write `results/gold/forward/dry_run_coverage.md`, covering the share of bar closes logged per cadence and failures by cell. Verify that the report exists and that no `dry_run` row was ever scored.
 
 ## 9. Forward pre-registration
@@ -127,3 +128,4 @@
 
 - [x] 11.1 Add a gold section to `ARCHITECTURE_DOCS.md`: the package layout, the data facts, the three families, the stages, the logger and the view. Add a short gold paragraph under Production Methodology in `CLAUDE.md`: its own families, gross of cost, never under `models/`. Verify that both documents name the registry paths and the scheduled-task name exactly as implemented.
 - [ ] 11.2 Run the full suite `python -m pytest -q`. Verify it is green, that the protected-set fixtures pass, and that `git status` shows no change under `models/`, `config.json` or `results/forward_eval/` from this change.
+  - Status 2026-10-21: full suite 1,014 passed and 9 failed. Gold caused one: `test_launcher`::test_no_redundant_launch_files_are_tracked, from a second tracked `.cmd`. That is fixed: `scripts/gold/run_module.cmd` is gone and `run_hidden.vbs` calls `src/gold/run_task.py`. The other 8 predate gold: 7 protected-set / provenance / pinned-file checks red from the undeclared 2026-10-14 retrain in `418fe94`, and the `DATA.md` row count for the EUR/USD `results/eurusd_h1.csv`. Stays open until those are resolved.
