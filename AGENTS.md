@@ -1,0 +1,126 @@
+# AGENTS.md
+
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+
+## gstack
+
+Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
+
+Available gstack skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/setup-gbrain`, `/retro`, `/investigate`, `/document-release`, `/document-generate`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`, `/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`.
+
+EUR/USD next-day directional + return predictor. A research notebook trains the models; a shared inference service serves them behind two frontends. The deep reference for data flow, artifacts, and failure modes is **`ARCHITECTURE_DOCS.md`** — read it before any non-trivial change.
+
+## Commands
+
+Environment is **Windows / PowerShell**; a `.venv` is present. `MetaTrader5` is Windows-only.
+
+```bash
+# Tests (run from repo root — pytest discovers tests/ here)
+python -m pytest -q                                  # full suite (~19 tests)
+python -m pytest -q tests/test_unit.py               # one file
+python -m pytest -q -k fetch_yield_differential      # one test / pattern
+
+# Owner's way: desktop icon -> scripts/launch.vbs (hidden; reuses the server, restarts it when .py files are newer;
+# log research_models/server/server.log). Create it once with scripts/install_shortcut.ps1. There is no start.bat.
+# Run the app (FastAPI is the single entry point; serves dashboard + /api/predict + /history + /api/retrain)
+python -m uvicorn api:app --reload                   # -> http://127.0.0.1:8000
+
+# Retrain & regenerate the production artifacts in models/
+python _train_pipeline.py
+
+# Research notebook
+jupyter notebook notebooks/01_data_preparation.ipynb
+```
+
+Pre-trained artifacts in `models/` **and** `results/eurusd_features.csv` are git-tracked, so the app runs immediately after `pip install -r requirements.txt` — **no training required**.
+
+When a script prints non-ASCII (Cyrillic, ✓, →), set `PYTHONIOENCODING=utf-8` or the Windows `cp1252` console codec raises `UnicodeEncodeError`.
+
+## Architecture: the single-source-of-truth contract
+
+The whole design exists to stop **research-to-production drift**. Training (notebook + `_train_pipeline.py`) and serving (`api.py` → `src/inference.py`) import the **same** `src/features.py` so the feature matrix is byte-identical on both sides.
+
+- **`src/features.py`** owns `FEATURE_COLUMNS` (the canonical **27** columns) and `LAG_COLUMNS` (6 autoregressive lags reduced by PCA). `compute_features()` is inference-safe (no target, no dropna → keeps the latest live bar); `add_advanced_features()` is the training variant (adds `target_return`/`target_direction`, drops NaNs).
+- **Dual model variants** (`config.json → variants`): **`baseline`** = price-only (`PRICE_FEATURE_COLUMNS`, 23 cols, no FRED at all) and **`with_macro`** = the full 27-col set whose 4 macro features are statistically unproven (KEEP-provisional). Both train in one `_train_pipeline.py` run through ONE `train_variant()` body (never copy-paste it), on the IDENTICAL euro-era row set (only the columns differ), into `models/<variant>/`. Both serve on every prediction; the response carries `baseline` + `with_macro` blocks and a `variant_agreement` flag. The forward paper-trading ledgers (one per variant) decide which variant earns its keep.
+- **`src/inference.py` `PredictionService`** loads every artifact once, with graceful-degradation gates per variant (`baseline_ready`/`macro_ready`/`models_ready`; per-family flags live inside `service.variants[name]`). A broken variant never crashes the other. It is the single serving path behind `api.py`.
+- **Two fallback chains, neither hard-fails:** `src/live_data.py` (MT5 → yfinance → bundled history CSV) and `src/macro_data.py` (FRED API → FRED public CSV → on-disk cache → `None`). The baseline variant consumes no macro columns, so it is immune to FRED outages by construction.
+- **Front door (`/`, openspec change `friendly-home-page`):** `/` serves the plain-language, bilingual home page `static/home.html`. The research console `static/index.html` is unchanged at `/advanced`. The home page renders from `GET /api/home` (`src/home_summary.py`), which is read-only: it runs no model and writes nothing, and it shows no spread, pips or P&L. Only its refresh button predicts, via the existing `POST /api/predict`. Its reliability strip is descriptive (Wilson 95 % vs a coin, N ≥ 30) and is never a hypothesis test.
+- **Volatility family (`src/volatility.py` → `models/volatility/`):** predicts `target_volatility_pct` (|next-day log return|·100) — the ONLY neural family with a CI-confirmed edge over its honest baseline (5-seed multi-task LSTM ensemble vs train-only-fit GARCH(1,1); pre-registered gate in `results/volatility_seed_ensemble.csv`). ONE price-only model, NOT per-variant; its own hypothesis family (`results/volatility_hypothesis_log.csv`, now SPENT on the validation arbiter — new volatility claims need forward data). The validated object is the FULL 5-seed mean: `vol_ready` is all-or-nothing, never serve a partial ensemble. Details: `ARCHITECTURE_DOCS.md §3.5`.
+
+## Invariants you must preserve (these caused real bugs when broken)
+
+Changing any of these requires updating `config.json`, `_train_pipeline.py`, notebook **Section 19**, and `src/inference.py` **together**:
+
+1. **Single `global_scaler.pkl` per variant, shared by that variant's GBM and LSTM.** There are no per-model scalers. Each variant's PCA (`lag_pca` + `lag_scaler`) and `global_scaler` are fit **only on the 0–80% train block** and live together under `models/<variant>/` — never mix one variant's scaler/PCA with another's models.
+2. **`target_return` is in PERCENT, natively.** The `* 100` lives **only** in `src/features.py::add_advanced_features`. Both the GBM regressor and the LSTM return head train on and output percent — there must be **no `* 100` anywhere else** (not in `_predict_gbm`, not in the LSTM cell).
+3. **Unified chronological split** from `config.json` (`train_fraction=0.80`, `val_fraction=0.10`): GBM trains `[0:80%]`; LSTM trains `[0:70%]` with `[70%:80%]` for early-stopping; **both** test on the identical held-out `[80%:100%]`.
+4. **No look-ahead bias.** Targets via `shift(-1)`; `ffill` only carries a *past* value forward (never future backward); scaler/PCA fit train-only; `TimeSeriesSplit` everywhere (never random K-fold). The FRED/no-look-ahead unit tests guard this.
+
+The 7 daily artifacts (`lag_scaler`, `lag_pca`, `global_scaler`, `best_gbm_eurusd`, `best_gbm_regressor_eurusd`, `lstm_multitask_eurusd.keras`, `lstm_time_steps`) exist **once per variant** under `models/baseline/` and `models/with_macro/` (14 total), produced by `_train_pipeline.py` and loaded by `PredictionService`. `test_smoke.py` asserts all of them exist. The H1 ensemble artifacts stay at `models/` root (price-only, shared by both variants); the volatility ensemble lives under `models/volatility/` (5 seed models + own PCA/scalers + `vol_metrics.json`, also smoke-asserted).
+
+## Production Methodology (post-defense — the project now trades REAL money)
+
+The exam is passed; a false-positive feature is now live capital risk. These rules govern **all new feature/model claims** and override the older test-block narrative where they conflict (full detail: `ARCHITECTURE_DOCS.md` → *Production Methodology*, `IMPROVEMENT_LOG.md` → *Production methodology hardening*):
+
+1. **The historical test block `[80%:100%]` is SPENT for feature search.** It was reused as a repeated KEEP/DROP criterion (data-snooping). All feature ablation now runs on the **validation slice `[70%:80%]`** via `src/ablation.py` (fit on `[0:70%]` only; test block never indexed). The test block is a **one-shot final report** from `_train_pipeline.py`, never a search knob. Do **not** add or judge a feature by scoring it on the test block.
+2. **Every KEEP clears a Bonferroni-corrected bar, not a flat 0.05.** `results/feature_hypothesis_log.csv` counts every feature hypothesis ever spent; the bar is `alpha = 0.05 / family_size` (now `0.05/9 ≈ 0.00556` — after the rejected `fomc_calendar_block` (#5, 2026-07-17), `cot_positioning_block` (#6, 2026-07-20), `fibonacci_retracement_block` (#7, 2026-07-26), `vix_regime_block` (#8, 2026-07-26), and `volatility_forecast_block` (#9, 2026-07-26) ADD-tests), printed in every `src/ablation.py` report. Register a genuinely new feature (it tightens the bar for all). All 4 macro features are **KEEP-provisional** — no proven edge; the five ADD-test bundles are DROPs. VIX (`src/vix_features.py`) rides the shared FRED framework (`macro.features.vix`) to maintain `results/vix.csv`, but its level is kept out of `MACRO_MERGE_COLUMNS` and its features out of `FEATURE_COLUMNS` (ablation-only). A built-but-unspent Fibonacci extension hypothesis (`src/fibonacci_fractals.py`) runs only if #7 clears — it did not, so it stays dormant. `volatility_forecast_block` (`predicted_vol_pct`, `src/volatility.py::load_frozen_volatility_ensemble`) is CROSS-FAMILY REUSE of the already-validated volatility ensemble (§ volatility family below) via pure batch inference on the frozen `models/volatility/` artifacts — no retraining — and also DROPped.
+3. **The forward paper-trading ledgers are the primary production-worthiness signal.** `src/paper_trading.py` (`results/paper_trading_log_baseline.csv` + `results/paper_trading_log_macro.csv`, one per model variant, at `/paper-trading` + `/api/paper-trading`) accumulates **simulated**, cost-net P&L ledgers from live calls as sessions settle — whichever variant nets better over a meaningful forward window (**months**) is the honest winner; do not decide by re-analyzing the spent test block. It is **simulated only** — do **not** add broker/order-execution/position-sizing/stop-loss code; real execution is a separate risk-management conversation, only after a ledger shows a supported edge.
+
+4. **A commit that touches `models/` must declare the retrain.** `.githooks/commit-msg`
+   (enable once: `git config core.hooksPath .githooks`) refuses any commit staging a path
+   under `models/` unless the message carries a `RETRAIN:` line. Six commits titled
+   *"Refactor code structure for improved readability and maintainability"* moved production
+   artifacts: `d222ecc` (2026-06-21, 10; its title also says *"and remove redundant
+   sections"*), `0ece63c` (2026-07-07, 10), `b30599f` (2026-07-25, 18), `a73344e`
+   (2026-08-08, 12), `3def541` (2026-08-08, 17), `f2645a0` (2026-08-15, 30) — 97 artifact
+   modifications; `f2645a0` also re-read the one-shot test block while doing it. An earlier
+   version of this list named `82b45ee` and `d61d033`; both touched zero model artifacts.
+   They are same-titled serving-churn commits dated to the two clean-ups (`8a02c9b`,
+   `5c0fe0d`), so the list had conflated *commits around the incidents* with *commits that
+   hid a retrain*. Only `f2645a0` of the original three was correct. What the log can
+   evidence is narrower than what git can: `POST /api/retrain` truncates
+   `results/retrain.log` on every launch, and until 2026-09-21 nothing preserved the previous
+   run, so **2026-09-11 is the earliest retrain the log can EVIDENCE, not the earliest that
+   occurred** — git bounds `models/` movement back to 2026-06-20. Since 2026-09-21
+   `src/retrain_log.py` archives each log to `results/retrain_logs/` before the next launch
+   truncates it, and `src/artifact_provenance.py` (`GET /api/provenance`, dashboard banner)
+   reports served `models/` artifacts that differ from the fixture-pinned declared set as
+   *"undeclared for N days"*. Never bundle a retrain into a commit about something else, and
+   never `--no-verify` past this.
+
+5. **Horizon study and forward arbiter (`src/forecast_eval/`, openspec change
+   `horizon-study-forward-evaluation`).** A standalone research system that trains its own
+   *challengers* for every model type, imports the production feature code read-only, and
+   never writes under `models/` (artifacts in gitignored `research_models/`, digests in
+   `results/horizon_study/artifact_manifest.csv`). The historical study
+   (`results/horizon_study/`, README there) is DESCRIPTIVE only. Horizon claims are decided
+   solely on forward data logged every 15 minutes by `EURUSDProphet-ForwardLogger`
+   (`results/forward_eval/`, RUNBOOK there). Scoring stays off until
+   `results/forward_eval/PRE_REGISTRATION.md` is committed. The direction family is 12 of
+   46 candidate cells at `alpha = 0.05/12`; the rest, including every daily-cadence cell,
+   are `UNDERPOWERED — NO DECISION` by design. Its two families never touch the `0.05/9` bar.
+
+6. **Bar labels are the broker server's wall clock, and it is `Europe/Berlin`.** Every
+   cache in this repo stores MT5's epoch localised to UTC as-is, so a label is NOT UTC.
+   `src/forecast_eval/m15_data.py` establishes this from the weekly market boundary
+   (open label 23:00, and 22:00 in the US/EU DST-mismatch weeks of March and late
+   October; 99.3 % of 425 weekends) and REFUSES a run whose weekly opens stop matching.
+   The M15 session cells forecast only inside the owner's trading window — 15:30–23:00
+   `Europe/Sofia`, which is the fixed label window 14:30–22:00 because Sofia is Berlin
+   + 1 h all year — and a trade is eligible only if its as-of bar *and* its target bar
+   fall inside it. Sub-hourly targets and costs use the **mid** price built from each
+   bar's own spread: on bid closes alone the New York 17:00 rollover reads a spurious
+   72 % one-hour "accuracy" because the bid falls when the spread quintuples. Every
+   sub-hourly cell is scored on both price definitions and a gap beyond the declared
+   1.0 pp tolerance labels it a spread artifact. Do not add an intraday rule without
+   checking which clock its timestamps are on.
+
+## Notebook specifics
+
+- It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.
+- It has **two distinct tracks** — do not conflate them: the **exploratory baseline** (Sections 13–17: no FRED, no PCA, binary target, saves `exploratory_*.pkl`) and the **production pipeline** (Section 19: FRED + PCA + percent targets, saves the real artifacts). `_train_pipeline.py` only mirrors the production track.
+- **Known drift (dual-variant era):** the notebook's Section 19 still trains the pre-dual single 27-col pipeline into root-level `models/*.pkl` paths that production no longer loads. `_train_pipeline.py` is the sole producer of the real per-variant artifacts; treat the notebook training cells as historical/research until they are ported to `train_variant()` (tracked in `IMPROVEMENT_LOG.md`).
+
+## Expected (not buggy) behaviour
+
+Daily EUR/USD is near-efficient: **ROC-AUC ≈ 0.50** and the return regressor **shrinks predictions toward the ~0% mean** (Huber loss on a noisy, zero-mean target → predict the conditional mean; the trained MAE ≈ the "predict the mean" baseline). This is documented as a feature of mathematical honesty in `ARCHITECTURE_DOCS.md §4.2.1` and notebook Section 21 — do **not** try to "fix" the low return magnitudes by tweaking the model. The consensus carries a `CONFIDENCE_THRESHOLD = 0.52` guard that flags near-chance agreement as `"MIXED / LOW CONFIDENCE"`. The forecast date is weekend-aware (Fri/Sat roll forward to Monday — the next *trading* session).
