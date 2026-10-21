@@ -8,3 +8,4 @@
 .githooks/* text eol=lf
 # wscript reads non-ASCII only from UTF-16; git stores UTF-8 so diffs stay readable.
 scripts/launch.vbs text working-tree-encoding=UTF-16LE-BOM eol=crlf
+Start[[:space:]]EUR-USD[[:space:]]Prophet.vbs text eol=crlf

@@ -84,6 +84,47 @@ def test_shortcut_installer_targets_wscript_batch_mode():
     assert os.path.getsize(os.path.join(REPO, 'static', 'prophet.ico')) > 0
 
 
+def test_shortcut_installer_writes_desktop_and_start_menu_and_says_where():
+    """findable-launcher: Win + "Prophet" must find the app, and the owner must
+    be told where the shortcuts went."""
+    s = open(os.path.join(SCRIPTS, 'install_shortcut.ps1'), encoding='utf-8').read()
+    assert "@('Desktop', 'Programs')" in s, 'per-user desktop and Start-menu folders'
+    assert 'GetFolderPath($folder)' in s
+    assert 'Write-Output "shortcut: $path"' in s
+
+
+ROOT_LAUNCHER = 'Start EUR-USD Prophet.vbs'
+
+
+def _tracked() -> list:
+    return subprocess.run(['git', 'ls-files'], cwd=REPO, capture_output=True,
+                          text=True).stdout.splitlines()
+
+
+def test_project_folder_launcher_is_tracked_and_delegates():
+    """findable-launcher: one obvious file in the project folder, behaving exactly
+    like the icons because it only hands off to scripts\\launch.vbs."""
+    assert ROOT_LAUNCHER in _tracked(), 'the root launcher must be tracked'
+    raw = open(os.path.join(REPO, ROOT_LAUNCHER), 'rb').read()
+    s = raw.decode('ascii')  # plain ASCII: no Bulgarian text, so no UTF-16 rule
+    assert 'ScriptFullName' in s, 'finds its own folder, not the current directory'
+    assert '\\scripts\\launch.vbs' in s
+    assert '//B' in s
+    assert ', 0, False' in s, 'window style 0, no wait'
+
+
+def test_project_folder_launcher_has_no_absolute_path():
+    s = open(os.path.join(REPO, ROOT_LAUNCHER), encoding='ascii').read()
+    assert 'C:\\' not in s and 'Users\\' not in s, 'must survive a clone or a move'
+
+
+def test_readme_opens_with_how_to_start():
+    """The owner could not find the icon. How to start comes before any detail."""
+    s = open(os.path.join(REPO, 'README.md'), encoding='utf-8').read()
+    head = s.split('## Quick start for reviewers', 1)[0]
+    assert ROOT_LAUNCHER in head and 'install_shortcut.ps1' in head
+
+
 def test_no_redundant_launch_files_are_tracked():
     files = subprocess.run(['git', 'ls-files'], cwd=REPO, capture_output=True,
                            text=True).stdout.splitlines()

@@ -1,5 +1,12 @@
 # EURUSD Exchange Rate Predictor: Machine Learning Pipeline
 
+## Как да стартирам / How to start
+
+- **БГ:** Щракнете два пъти върху `Start EUR-USD Prophet.vbs` в папката на проекта, или върху иконата „EUR-USD Prophet“ на работния плот или в менюто „Старт“ (натиснете Win и напишете „Prophet“). Иконите се създават веднъж с `powershell -ExecutionPolicy Bypass -File scripts\install_shortcut.ps1`. Ако нищо не помага: `.venv\Scripts\python.exe api.py`.
+- **EN:** Double-click `Start EUR-USD Prophet.vbs` in the project folder, or the "EUR-USD Prophet" icon on the desktop or in the Start menu (press Win and type "Prophet"). Create the icons once with `powershell -ExecutionPolicy Bypass -File scripts\install_shortcut.ps1`. If none of these work: `.venv\Scripts\python.exe api.py`.
+
+The app opens at http://127.0.0.1:8000. No console window appears; server output goes to `research_models\server\server.log`.
+
 ## Project Overview
 This repository contains a full end-to-end Machine Learning pipeline predicting the directional closing patterns of the EUR/USD exchange rate. Developed under rigorous academic guidelines for SoftUni ML Learning Final Project, the system explores the **Bias-Variance tradeoff**, implementing robust temporal cross-validation bounds to protect against financial stochastic noise. 
 
