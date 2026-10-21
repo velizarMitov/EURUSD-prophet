@@ -55,3 +55,38 @@ N = 1 trial. It was computed before the run appended its 16 GBM grid trials to
 the run exactly. DSR is now 0.14 (d1_gbm), 0.66 (d1_lstm), 0.17 (h1_gbm) and 0.14
 (h1_lstm), down from 0.24, 0.78, 0.74 and 0.70. The code now computes it after the trials
 are appended. No verdict depends on it.
+
+## 2026-10-21 — one-shot test report (`test[80:100]`, gross of cost)
+
+The test block was scored once, after the validation verdicts were committed (`9b4c1fe`).
+The run took 271 s. **The test never changes a validation verdict.** The registries are
+not touched; the figures live in `test_report.{json,md}` and `test_predictions_{d1,h1}.csv`.
+
+| family | cell | validation (arbiter) | test (one-shot) |
+|---|---|---|---|
+| volatility | h1_lstm | CLEARED | CLEARED: MAE 0.1170 vs 0.1284, CI [0.0089, 0.0139] |
+| volatility | d1_lstm | CLEARED | not cleared: MAE 0.6279 vs 0.6336, CI [−0.0195, 0.0302] |
+| direction | h1_lstm | DROP | cleared: 51.34 % over 12,767 rows; vs coin and vs majority both exclude 0; PT p = 0.0008 |
+| direction | h1_gbm | DROP | not cleared: 50.82 %; the CI against a coin includes 0 |
+| direction | d1_gbm / d1_lstm | UNDERPOWERED | UNDERPOWERED (693 rows) |
+| return | all four | DROP | DROP |
+
+What this means:
+
+- **H1 volatility is the robust finding.** It cleared on both blocks, as it did for
+  EUR/USD.
+- **D1 volatility did not replicate.** Its test CI includes 0. The validation CLEARED
+  rests on 346 rows and should be read as fragile.
+- **The H1 LSTM direction result is not trend-riding.** On test it predicted up on 47.9 %
+  of rows while the market rose on 51.5 %. It beat the base rate by about 1.4 pp on both
+  its up calls (52.9 % vs 51.5 %) and its down calls (49.9 % vs 48.5 %). Validation shows
+  the same small lift (+0.8 pp up, +1.2 pp down), which the arbiter's 6,376 rows could
+  not separate from 0. The reading is a faint, consistent signal of about 1 pp at most.
+  Its registered verdict stays **DROP**. Only the forward window can decide it, and even
+  a forward KEEP would be gross skill, not a trading result.
+- **The test majority baseline (48.5 %) is below a coin.** The [0:80] training majority
+  is "down" (hourly gold has more small down bars), while the test block rose. That is
+  why the registered rule requires beating both the majority and a coin.
+- **Descriptive:** DSR over 32 trials is 0.003 for h1_gbm and 0.054 for h1_lstm (a gross
+  sign strategy shows nothing). H1 PBO is 0.29. No high-spread-hour concentration flag was
+  raised (shares −0.005 and 0.079).
