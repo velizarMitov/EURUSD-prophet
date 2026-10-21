@@ -1,0 +1,44 @@
+{
+  "symbol_aliases": ["GOLD", "XAUUSD"],
+  "bars": {"D1": 20000, "H1": 99000},
+  "split": {"train_fraction": 0.70, "val_end_fraction": 0.80},
+  "clock": {"weekly_open_threshold": 0.95},
+  "seeds": [42, 43, 44, 45, 46],
+  "bootstrap": {"n_boot": 2000},
+  "power": {"edge": 0.03, "power": 0.80, "family_alpha": 0.05},
+  "gbm": {
+    "cv_splits": 5,
+    "grid": {
+      "n_estimators": [200, 400],
+      "max_depth": [3, 5],
+      "learning_rate": [0.03, 0.1]
+    },
+    "subsample": 0.8
+  },
+  "lstm": {
+    "D1": {"time_steps": 20, "units": 64, "dropout": 0.3, "learning_rate": 0.001,
+           "epochs": 100, "batch_size": 64, "patience": 10},
+    "H1": {"time_steps": 24, "units": 32, "dropout": 0.2, "learning_rate": 0.001,
+           "epochs": 60, "batch_size": 256, "patience": 8}
+  },
+  "paths": {
+    "results": "results/gold",
+    "d1_cache": "results/gold/gold_d1.csv",
+    "h1_cache": "results/gold/gold_h1.csv",
+    "trial_log": "results/gold/trial_log.csv",
+    "prereg_md": "results/gold/PRE_REGISTRATION.md",
+    "prereg_json": "results/gold/PRE_REGISTRATION.json",
+    "registries": {
+      "direction": "results/gold/gold_direction_hypothesis_log.csv",
+      "return": "results/gold/gold_return_hypothesis_log.csv",
+      "volatility": "results/gold/gold_volatility_hypothesis_log.csv"
+    },
+    "validation_report": "results/gold/validation_report.md",
+    "results_md": "results/gold/RESULTS.md",
+    "test_report": "results/gold/test_report.json",
+    "manifest": "results/gold/artifact_manifest.csv",
+    "forward": "results/gold/forward",
+    "forward_prereg_md": "results/gold/forward/PRE_REGISTRATION.md",
+    "artifacts": "research_models/gold"
+  }
+}

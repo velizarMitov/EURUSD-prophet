@@ -1,0 +1,241 @@
+{
+ "change": "gold-forecasting",
+ "created_at": "2026-10-21T14:34:31+00:00",
+ "config_sha256": "3d3dd5bf03e05d4098850b38268307a9195eff17dbc2e02a19d27a46cd1c31bc",
+ "data": {
+  "D1": {
+   "timeframe": "D1",
+   "cache": "results/gold/gold_d1.csv",
+   "source": "cache",
+   "symbol": "GOLD",
+   "rows": 3466,
+   "first": "2013-08-08 00:00:00+00:00",
+   "last": "2026-10-20 00:00:00+00:00",
+   "last_bar": "2026-10-20 00:00:00+00:00",
+   "sha256": "8c050f2ccd8fae741fd156ab930a0fa784773e97618d77bd2b33f475d5092430"
+  },
+  "H1": {
+   "timeframe": "H1",
+   "cache": "results/gold/gold_h1.csv",
+   "source": "cache",
+   "symbol": "GOLD",
+   "rows": 70015,
+   "first": "2015-01-02 04:00:00+00:00",
+   "last": "2026-10-21 15:00:00+00:00",
+   "last_bar": "2026-10-21 15:00:00+00:00",
+   "sha256": "01db01fc7593fdb6bfa16f6c1f5c11319878986897b509c2b7c8f508c9f5ae53"
+  }
+ },
+ "price_definition": "MT5 bid OHLC; spread, tick volume and real volume used nowhere",
+ "cost_basis": "GROSS of cost -- statistical skill only, never a trading result",
+ "clock": {
+  "n_weeks": 624,
+  "match_rate": 0.9759615384615384,
+  "label_tz": "Europe/Berlin",
+  "market_open": "Sunday 18:00 America/New_York",
+  "first_open": "2015-01-05 00:00:00+00:00",
+  "last_open": "2026-10-19 00:00:00+00:00",
+  "threshold": 0.95
+ },
+ "split": {
+  "train_fraction": 0.7,
+  "val_end_fraction": 0.8,
+  "sizes": {
+   "D1": {
+    "rows": 3466,
+    "train": 2426,
+    "validation": 346,
+    "test": 694,
+    "eligible_validation_rows": 346
+   },
+   "H1": {
+    "rows": 70015,
+    "train": 49010,
+    "validation": 7002,
+    "test": 14003,
+    "eligible_validation_rows": 6376
+   }
+  }
+ },
+ "eligibility": "H1: the as-of and target bars are consecutive hours and the as-of bar follows its predecessor by one hour (no bar bordering a market gap); D1: every row with a next bar. Zero moves are excluded from direction scoring.",
+ "families": {
+  "direction": {
+   "cells": [
+    "d1_gbm",
+    "d1_lstm",
+    "h1_gbm",
+    "h1_lstm"
+   ],
+   "admitted": [
+    "h1_gbm",
+    "h1_lstm"
+   ],
+   "alpha": 0.025,
+   "edge": 0.03,
+   "power": 0.8,
+   "power_table": [
+    {
+     "cell": "d1_gbm",
+     "cadence": "D1",
+     "n_validation": 346,
+     "n_required": 2640.3,
+     "status": "UNDERPOWERED \u2014 NO DECISION"
+    },
+    {
+     "cell": "d1_lstm",
+     "cadence": "D1",
+     "n_validation": 346,
+     "n_required": 2640.3,
+     "status": "UNDERPOWERED \u2014 NO DECISION"
+    },
+    {
+     "cell": "h1_gbm",
+     "cadence": "H1",
+     "n_validation": 6376,
+     "n_required": 2640.3,
+     "status": "ADMITTED"
+    },
+    {
+     "cell": "h1_lstm",
+     "cadence": "H1",
+     "n_validation": 6376,
+     "n_required": 2640.3,
+     "status": "ADMITTED"
+    }
+   ],
+   "fixed_point": [
+    {
+     "family_size": 4,
+     "alpha": 0.0125,
+     "n_required": 3097.5285729621846,
+     "admitted": 2
+    },
+    {
+     "family_size": 2,
+     "alpha": 0.025,
+     "n_required": 2640.2879847768977,
+     "admitted": 2
+    }
+   ],
+   "baselines": "training-majority class and a 50 % coin, on the same rows",
+   "verdict": "CLEARED iff the two-sided (1 - alpha) paired moving-block bootstrap CI of mean(correct_model - correct_majority) AND of mean(correct_model - 0.5) both have lower bound > 0; else DROP. Pesaran-Timmermann reported alongside, not decisive."
+  },
+  "return": {
+   "cells": [
+    "d1_gbm",
+    "d1_lstm",
+    "h1_gbm",
+    "h1_lstm"
+   ],
+   "alpha": 0.0125,
+   "baselines": "the zero-return forecast (driftless random walk)",
+   "verdict": "CLEARED iff the one-sided Clark-West p-value < alpha; else DROP."
+  },
+  "volatility": {
+   "comparisons": [
+    {
+     "cell": "d1_lstm",
+     "cadence": "D1",
+     "baseline": "d1_garch"
+    },
+    {
+     "cell": "h1_lstm",
+     "cadence": "H1",
+     "baseline": "h1_garch_hod"
+    }
+   ],
+   "alpha": 0.025,
+   "verdict": "CLEARED iff the two-sided (1 - alpha) paired moving-block bootstrap CI of mean(|err_baseline| - |err_model|) has lower bound > 0; else DROP."
+  }
+ },
+ "ci_method": {
+  "kind": "paired circular moving-block bootstrap",
+  "block_length": {
+   "D1": 5,
+   "H1": 24
+  },
+  "n_boot": 2000,
+  "seed": 42
+ },
+ "model_configs": {
+  "gbm": {
+   "cv_splits": 5,
+   "grid": {
+    "n_estimators": [
+     200,
+     400
+    ],
+    "max_depth": [
+     3,
+     5
+    ],
+    "learning_rate": [
+     0.03,
+     0.1
+    ]
+   },
+   "subsample": 0.8
+  },
+  "lstm": {
+   "D1": {
+    "time_steps": 20,
+    "units": 64,
+    "dropout": 0.3,
+    "learning_rate": 0.001,
+    "epochs": 100,
+    "batch_size": 64,
+    "patience": 10
+   },
+   "H1": {
+    "time_steps": 24,
+    "units": 32,
+    "dropout": 0.2,
+    "learning_rate": 0.001,
+    "epochs": 60,
+    "batch_size": 256,
+    "patience": 8
+   }
+  },
+  "seeds": [
+   42,
+   43,
+   44,
+   45,
+   46
+  ],
+  "gbm_tuning": "inner purged walk-forward on the training block only; best mean inner ROC-AUC",
+  "garch": {
+   "d1_garch": "GARCH(1,1), constant mean, normal, fit on training returns only",
+   "h1_garch_hod": "GARCH(1,1), zero mean, on returns / training mean |r| per label hour; rescaled by the next hour"
+  }
+ },
+ "descriptive_only": [
+  "accuracy by hour of day, flagged when > 1/2 of excess accuracy comes from the 00:00-06:00 labels (high-spread hours)",
+  "Deflated Sharpe of a gross sign strategy over the gold trial log",
+  "PBO across cells"
+ ],
+ "stages": {
+  "validation": "fit [0:70 %], score [70:80 %] -- the only arbiter",
+  "test": "after every validation verdict is committed: fit [0:80 %], score [80:100 %], once",
+  "final": "fit [0:100 %] -> frozen forward artifacts"
+ },
+ "expected_outcomes": {
+  "direction": {
+   "d1_gbm": "UNDERPOWERED \u2014 NO DECISION (~50 %)",
+   "d1_lstm": "UNDERPOWERED \u2014 NO DECISION (~50 %)",
+   "h1_gbm": "possible CLEARED at 51-53 % (H_dir.1 GBM analogue: KEEP on EUR/USD 52.7 %, AUD/USD, CHF/USD; DROP on GBP/USD -- h1_direction_hypothesis_log.csv)",
+   "h1_lstm": "DROP more likely than CLEARED (H_dir.2: the EUR/USD H1 LSTM scored 51.6 % vs the GBM 52.7 %, DROP)"
+  },
+  "return": {
+   "d1_gbm": "DROP (Huber-loss shrinkage to the ~0 % conditional mean)",
+   "d1_lstm": "DROP (Huber-loss shrinkage to the ~0 % conditional mean)",
+   "h1_gbm": "DROP (Huber-loss shrinkage to the ~0 % conditional mean)",
+   "h1_lstm": "DROP (Huber-loss shrinkage to the ~0 % conditional mean)"
+  },
+  "volatility": {
+   "d1_lstm": "CLEARED (volatility clustering; EUR/USD analogue CLEARED)",
+   "h1_lstm": "CLEARED"
+  }
+ },
+ "corrections": "never edited here; see results/gold/RESULTS.md"
+}
