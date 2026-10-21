@@ -115,6 +115,21 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
    1.0 pp tolerance labels it a spread artifact. Do not add an intraday rule without
    checking which clock its timestamps are on.
 
+7. **Gold is its own research family (`src/gold/`, openspec change `gold-forecasting`,
+   `ARCHITECTURE_DOCS.md §3.12`).**
+   - It has three registries: `results/gold/gold_{direction,return,volatility}_hypothesis_log.csv`,
+     with alpha 0.025 / 0.0125 / 0.025, fixed in `results/gold/PRE_REGISTRATION.md`.
+     These never touch the `0.05/9` bar.
+   - It is **gross of cost**: spread and tick volume are used nowhere, so no gold
+     verdict is a trading result.
+   - It never writes under `models/` and never reads `config.json`. Its frozen
+     artifacts live in gitignored `research_models/gold/` with digests in
+     `results/gold/artifact_manifest.csv`.
+   - Its forward logger is the scheduled task `EURUSDProphet-GoldLogger`. Corrections
+     go to `results/gold/RESULTS.md`.
+   - Gold features must stay scale-free: the price tripled, so a raw level puts the test
+     block outside the training range.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

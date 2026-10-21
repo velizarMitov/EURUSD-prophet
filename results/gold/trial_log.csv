@@ -1,0 +1,17 @@
+trial_id,logged_at,study_id,model,cadence,horizon,config_hash,variant,sharpe,n_obs,notes
+1,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,4e03483d3a5ba982,grid,0.010655541314108027,1213,inner_auc=0.5161; gross sign Sharpe; not selected
+2,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,572ca72f0df3594f,grid,-0.015295600529933678,1213,inner_auc=0.5242; gross sign Sharpe; not selected
+3,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,1f4452a99f9b7edb,grid,-0.01503928087121871,1213,inner_auc=0.5152; gross sign Sharpe; not selected
+4,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,5bde8be8c84a62cc,grid,-0.004979412136321346,1213,inner_auc=0.5249; gross sign Sharpe; not selected
+5,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,ddd13620a97d7205,grid,-0.018616534662182,1213,inner_auc=0.5070; gross sign Sharpe; not selected
+6,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,1bf5e07c5a0e3949,grid,-0.016685237501259376,1213,inner_auc=0.5185; gross sign Sharpe; not selected
+7,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,d5f6b35cff7b700d,grid,0.004016759312834354,1213,inner_auc=0.5165; gross sign Sharpe; not selected
+8,2026-10-21T14:59:57+00:00,gold-validation,d1_gbm,D1,1,5ca9ee2a4b05fec8,grid,0.017378731227886378,1213,inner_auc=0.5266; gross sign Sharpe; SELECTED
+9,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,397417f578964768,grid,0.0027584384953474495,24505,inner_auc=0.5245; gross sign Sharpe; not selected
+10,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,3ec2f1ab01019455,grid,0.003949715701503714,24505,inner_auc=0.5259; gross sign Sharpe; not selected
+11,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,ee525574f5d2b92b,grid,0.008967780001873647,24505,inner_auc=0.5262; gross sign Sharpe; not selected
+12,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,13321772db522210,grid,0.005108896668020351,24505,inner_auc=0.5267; gross sign Sharpe; SELECTED
+13,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,07789fd8b730bea8,grid,0.0010125649037489488,24505,inner_auc=0.5235; gross sign Sharpe; not selected
+14,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,3a342e8fc1630733,grid,0.009627574405123768,24505,inner_auc=0.5259; gross sign Sharpe; not selected
+15,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,eb4cc3debfadd679,grid,0.005881515328159534,24505,inner_auc=0.5217; gross sign Sharpe; not selected
+16,2026-10-21T14:59:57+00:00,gold-validation,h1_gbm,H1,1,c0e2e45525bbdbcc,grid,0.0058965459486639855,24505,inner_auc=0.5200; gross sign Sharpe; not selected

@@ -1221,6 +1221,87 @@ and feasibility ≠ a demonstrated edge (that needs a new pre-registered
 hypothesis). 7 unit tests; full suite green (161 tests). See IMPROVEMENT_LOG
 "H1 label-geometry feasibility scan".
 
+### 3.12 Gold research family (openspec change `gold-forecasting`; research-only, GROSS of cost)
+
+Gold (broker symbol `GOLD`, ActivTrades MT5) price, direction and volatility models,
+judged the way the EUR/USD models are. It is its own research family: it never writes
+under `models/`, never reads `config.json`, never touches `results/forward_eval/`, and
+production code never imports it. `api.py` imports only the read-only
+`src.gold.summary`. **Spread, tick volume and real volume are used nowhere** (owner
+decision), so every verdict is statistical skill gross of cost and never a trading
+result.
+
+**Package layout (`src/gold/`):**
+
+| module | role |
+|---|---|
+| `gold_config.json` | gold's own config (`config.json` is pinned and never read) |
+| `data` | MT5 to OHLC-only caches `results/gold/gold_{d1,h1}.csv` (append-only); Good Friday exemption; leading-thin-H1 trim |
+| `clock` | weekly opens predicted from Sunday 18:00 New York on the Berlin clock; refuses below 0.95 |
+| `features` | scale-free D1 set (22 columns) and the pooled H1 set (15 columns, `src/pooled_h1_model.py`); a guard refuses raw levels, volume and spread |
+| `targets` | next-bar log return %, direction and \|return\| % via `forecast_eval.targets`; H1 eligibility drops bars bordering a market gap |
+| `splits` | 70/10/20, boundary purge via `forecast_eval.splits.purged_train` |
+| `challengers` | `d1_gbm` / `h1_gbm` (XGB with train-only grid tuning); `d1_lstm` / `h1_lstm` (multi-task LSTM, five seeds, all or nothing); `d1_garch` / `h1_garch_hod` baselines |
+| `prereg` | power table, pinned data digests, scoring gate |
+| `study` | `--stage validation\|test\|final` |
+| `forward_logger` / `forward_report` | hourly forward arbiter |
+| `summary` | `/api/gold` |
+
+**Data facts (2026-10-21):**
+
+- D1: 3,466 bars from 2013-08-08.
+- H1: 70,015 bars from 2015-01-02. Before December 2014 the broker's "H1" history holds
+  one bar a day.
+- The price tripled ($1,312 to $4,131), which is why every feature is scale-free.
+- Gold is closed on Good Friday: all 12 gaps over 72 h fall on it.
+- The broker clock ran one hour off for 14 weeks in winter 2016/17. The clock check
+  still passes at 97.6 %.
+
+**Families** (registered in `results/gold/PRE_REGISTRATION.{md,json}` before any score,
+committed in `ab420d3`):
+
+| family | cells | alpha | registry |
+|---|---|---|---|
+| direction | admitted `h1_gbm`, `h1_lstm`; D1 cells UNDERPOWERED (346 rows vs 2,640 needed) | 0.025 | `results/gold/gold_direction_hypothesis_log.csv` |
+| return | four cells, Clark–West against zero | 0.0125 | `results/gold/gold_return_hypothesis_log.csv` |
+| volatility | `d1_lstm` vs GARCH(1,1), `h1_lstm` vs GARCH with hour-of-day seasonality | 0.025 | `results/gold/gold_volatility_hypothesis_log.csv` |
+
+None of these touches the `0.05/9` feature bar or any EUR/USD family.
+
+**Validation verdicts (2026-10-21, `validation[70:80]`):**
+
+- **Volatility: both CLEARED.** D1 MAE 0.389 vs 0.422; H1 0.0737 vs 0.0814.
+- **Direction: H1 GBM and H1 LSTM DROP** (51.0 % / 50.9 % vs the majority's 50.7 %).
+- **Return: all four DROP.**
+
+Nine of ten cells came out as registered. The H1 GBM direction edge seen on EUR/USD,
+AUD/USD and CHF/USD does not carry over to gold. Per-row predictions are saved
+(`results/gold/validation_predictions_{d1,h1}.csv`), so every verdict can be recomputed
+without retraining. Corrections go to `results/gold/RESULTS.md`.
+
+**Stages:**
+
+1. `validation` (the only arbiter).
+2. `test`, once. It refuses if `results/gold/test_report.json` exists or a validation
+   verdict is uncommitted.
+3. `final`: refit on 100 % into gitignored `research_models/gold/<cell>/`, with digests
+   in `results/gold/artifact_manifest.csv`.
+
+**Forward arbiter.** The scheduled task `EURUSDProphet-GoldLogger` runs hourly at :03
+(`scripts/gold/install_task.ps1`; runbook `results/gold/forward/RUNBOOK.md`). Each pass:
+
+- forecasts only from live MT5 data, never from a stale cache;
+- writes gaps instead of back-filling;
+- checks the manifest digests;
+- checks the clock over the whole history at 0.95 and over the last 26 weeks at 0.6;
+- stamps every row `dry_run` until `results/gold/forward/PRE_REGISTRATION.md` is
+  committed.
+
+**View.** `/gold` (`static/gold.html`, BG/EN) and `GET /api/gold`, linked from
+`/advanced`. They show the newest logged forecast per cell: direction, expected return,
+implied price `close·exp(r/100)` and expected move, each labelled "research — no proven
+edge". They show no spread, pips or P&L.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

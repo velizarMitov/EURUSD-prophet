@@ -60,11 +60,12 @@
 
   Verify with a test that `scoring_allowed()` is False for an uncommitted or modified
   file and True for a committed, clean one.
-- [ ] 5.2 Generate the pre-registration and create the three empty registries (`results/gold/gold_{direction,return,volatility}_hypothesis_log.csv`). Have the owner review them, then commit them by hand with an explicit message and nothing else in the commit. Verify `git log -1 --stat` lists only those files, and that the D1 direction cells read UNDERPOWERED — NO DECISION while the H1 direction cells are admitted.
+- [x] 5.2 Generate the pre-registration and create the three empty registries (`results/gold/gold_{direction,return,volatility}_hypothesis_log.csv`). Have the owner review them, then commit them by hand with an explicit message and nothing else in the commit. Verify `git log -1 --stat` lists only those files, and that the D1 direction cells read UNDERPOWERED — NO DECISION while the H1 direction cells are admitted.
+  - Deviation 2026-10-21: Copilot committed the registration inside `ab420d3` together with code, caches and three EUR/USD files, not on its own. It was still committed before any score, and the gate, the config digest and the data pins all check out. Recorded in `results/gold/RESULTS.md`; history is not rewritten.
 
 ## 6. Validation stage
 
-- [ ] 6.1 Implement `src/gold/study.py::run(stage)`, with `python -m src.gold.study --stage validation`:
+- [x] 6.1 Implement `src/gold/study.py::run(stage)`, with `python -m src.gold.study --stage validation`:
   - check the clock, then call `scoring_allowed()`;
   - fit on [0:70] and score [70:80] on eligible rows, against each cell's baseline;
   - compute the verdicts in design D7;
@@ -84,7 +85,7 @@
 
 ## 8. Forward logger
 
-- [ ] 8.1 Implement `src/gold/forward_logger.py`:
+- [x] 8.1 Implement `src/gold/forward_logger.py`:
   - lock, clock check and manifest digest check;
   - forecasts for the newest closed H1 bar and day whose target is still open, with a
     `phase` stamp;
@@ -109,19 +110,20 @@
 
   Commit it by hand on its own. Verify that forward scoring refuses before the commit
   and is allowed after it (test plus live check).
-- [ ] 9.2 Implement the forward scoring report (`python -m src.gold.forward_logger --report`). It produces registered-phase rows only and no P&L, pips or Sharpe. Verify with a test that the report never contains those words or figures and that dry-run rows are excluded.
+- [x] 9.2 Implement the forward scoring report (`python -m src.gold.forward_logger --report`). It produces registered-phase rows only and no P&L, pips or Sharpe. Verify with a test that the report never contains those words or figures and that dry-run rows are excluded.
 
 ## 10. Read-only gold view
 
-- [ ] 10.1 Implement `src/gold/summary.py::build()`. It takes the newest row per cell whole, omits finished windows on the bar-label clock, derives the implied price, and attaches recorded verdicts and the "research — no proven edge" label. Verify with tests:
+- [x] 10.1 Implement `src/gold/summary.py::build()`. It takes the newest row per cell whole, omits finished windows on the bar-label clock, derives the implied price, and attaches recorded verdicts and the "research — no proven edge" label. Verify with tests:
   - a blank p_up is not filled from an older row;
   - a closed target bar is omitted;
   - 4,131.00 with a +0.04 % return gives 4,132.65;
   - the build changes no file and imports no TensorFlow or XGBoost module;
   - an empty log yields the no-forecast state.
-- [ ] 10.2 Add `GET /api/gold` and `GET /gold` to `api.py`, add `static/gold.html` (bilingual BG/EN, with no spread, pips or P&L), and add one link in `static/index.html`. Verify with `TestClient`: both routes return 200 and the page renders the verdict labels. Then check `/gold` on the running app.
+- [x] 10.2 Add `GET /api/gold` and `GET /gold` to `api.py`, add `static/gold.html` (bilingual BG/EN, with no spread, pips or P&L), and add one link in `static/index.html`. Verify with `TestClient`: both routes return 200 and the page renders the verdict labels. Then check `/gold` on the running app.
+  - 2026-10-21: verified through TestClient on `api.app` (both routes return 200; labels shown; no cost words). The server that was running predates the routes and returns 404 until restarted; the launcher restarts it automatically when `.py` files are newer.
 
 ## 11. Documentation and integration
 
-- [ ] 11.1 Add a gold section to `ARCHITECTURE_DOCS.md`: the package layout, the data facts, the three families, the stages, the logger and the view. Add a short gold paragraph under Production Methodology in `CLAUDE.md`: its own families, gross of cost, never under `models/`. Verify that both documents name the registry paths and the scheduled-task name exactly as implemented.
+- [x] 11.1 Add a gold section to `ARCHITECTURE_DOCS.md`: the package layout, the data facts, the three families, the stages, the logger and the view. Add a short gold paragraph under Production Methodology in `CLAUDE.md`: its own families, gross of cost, never under `models/`. Verify that both documents name the registry paths and the scheduled-task name exactly as implemented.
 - [ ] 11.2 Run the full suite `python -m pytest -q`. Verify it is green, that the protected-set fixtures pass, and that `git status` shows no change under `models/`, `config.json` or `results/forward_eval/` from this change.

@@ -603,6 +603,33 @@ def forward_forecasts_page():
     return HTMLResponse(content=page, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/gold")
+def gold_summary_endpoint():
+    """
+    The gold research family's newest logged forecasts and recorded verdicts
+    (openspec change gold-forecasting, capability gold-forecasting/gold-view).
+
+    READ-ONLY: src.gold.summary reads the gold logger's CSVs, the family
+    registries and the one-shot test report; it runs no model, fetches no market
+    data, writes nothing and imports no model library. Gross of cost -- no
+    spread, pips or P&L. Imported lazily like /forecasts.
+    """
+    try:
+        from src.gold.summary import build
+        return build()
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"gold view unavailable: {type(e).__name__}: {e}")
+
+
+@app.get("/gold")
+def gold_page():
+    """Static page rendering /api/gold, bilingual like the home page."""
+    path = os.path.join(static_dir, "gold.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="static/gold.html is missing")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/advanced")
 def advanced_dashboard():
     """The research console that used to live at /: both model variants side by

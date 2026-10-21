@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold research forecasts</title>
+<!-- Read-only gold view (openspec change gold-forecasting, capability
+     gold-forecasting/gold-view). Everything shown comes from GET /api/gold,
+     which runs no model, fetches no market data and writes nothing. Research
+     output, gross of cost: no cost or ledger figure appears on this page. No
+     external scripts or fonts: it must work offline on loopback. -->
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --ink:#15181c; --mut:#5f6873; --line:#e2e5e9;
+  --up:#1d7a4c; --up-bg:#e8f4ee; --dn:#a8322b; --dn-bg:#f9ebea;
+  --flat:#5f6873; --flat-bg:#eef0f3; --accent:#1f4e9c; --accent-ink:#ffffff;
+  --note-bg:#fff6e0; --note-ink:#6b4a00; --note-line:#e9c46a;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121417; --card:#1b1e22; --ink:#e7e9ec; --mut:#9aa3ad; --line:#2a2f35;
+    --up:#5cc98f; --up-bg:#16291f; --dn:#ff8a80; --dn-bg:#2e1b1a;
+    --flat:#9aa3ad; --flat-bg:#23272c; --accent:#7aa7ef; --accent-ink:#0d1420;
+    --note-bg:#2a2412; --note-ink:#ecc870; --note-line:#6b5a22;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121417; --card:#1b1e22; --ink:#e7e9ec; --mut:#9aa3ad; --line:#2a2f35;
+  --up:#5cc98f; --up-bg:#16291f; --dn:#ff8a80; --dn-bg:#2e1b1a;
+  --flat:#9aa3ad; --flat-bg:#23272c; --accent:#7aa7ef; --accent-ink:#0d1420;
+  --note-bg:#2a2412; --note-ink:#ecc870; --note-line:#6b5a22;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);
+  font:16px/1.5 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;padding:16px}
+.wrap{max-width:1040px;margin:0 auto}
+a{color:var(--accent)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:12px}
+header h1{font-size:22px;margin:0;flex:1 1 auto}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.lang button{background:transparent;color:var(--mut);border:0;padding:6px 12px;font:inherit;
+  font-size:14px;font-weight:600;cursor:pointer}
+.lang button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.notice{background:var(--note-bg);color:var(--note-ink);border:1px solid var(--note-line);
+  border-radius:10px;padding:10px 14px;font-size:14px;font-weight:600;margin-bottom:16px}
+h2.group{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:18px 0 8px}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:820px){.tiles{grid-template-columns:1fr}}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;
+  display:flex;flex-direction:column;gap:6px;min-width:0}
+.tile h3{font-size:14px;margin:0;color:var(--mut);font-weight:700}
+.big{font-size:26px;font-weight:700;line-height:1.15}
+.tone-up .big{color:var(--up)} .tone-dn .big{color:var(--dn)}
+.tile.tone-up{background:linear-gradient(var(--up-bg),var(--card) 70%)}
+.tile.tone-dn{background:linear-gradient(var(--dn-bg),var(--card) 70%)}
+.meta{font-size:13px;color:var(--mut)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;
+  background:var(--flat-bg);color:var(--ink);overflow-wrap:anywhere}
+.label{font-size:12px;font-weight:700;color:var(--note-ink)}
+footer{margin-top:22px;font-size:13px;color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 data-i18n="title">Злато — изследователски прогнози</h1>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="bg" aria-pressed="true">BG</button>
+      <button type="button" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+    <a href="/advanced" data-i18n="back">← Изследователска конзола</a>
+  </header>
+  <div class="notice" data-i18n="notice">Изследване — без доказано предимство. Брутно, без разходи; не е търговски сигнал.</div>
+  <div id="body"><p class="meta" data-i18n="loading">Зареждане…</p></div>
+  <footer data-i18n="footer">Данните идват само от записаните файлове. Страницата не пуска модел и не записва нищо.</footer>
+</div>
+<script>
+const I18N = {
+  title: {bg: 'Злато — изследователски прогнози', en: 'Gold — research forecasts'},
+  back: {bg: '← Изследователска конзола', en: '← Research console'},
+  notice: {bg: 'Изследване — без доказано предимство. Брутно, без разходи; не е търговски сигнал.',
+           en: 'Research — no proven edge. Gross of cost; not a trading signal.'},
+  loading: {bg: 'Зареждане…', en: 'Loading…'},
+  footer: {bg: 'Данните идват само от записаните файлове. Страницата не пуска модел и не записва нищо.',
+           en: 'Everything comes from recorded files. This page runs no model and writes nothing.'},
+  none: {bg: 'Все още няма записана прогноза за злато.', en: 'No gold forecast has been logged yet.'},
+  H1: {bg: 'Следващ час (H1)', en: 'Next hour (H1)'},
+  D1: {bg: 'Следващ ден (D1)', en: 'Next day (D1)'},
+  up: {bg: 'нагоре', en: 'up'}, down: {bg: 'надолу', en: 'down'},
+  ret: {bg: 'Очаквана доходност', en: 'Expected return'},
+  price: {bg: 'Цена по модела', en: 'Implied price'},
+  move: {bg: 'Очаквано движение', en: 'Expected move'},
+  asof: {bg: 'към бара', en: 'as of bar'},
+  ended: {bg: 'Няма текуща прогноза. Последната изтече в', en: 'No current forecast. The last one ended at'},
+  never: {bg: 'Няма записана прогноза.', en: 'No forecast logged.'},
+  failed: {bg: 'неуспешна', en: 'failed'},
+  direction: {bg: 'посока', en: 'direction'}, 'return': {bg: 'доходност', en: 'return'},
+  volatility: {bg: 'волатилност', en: 'volatility'},
+  'research — no proven edge': {bg: 'изследване — без доказано предимство', en: 'research — no proven edge'},
+  'statistical skill, gross of cost; not a trading result': {
+    bg: 'статистическо умение, брутно; не е търговски резултат',
+    en: 'statistical skill, gross of cost; not a trading result'},
+};
+const NAMES = {h1_gbm: 'GBM', h1_lstm: 'LSTM ×5', h1_garch_hod: 'GARCH (час)', d1_gbm: 'GBM',
+               d1_lstm: 'LSTM ×5', d1_garch: 'GARCH(1,1)'};
+const STORE_KEY = 'gold.view.lang';
+let lang = 'bg', payload = null;
+try { const s = localStorage.getItem(STORE_KEY); if (s === 'en' || s === 'bg') lang = s; } catch (e) {}
+const t = (k) => (I18N[k] && I18N[k][lang]) || k;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const pct = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d) + ' %';
+
+function setLang(next) {
+  lang = next;
+  try { localStorage.setItem(STORE_KEY, next); } catch (e) {}
+  document.documentElement.lang = next;
+  document.querySelectorAll('.lang button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.lang === next)));
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  render();
+}
+
+function tile(c) {
+  const cur = c.current;
+  const chips = Object.entries(c.verdicts || {}).map(([fam, v]) =>
+    `<span class="chip">${esc(t(fam))}: ${esc(v)}</span>`).join('');
+  let body = '', tone = '';
+  if (cur) {
+    if (cur.direction) {
+      tone = cur.direction === 'up' ? 'tone-up' : 'tone-dn';
+      body += `<div class="big">${cur.direction === 'up' ? '▲' : '▼'} ${esc(t(cur.direction))}, ${Math.round(cur.probability * 100)} %</div>`;
+    }
+    if (cur.ret_pct !== null) body += `<div>${esc(t('ret'))}: <b>${pct(cur.ret_pct, 3)}</b></div>`;
+    if (cur.implied_price !== null) body += `<div>${esc(t('price'))}: <b>${cur.implied_price.toFixed(2)}</b></div>`;
+    if (cur.vol_pct !== null) body += `<div${cur.direction ? '' : ' class="big"'}>${esc(t('move'))}: ±${cur.vol_pct.toFixed(3)} %</div>`;
+    body += `<div class="meta">${esc(t('asof'))} ${esc(cur.as_of_bar)} · ${esc(cur.phase || '')}</div>`;
+  } else if (c.last_window_end) {
+    body = `<div class="meta">${esc(t('ended'))} ${esc(c.last_window_end)}.</div>`;
+  } else {
+    body = `<div class="meta">${esc(t('never'))}</div>`;
+  }
+  return `<div class="tile ${tone}"><h3>${esc(NAMES[c.cell] || c.cell)}</h3>${body}
+    <div class="label">${esc(t(c.label))}</div><div class="chips">${chips}</div></div>`;
+}
+
+function render() {
+  const el = document.getElementById('body');
+  if (!payload) return;
+  if (payload.state === 'no_forecast' && !payload.cells.some((c) => Object.keys(c.verdicts || {}).length)) {
+    el.innerHTML = `<p class="meta">${esc(t('none'))}</p>`;
+    return;
+  }
+  let html = payload.state === 'no_forecast' ? `<p class="meta">${esc(t('none'))}</p>` : '';
+  for (const cad of ['H1', 'D1']) {
+    html += `<h2 class="group">${esc(t(cad))}</h2><div class="tiles">` +
+      payload.cells.filter((c) => c.cadence === cad).map(tile).join('') + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/gold', {cache: 'no-store'});
+    payload = await r.json();
+  } catch (e) {
+    document.getElementById('body').innerHTML = `<p class="meta">${esc(String(e))}</p>`;
+    return;
+  }
+  render();
+}
+
+document.querySelectorAll('.lang button').forEach((b) => b.addEventListener('click', () => setLang(b.dataset.lang)));
+setLang(lang);
+load();
+</script>
+</body>
+</html>
