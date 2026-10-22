@@ -1,0 +1,176 @@
+/* The app shell's look (openspec change app-shell-and-gold-history).
+   Injected into every page route by api.py's ShellLayer; served from /ui/shell/.
+   No external fonts, images or imports: the app must work offline on loopback.
+
+   Three parts:
+     1. tokens       one palette, light and dark, on :root
+     2. ps-base      a cascade layer of :where() element defaults for EVERY page;
+                     a layer loses to any unlayered rule, so a pinned page's own
+                     styles always win and its layout cannot break
+     3. components   the bar, plus ps-* classes that only owned pages use */
+
+/* 1. TOKENS ---------------------------------------------------------------- */
+:root{
+  --ps-bg:#f4f5f7; --ps-surface:#ffffff; --ps-surface-2:#f8f9fb; --ps-ink:#14171b;
+  --ps-mut:#5c6570; --ps-faint:#8a929c; --ps-line:#e1e4e8; --ps-line-2:#eceef1;
+  --ps-accent:#1f4e9c; --ps-accent-ink:#ffffff; --ps-accent-bg:#e9eff9;
+  --ps-gold:#9a6b00; --ps-gold-bg:#fbf3df;
+  --ps-up:#1d7a4c; --ps-up-bg:#e7f4ed; --ps-dn:#a8322b; --ps-dn-bg:#f9eaea;
+  --ps-flat:#5c6570; --ps-flat-bg:#eef0f3;
+  --ps-note-bg:#fff6e0; --ps-note-ink:#674700; --ps-note-line:#e9c46a;
+  --ps-skel:#e8ebef; --ps-focus:#2f6fdc;
+  --ps-nav-bg:rgba(255,255,255,.86); --ps-shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06);
+  --ps-shadow-lg:0 10px 30px rgba(16,24,40,.12);
+  --ps-font:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --ps-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,monospace;
+  --ps-r:12px; --ps-r-sm:8px; --ps-nav-h:56px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ps-bg:#111316; --ps-surface:#1a1d21; --ps-surface-2:#16191c; --ps-ink:#e8eaed;
+    --ps-mut:#9ba4ae; --ps-faint:#737c86; --ps-line:#2a2f35; --ps-line-2:#23272c;
+    --ps-accent:#7aa7ef; --ps-accent-ink:#0c1320; --ps-accent-bg:#1a2536;
+    --ps-gold:#e5b85c; --ps-gold-bg:#2a2311;
+    --ps-up:#5cc98f; --ps-up-bg:#15281e; --ps-dn:#ff8a80; --ps-dn-bg:#2d1a19;
+    --ps-flat:#9ba4ae; --ps-flat-bg:#22262b;
+    --ps-note-bg:#28220f; --ps-note-ink:#ecc870; --ps-note-line:#6b5a22;
+    --ps-skel:#252a30; --ps-focus:#8ab4ff;
+    --ps-nav-bg:rgba(22,25,28,.86); --ps-shadow:0 1px 2px rgba(0,0,0,.4);
+    --ps-shadow-lg:0 10px 30px rgba(0,0,0,.5);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ps-bg:#111316; --ps-surface:#1a1d21; --ps-surface-2:#16191c; --ps-ink:#e8eaed;
+  --ps-mut:#9ba4ae; --ps-faint:#737c86; --ps-line:#2a2f35; --ps-line-2:#23272c;
+  --ps-accent:#7aa7ef; --ps-accent-ink:#0c1320; --ps-accent-bg:#1a2536;
+  --ps-gold:#e5b85c; --ps-gold-bg:#2a2311;
+  --ps-up:#5cc98f; --ps-up-bg:#15281e; --ps-dn:#ff8a80; --ps-dn-bg:#2d1a19;
+  --ps-flat:#9ba4ae; --ps-flat-bg:#22262b;
+  --ps-note-bg:#28220f; --ps-note-ink:#ecc870; --ps-note-line:#6b5a22;
+  --ps-skel:#252a30; --ps-focus:#8ab4ff;
+  --ps-nav-bg:rgba(22,25,28,.86); --ps-shadow:0 1px 2px rgba(0,0,0,.4);
+  --ps-shadow-lg:0 10px 30px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+
+/* 2. BASE (every page, zero priority) ------------------------------------- */
+@layer ps-base {
+:where(body){background:var(--ps-bg);color:var(--ps-ink);font-family:var(--ps-font);line-height:1.5}
+:where(a){color:var(--ps-accent)}
+:where(h1,h2,h3){letter-spacing:-.01em;line-height:1.25}
+:where(table){border-collapse:collapse;font-variant-numeric:tabular-nums}
+:where(th,td){border-bottom:1px solid var(--ps-line);padding:.4rem .6rem;text-align:left}
+:where(th){color:var(--ps-mut);font-weight:600}
+:where(code,pre){font-family:var(--ps-mono)}
+:where(:focus-visible){outline:2px solid var(--ps-focus);outline-offset:2px}
+}
+/* Phones: a wide table scrolls inside its own box and long code wraps, so a
+   pinned page's content stops pushing the whole page sideways. Still the base
+   layer, so any rule a page sets itself wins. */
+@media (max-width:860px){
+@layer ps-base {
+:where(table){display:block;max-width:100%;overflow-x:auto}
+:where(code,pre){overflow-wrap:anywhere;white-space:pre-wrap}
+}
+}
+
+/* 3a. THE BAR --------------------------------------------------------------- */
+.ps-shell{height:var(--ps-nav-h);margin:0 0 8px}
+/* A page's own bare-element rules (the console styles every `button` with
+   width:100% and margin-top:1rem) must not reach the bar. Specificity (0,1,0):
+   above any bare element rule, and the bar's own rules below still win. */
+.ps-shell :where(nav,div,ul,li,a,button,span,i){box-sizing:border-box;margin:0;width:auto;min-width:0;max-width:none;
+  min-height:0;float:none;box-shadow:none;text-transform:none;letter-spacing:normal;text-shadow:none;transition:none;
+  transform:none;opacity:1;font-family:var(--ps-font);font-style:normal;line-height:1.2;vertical-align:middle}
+.ps-nav{position:fixed;inset:0 0 auto 0;z-index:1000;height:var(--ps-nav-h);
+  background:var(--ps-nav-bg);-webkit-backdrop-filter:saturate(180%) blur(12px);backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--ps-line);font:14px/1.2 var(--ps-font);color:var(--ps-ink)}
+.ps-nav-inner{max-width:1240px;height:100%;margin:0 auto;padding:0 16px;display:flex;align-items:center;gap:16px}
+.ps-brand{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:15px;color:var(--ps-ink);
+  text-decoration:none;white-space:nowrap;letter-spacing:-.01em}
+.ps-brand-mark{width:22px;height:22px;border-radius:7px;flex:none;
+  background:linear-gradient(135deg,var(--ps-accent) 0 50%,var(--ps-gold) 50% 100%)}
+.ps-menu{display:flex;align-items:center;gap:16px;flex:1 1 auto;min-width:0}
+.ps-links{display:flex;align-items:center;gap:2px;list-style:none;margin:0;padding:0;flex:1 1 auto;min-width:0}
+.ps-links>li{position:relative}
+.ps-nav-link,.ps-more-btn{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 10px;border-radius:8px;
+  color:var(--ps-mut);text-decoration:none;font:inherit;font-weight:600;white-space:nowrap;background:transparent;border:0;cursor:pointer}
+.ps-nav-link:hover,.ps-more-btn:hover{color:var(--ps-ink);background:var(--ps-flat-bg)}
+.ps-nav-link[aria-current="page"]{color:var(--ps-accent);background:var(--ps-accent-bg)}
+.ps-more-current>.ps-more-btn{color:var(--ps-accent)}
+.ps-caret{font-size:11px}
+.ps-more-list{position:absolute;top:calc(100% + 6px);left:0;min-width:200px;list-style:none;margin:0;padding:6px;
+  background:var(--ps-surface);border:1px solid var(--ps-line);border-radius:10px;box-shadow:var(--ps-shadow-lg)}
+.ps-more-list .ps-nav-link{display:flex;width:100%}
+.ps-controls{display:flex;align-items:center;gap:8px;flex:none}
+.ps-seg{display:inline-flex;padding:2px;border:1px solid var(--ps-line);border-radius:999px;background:var(--ps-surface)}
+.ps-seg button{height:26px;padding:0 10px;border:0;border-radius:999px;background:transparent;color:var(--ps-mut);
+  font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.ps-seg button[aria-pressed="true"]{background:var(--ps-accent);color:var(--ps-accent-ink)}
+.ps-menu-btn{display:none;margin-left:auto;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--ps-line);
+  border-radius:8px;background:var(--ps-surface);color:var(--ps-ink);font:inherit;font-weight:600;cursor:pointer}
+.ps-burger,.ps-burger::before,.ps-burger::after{display:block;width:16px;height:2px;border-radius:2px;background:currentColor;position:relative}
+.ps-burger::before,.ps-burger::after{content:"";position:absolute;left:0}
+.ps-burger::before{top:-5px}.ps-burger::after{top:5px}
+.ps-nav :focus-visible{outline:2px solid var(--ps-focus);outline-offset:2px}
+
+@media (max-width:1020px){ .ps-theme{display:none} .ps-menu.ps-open .ps-theme{display:inline-flex} }
+@media (max-width:860px){
+  .ps-menu-btn{display:inline-flex}
+  .ps-menu{display:none;position:absolute;top:var(--ps-nav-h);left:0;right:0;flex-direction:column;align-items:stretch;gap:12px;
+    padding:12px 16px 16px;background:var(--ps-surface);border-bottom:1px solid var(--ps-line);box-shadow:var(--ps-shadow-lg);
+    max-height:calc(100vh - var(--ps-nav-h));overflow:auto}
+  .ps-menu.ps-open{display:flex}
+  .ps-links{flex-direction:column;align-items:stretch}
+  .ps-nav-link,.ps-more-btn{height:42px;width:100%;font-size:15px}
+  .ps-more-list{position:static;box-shadow:none;border:0;padding:0 0 0 12px;background:transparent}
+  .ps-controls{flex-wrap:wrap}
+}
+@media print{ .ps-shell{display:none} }
+
+/* 3b. OWNED-PAGE COMPONENTS (home, gold) ------------------------------------ */
+.ps-page{max-width:1120px;margin:0 auto;padding:8px 16px 48px;font:15px/1.5 var(--ps-font);color:var(--ps-ink)}
+.ps-page *,.ps-page *::before,.ps-page *::after{box-sizing:border-box}
+.ps-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 16px;margin:12px 0 16px}
+.ps-title{margin:0;font-size:26px;font-weight:750;letter-spacing:-.02em}
+.ps-sub{margin:4px 0 0;color:var(--ps-mut);font-size:14px}
+.ps-muted{color:var(--ps-mut)} .ps-faint{color:var(--ps-faint)}
+.ps-num{font-variant-numeric:tabular-nums}
+.ps-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
+.ps-card{background:var(--ps-surface);border:1px solid var(--ps-line);border-radius:var(--ps-r);padding:16px 18px;box-shadow:var(--ps-shadow);min-width:0}
+.ps-card h2,.ps-card h3{margin:0 0 8px;font-size:15px}
+.ps-kicker{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ps-mut)}
+.ps-big{font-size:28px;font-weight:750;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.ps-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;
+  background:var(--ps-flat-bg);color:var(--ps-flat);white-space:nowrap}
+.ps-pill.up{background:var(--ps-up-bg);color:var(--ps-up)} .ps-pill.dn{background:var(--ps-dn-bg);color:var(--ps-dn)}
+.ps-pill.gold{background:var(--ps-gold-bg);color:var(--ps-gold)} .ps-pill.acc{background:var(--ps-accent-bg);color:var(--ps-accent)}
+.ps-notice{background:var(--ps-note-bg);color:var(--ps-note-ink);border:1px solid var(--ps-note-line);border-radius:10px;
+  padding:10px 14px;font-size:14px;font-weight:600}
+.ps-tabs{display:flex;gap:4px;border-bottom:1px solid var(--ps-line);margin:16px 0}
+.ps-tab{appearance:none;border:0;background:transparent;color:var(--ps-mut);font:inherit;font-weight:700;padding:10px 14px;
+  border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer}
+.ps-tab[aria-selected="true"]{color:var(--ps-accent);border-bottom-color:var(--ps-accent)}
+.ps-toolbar{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:flex-end;margin:0 0 14px}
+.ps-field{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--ps-mut)}
+.ps-field select,.ps-field input{height:36px;padding:0 10px;border:1px solid var(--ps-line);border-radius:8px;background:var(--ps-surface);
+  color:var(--ps-ink);font:inherit;font-size:14px;font-weight:500;min-width:0}
+.ps-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:8px;
+  border:1px solid var(--ps-line);background:var(--ps-surface);color:var(--ps-ink);font:inherit;font-size:14px;font-weight:700;cursor:pointer}
+.ps-btn.primary{background:var(--ps-accent);border-color:var(--ps-accent);color:var(--ps-accent-ink)}
+.ps-btn:disabled{opacity:.5;cursor:default}
+.ps-table-wrap{overflow-x:auto;border:1px solid var(--ps-line);border-radius:var(--ps-r);background:var(--ps-surface)}
+.ps-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.ps-table th,.ps-table td{padding:8px 10px;border-bottom:1px solid var(--ps-line-2);text-align:right;white-space:nowrap}
+.ps-table th{position:sticky;top:0;background:var(--ps-surface-2);color:var(--ps-mut);font-size:12px;font-weight:700;text-align:right}
+.ps-table th:first-child,.ps-table td:first-child,.ps-table .l{text-align:left}
+.ps-table tbody tr:hover{background:var(--ps-surface-2)}
+.ps-hit{color:var(--ps-up);font-weight:700} .ps-miss{color:var(--ps-dn);font-weight:700}
+.ps-skel{display:block;height:1em;border-radius:6px;background:var(--ps-skel);animation:ps-pulse 1.4s ease-in-out infinite}
+@keyframes ps-pulse{50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){.ps-skel{animation:none}}
+.ps-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 0;font-size:13px;color:var(--ps-mut)}
+.ps-foot{margin-top:28px;font-size:13px;color:var(--ps-mut)}
+@media (max-width:600px){ .ps-title{font-size:22px} .ps-big{font-size:24px} .ps-card{padding:14px} }

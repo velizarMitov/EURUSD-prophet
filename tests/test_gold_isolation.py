@@ -43,10 +43,14 @@ def test_production_never_imports_gold():
 
 
 def test_api_imports_only_the_read_only_summary():
+    """api.py may import the two read-only views and nothing else of src.gold:
+    the summary (/api/gold) and the history (/api/gold/history, openspec change
+    app-shell-and-gold-history). Both run no model and write nothing."""
     hits = [m.group(0).strip() for m in re.finditer(r'^\s*(from\s+src\.gold[\w.]*\s+import[^\n]*|import\s+src\.gold[\w.]*)',
                                                    _read('api.py'), re.M)]
     for h in hits:
-        assert h.startswith('from src.gold.summary import'), f'api.py imports more than the summary: {h}'
+        assert h.startswith(('from src.gold.summary import', 'from src.gold.history import')), \
+            f'api.py imports more than the read-only views: {h}'
 
 
 def test_gold_names_no_production_write_target():

@@ -64,10 +64,12 @@ For each such response, the middleware:
 - buffers the body, which works for both `HTMLResponse` and `FileResponse`;
 - inserts the theme-boot snippet, `<link href="/ui/shell/shell.css">` and
   `<script defer src="/ui/shell/shell.js">` before `</head>`;
-- inserts the `<nav data-ps-shell>` markup right after `<body…>`, with
-  `aria-current="page"` set from the path;
-- adds `ps-legacy` to `<html>` for pages not built on the shell;
+- inserts the navigation (`<div data-ps-shell>` wrapping a fixed `<nav>`) right after
+  `<body…>`, with `aria-current="page"` set from the path. A bare fragment with no head
+  or body, such as `/h1-direction`, gets both segments at its start;
 - recomputes `Content-Length`.
+
+Exactly two segments are injected, and `app_shell.strip` removes exactly those two.
 
 Alternatives considered:
 - *Wrap each route's return value*, as `_with_h1_nav` does. The routes' return lines
@@ -90,7 +92,7 @@ serves `index.html` byte for byte, and `tests/test_home_overview.py::
 test_advanced_is_the_old_dashboard_byte_for_byte` enforces that. The owner chose to include
 the research console in the redesign, so the response now differs by the injected shell.
 The test is rewritten as follows:
-- `/advanced` must equal `index.html` once the shell's three injected segments are
+- `/advanced` must equal `index.html` once the shell's two injected segments are
   removed;
 - `index.html` on disk must be unchanged.
 
@@ -107,16 +109,20 @@ else in the change depends on it.
   canonical, plus spacing, radius, elevation and type-scale tokens.
 - **Components for owned pages:** card, stat, pill, segmented control, tabs, table,
   notice, skeleton and button.
-- **The `.ps-legacy` base layer** is written entirely inside `:where(...)` selectors, so
-  its specificity is zero:
+- **The base layer** applies to every page. It sits in `@layer ps-base`, and every
+  selector is written inside `:where(...)`. A cascade layer loses to any unlayered rule,
+  whatever that rule's specificity. It sets:
   - background and ink;
   - font stack;
   - table rules with tabular numbers;
   - link colour;
   - focus outlines.
 
-  A pinned page's inline `style=` attributes and `<style>` blocks therefore always win.
-  The page gains readability and keeps its layout.
+  A pinned page's `<style>` blocks and inline styles therefore always win. The page
+  gains readability and keeps its layout, so no `ps-legacy` class is needed.
+- **The bar is `position: fixed`**, inside an in-flow spacer of the same height. It
+  spans the window whatever width or margin a page's own `<body>` has, without the
+  scrollbar overflow that `100vw` causes on Windows.
 
 Alternative considered: *a full reset on legacy pages.* That risks breaking a pinned
 page's layout that nobody can edit.

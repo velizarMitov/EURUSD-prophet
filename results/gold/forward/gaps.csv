@@ -1,0 +1,9 @@
+cadence,as_of_bar,reason,logged_at
+H1,2026-10-21 21:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-21 22:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 00:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 01:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 02:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 03:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 04:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00
+H1,2026-10-22 05:00:00+00:00,target bar closed before this pass,2026-10-22T05:03:06+00:00

@@ -262,9 +262,16 @@ def test_root_serves_the_home_page(client):
 
 
 def test_advanced_is_the_old_dashboard_byte_for_byte(client):
+    """Narrowed by openspec change app-shell-and-gold-history (the owner put the
+    console in the redesign): the response differs from static/index.html by the
+    injected shell and nothing else, and the file itself is unchanged."""
+    import subprocess
+    from src import app_shell
     r = client.get('/advanced')
     assert r.status_code == 200
-    assert r.content == open(INDEX_HTML, 'rb').read()
+    assert app_shell.strip(r.text, '/advanced').encode('utf-8') == open(INDEX_HTML, 'rb').read()
+    rc = subprocess.run(['git', '-C', REPO, 'diff', '--quiet', 'HEAD', '--', 'static/index.html']).returncode
+    assert rc == 0, 'static/index.html changed'
 
 
 def test_api_home_returns_the_fast_blocks(client):

@@ -1246,6 +1246,7 @@ result.
 | `study` | `--stage validation\|test\|final` |
 | `forward_logger` / `forward_report` | hourly forward arbiter |
 | `summary` | `/api/gold` |
+| `history` | `/api/gold/history` (read-only, descriptive) |
 
 **Data facts (2026-10-21):**
 
@@ -1301,6 +1302,47 @@ without retraining. Corrections go to `results/gold/RESULTS.md`.
 `/advanced`. They show the newest logged forecast per cell: direction, expected return,
 implied price `close·exp(r/100)` and expected move, each labelled "research — no proven
 edge". They show no spread, pips or P&L.
+
+**History.** This comes from openspec change `app-shell-and-gold-history`, spec
+`gold-forecasting/gold-history`. The *History* tab on `/gold` and
+`GET /api/gold/history` (`src/gold/history.py`) show every gold forecast next to what
+gold did. There are three sources, all in one row schema:
+
+| `source` | rows | label |
+|---|---|---|
+| `live` | the logger's predictions. Each is left-joined to the settlement with the **same `key`** and no other. Gap records appear as `missed` bars. | live, `dry_run` until the forward pre-registration |
+| `validation` | the study's saved predictions on [70:80 %], from fits on [0:70 %] | past research |
+| `test` | the one-shot test predictions on [80:100 %], from fits on [0:80 %] | past research; **not used to choose anything** |
+
+Each row's status is `pending` (target bar not closed yet), `settled`, `not_scored`
+(ineligible: it shows its outcome, has no hit and is never counted) or `missed`.
+
+For the study sources, the predicted price is `close·exp(ret/100)` and the actual price
+is `close·exp(y_ret/100)`. The `wide` layout puts every model of one bar on one line,
+next to the single realised outcome.
+
+**Summaries are descriptive and never a verdict.** One is computed per `(cell, model
+digest, source)` over settled rows only, so a refit is never blended with the model
+before it. It gives:
+- the count;
+- the direction hit rate with a Wilson 95 % interval against a coin, with the interval
+  implemented in the module because gold may not import `src/home_summary.py`;
+- for `*_lstm` cells, the mean absolute volatility error next to its GARCH baseline
+  **on the shared bars only**.
+
+Below 30 rows a summary says "too few" and shows no rate. KEEP and DROP never appear
+here. The verdicts stay in the registries and, for forward data, in `forward_report`
+after the forward pre-registration.
+
+The module reads CSVs only. It imports no model library, writes nothing, and caches
+parsed files by `(mtime, size)`. Parameters are `source`, `cadence`, `cell`,
+`start`/`end`, `layout` (`long`/`wide`), `offset`, and `limit` ≤ 1000. A bad value
+answers 400 with the allowed values.
+
+The page draws an inline-SVG chart with one y-axis. A price cell shows forecast against
+actual price. A volatility cell shows expected against actual move, and the GARCH
+baseline appears as a dashed line. The series colours are validated with the dataviz
+palette validator in both themes. The page also offers a CSV of the rows on screen.
 
 ---
 
@@ -1948,6 +1990,67 @@ Routing:
 | **Static UI** `static/index.html` | `fetch('/api/predict', {method:'POST'})` | Mounted at `/` by `api.py`; client-side JS renders the prediction, plus the retrain button and a link to `/history`. |
 | **Prediction history** `api.py` | `GET /history` | `src/tracking.build_history_html` — every logged forecast scored against the realised close; cross-links `/paper-trading`. |
 | **Forward paper-trading** `api.py` | `GET /paper-trading` (HTML), `GET /api/paper-trading` (JSON) | `src/paper_trading` — simulated cost-net ledger + scorecard (cum. net pips/%, win rate, Sharpe-like, max drawdown). Simulated only, no orders. |
+
+#### 5.4.1 The app shell: one look and one navigation for every page
+
+This comes from openspec change `app-shell-and-gold-history`, capability `app-shell`.
+
+Every page route in `src/app_shell.PAGE_PATHS` carries the same shell:
+- a fixed top bar that marks the current page with `aria-current="page"`;
+- a "More" menu for H1 direction and Kronos volatility. The retired
+  `/kronos-direction` is never listed;
+- one BG/EN switch, remembered as `prophet.lang`. The home page's older
+  `eurusd.home.lang` is honoured once;
+- one System/Light/Dark switch, remembered as `prophet.theme` and applied before
+  first paint.
+
+The routes are `/`, `/gold`, `/advanced`, `/history`, `/paper-trading`, `/forecasts`,
+`/h1-direction`, `/kronos-volatility` and `/kronos-direction`.
+
+**How the shell reaches pages that may not change.** Several pages come from sources
+that must not change:
+- `/history` and `/paper-trading` are rendered by the byte-pinned `src/tracking.py` and
+  `src/paper_trading.py`;
+- `/advanced` serves `static/index.html`, which stays byte-identical;
+- `api.py` is additive-only.
+
+So the shell is never written into a page's source. `api.py`'s `ShellLayer`, a pure
+ASGI layer, adds it to the HTML as the response leaves. It acts only on `GET` requests
+for the allowlisted paths with a `text/html` response. It inserts exactly two
+segments:
+- `app_shell.head_snippet()` before `</head>`: the theme boot,
+  `/ui/shell/shell.css` and `/ui/shell/shell.js`. Both URLs carry `?v=` set from the
+  files' size and mtime, so a browser never keeps a stale shell after an update;
+- `app_shell.render_nav(path)` after `<body…>`.
+
+A bare fragment with neither tag, such as `/h1-direction`, gets both at its start. The
+layer recomputes `Content-Length`. If injecting fails, it sends the original body.
+
+Every other response passes through byte for byte, including JSON on a page path and
+all of `/api/*` and `/ui/*`. `app_shell.strip` is the exact inverse of the injection,
+which is how `tests/test_home_overview.py` and `tests/test_app_shell.py` prove that
+`/advanced` differs from `index.html` by the shell and nothing else.
+
+**Why pinned pages cannot break.** `static/shell/shell.css` has three parts:
+- one token set, light and dark. Dark applies under `prefers-color-scheme` unless
+  `data-theme="light"`, and under `data-theme="dark"`;
+- the bar's styles;
+- `ps-*` components for the owned pages (`home.html` and `gold.html`).
+
+The base layer that every page gets sits in `@layer ps-base`, and each of its selectors
+is written inside `:where()`. A cascade layer loses to any unlayered rule, whatever its
+specificity, so a pinned page's own styles always win. The page gains readable defaults
+and keeps its layout.
+
+The bar is `position: fixed` inside an in-flow spacer. It spans the window whatever a
+page's `<body>` margin is, without the scrollbar overflow that `100vw` causes on
+Windows.
+
+Neither asset loads anything from outside the app, so it works offline on loopback.
+
+**Known leftover.** `_H1_NAV`, the old footer of cross-links on `/history` and
+`/paper-trading`, still renders, because removing it would delete lines in `api.py`.
+A later change that lifts the additive-only rule can drop it.
 
 ### 5.5 Containerization note
 

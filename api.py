@@ -61,6 +61,65 @@ if os.path.exists(static_dir):
     app.mount("/ui", StaticFiles(directory=static_dir), name="static")
 
 
+class ShellLayer:
+    """
+    Adds the app shell (src/app_shell.py: one navigation bar, one look, one
+    language and theme choice) to every page route's HTML as it leaves.
+
+    Pages rendered by byte-pinned modules (src/tracking.py, src/paper_trading.py)
+    and the byte-identical research console (static/index.html) get the shell
+    this way without a line of their source changing (openspec change
+    app-shell-and-gold-history). A pure ASGI layer, so it never touches the
+    streaming or error handling of any other route: it acts only on GET requests
+    for the paths in app_shell.PAGE_PATHS whose response is text/html, and passes
+    every other response through untouched. If injecting fails, the original
+    body is sent.
+    """
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        from src import app_shell
+        if (scope.get("type") != "http" or scope.get("method") != "GET"
+                or scope.get("path") not in app_shell.PAGE_PATHS):
+            await self.inner(scope, receive, send)
+            return
+
+        held = {"start": None, "html": False, "chunks": []}
+
+        async def capture(message):
+            if message["type"] == "http.response.start":
+                ctype = dict(message.get("headers", [])).get(b"content-type", b"")
+                held["html"] = ctype.startswith(b"text/html")
+                if not held["html"]:
+                    await send(message)
+                else:
+                    held["start"] = message
+                return
+            if message["type"] != "http.response.body" or not held["html"]:
+                await send(message)
+                return
+            held["chunks"].append(message.get("body", b""))
+            if message.get("more_body", False):
+                return
+            body = b"".join(held["chunks"])
+            try:
+                body = app_shell.inject(body.decode("utf-8"), scope["path"]).encode("utf-8")
+            except Exception:  # noqa: BLE001 -- a shell failure must never cost the page
+                pass
+            start = held["start"]
+            headers = [(k, v) for k, v in start.get("headers", []) if k.lower() != b"content-length"]
+            headers.append((b"content-length", str(len(body)).encode("ascii")))
+            await send({**start, "headers": headers})
+            await send({"type": "http.response.body", "body": body, "more_body": False})
+
+        await self.inner(scope, receive, capture)
+
+
+app.add_middleware(ShellLayer)
+
+
 @app.get("/")
 def read_root():
     """Serve the zero-input dashboard (static/index.html) at the API root,
@@ -619,6 +678,30 @@ def gold_summary_endpoint():
         return build()
     except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
         raise HTTPException(status_code=500, detail=f"gold view unavailable: {type(e).__name__}: {e}")
+
+
+@app.get("/api/gold/history")
+def gold_history_endpoint(source: str = "live", cadence: str = "H1", cell: str | None = None,
+                          start: str | None = None, end: str | None = None, layout: str = "long",
+                          offset: int = 0, limit: int = 200):
+    """
+    Every gold forecast next to what gold actually did (openspec change
+    app-shell-and-gold-history, spec gold-forecasting/gold-history).
+
+    source=live pairs each logged forecast with its own settlement; validation
+    and test are the study's saved predictions, labelled as past research.
+    READ-ONLY like /api/gold: src.gold.history reads recorded CSVs, runs no
+    model and writes nothing. Summaries are descriptive, never a verdict.
+    Gross of cost. A bad parameter answers 400 with the allowed values.
+    """
+    try:
+        from src.gold.history import query
+        return query(source=source, cadence=cadence, cell=cell, start=start, end=end,
+                     layout=layout, offset=offset, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"gold history unavailable: {type(e).__name__}: {e}")
 
 
 @app.get("/gold")

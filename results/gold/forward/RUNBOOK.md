@@ -59,6 +59,19 @@ Install refuses until `results/gold/artifact_manifest.csv` exists.
 | `gaps.csv` | missed as-of bar and why |
 | `failures.csv` | failed cell or pass and the error |
 
+## Reading the history
+
+The *History* tab on `/gold` reads these files without changing them, through
+`GET /api/gold/history?source=live`. It pairs each prediction with its own settlement
+by `key`, and lists every `gaps.csv` row as a missed bar. The `validation` and `test`
+sources show the study's saved predictions, labelled as past research. The test block
+is shown for reference and is never used to choose a model.
+
+Its hit rates and errors are **descriptive, not a verdict**. Forward verdicts come only
+from `python -m src.gold.forward_logger --report`, after the forward pre-registration
+below. A run of missed bars usually means the PC was asleep or MT5 was closed during
+those hours: the logger records what it could not forecast instead of back-filling it.
+
 ## Phases
 
 Every row is stamped `dry_run` until `results/gold/forward/PRE_REGISTRATION.md` is
