@@ -198,12 +198,13 @@ def forecast_cadence(cad, df, cfg, models, digests, ph, now_iso):
     return preds, gaps, fails, f'forecast {len(preds)} cell(s), {len(gaps)} gap(s)'
 
 
-def settle(cfg, frames, now_iso):
-    """Settle every unsettled prediction whose next bar now exists."""
-    done = {r['key'] for r in read_rows(out_path(cfg, 'settlements'))}
+def settle(cfg, frames, now_iso, preds_name='predictions', setts_name='settlements'):
+    """Settle every unsettled prediction whose next bar now exists. The round-two
+    shadow log (predictions_v2 / settlements_v2) is settled by the same rule."""
+    done = {r['key'] for r in read_rows(out_path(cfg, setts_name))}
     out = []
     cache = {}
-    for r in read_rows(out_path(cfg, 'predictions')):
+    for r in read_rows(out_path(cfg, preds_name)):
         if r['key'] in done:
             continue
         cad = r['cadence']
@@ -225,7 +226,7 @@ def settle(cfg, frames, now_iso):
 def run_once(cfg=None, frames=None, loader=load_cell, ph=None) -> dict:
     cfg = cfg or load_config()
     now_iso = _now()
-    status = {}
+    status, new_preds = {}, []
     with RunLock(os.path.join(repo_path(cfg['paths']['artifacts']), 'forward.lock')):
         live = {'D1': True, 'H1': True}
         if frames is None:
@@ -263,14 +264,169 @@ def run_once(cfg=None, frames=None, loader=load_cell, ph=None) -> dict:
             if msg == 'nothing new':
                 fails = []                       # a failing cell is reported once per bar, not once per pass
             append_rows(out_path(cfg, 'predictions'), preds, PRED_FIELDS)
+            new_preds += preds
             append_rows(out_path(cfg, 'gaps'), gaps, GAP_FIELDS)
             append_rows(out_path(cfg, 'failures'), fails + pfails, FAIL_FIELDS)
             status[cad] = msg
+            status['forecasts'] = status.get('forecasts', 0) + len(preds)
+            status['gaps'] = status.get('gaps', 0) + len(gaps)
         settled = settle(cfg, frames, now_iso)
         append_rows(out_path(cfg, 'settlements'), settled, SETTLE_FIELDS)
         status['settled'] = len(settled)
+        status['ranges'] = log_ranges(cfg, now_iso, new_preds)
+        status['alerts'] = log_alerts(cfg, now_iso, new_preds)
+        status['shadow'] = log_shadow(cfg, frames, live, ph, now_iso)
         status['phase'] = ph
+        status['mt5'] = live['H1'] or live['D1']
+        status['newest_h1'] = str(frames['H1'].index[-1]) if len(frames['H1']) else ''
     return status
+
+
+def log_ranges(cfg, now_iso, new_preds, cfg2=None) -> str:
+    """Round-two price ranges (change gold-forecasting-v2, spec gold-forecasting/price-ranges),
+    written to their own files so round one's schema never changes: a range row
+    for each LSTM forecast made in THIS pass -- never for an older forecast, whose
+    outcome may already exist -- and a settlement for every range whose forecast
+    has settled. A failure here is recorded and never touches the
+    round-one rows of this pass."""
+    try:
+        from . import prereg2 as P2
+        from . import ranges as R
+        cfg2 = cfg2 or P2.load_config_v2()
+        preds = read_rows(out_path(cfg, 'predictions'))
+        setts = {r['key']: r for r in read_rows(out_path(cfg, 'settlements'))}
+        have = {(r['key'], str(r['level'])) for r in read_rows(out_path(cfg, 'ranges'))}
+        rows = [r for r in R.forecast_rows(cfg, cfg2, new_preds, preds, setts, now_iso)
+                if (r['key'], str(r['level'])) not in have]
+        append_rows(out_path(cfg, 'ranges'), rows, R.RANGE_FIELDS)
+        done = {(r['key'], str(r['level'])) for r in read_rows(out_path(cfg, 'range_settlements'))}
+        settled = R.settle_rows(read_rows(out_path(cfg, 'ranges')), done, setts, now_iso)
+        append_rows(out_path(cfg, 'range_settlements'), settled, R.RANGE_SETTLE_FIELDS)
+        return f'{len(rows)} range(s), {len(settled)} settled'
+    except Exception as e:  # noqa: BLE001 -- ranges must never cost the round-one pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'ranges', 'cadence': '*', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
+V2_PRED_FIELDS = PRED_FIELDS + ['version', 'shadow']
+
+
+def log_shadow(cfg, frames, live, ph, now_iso, cfg2=None, loader=None) -> str:
+    """Forecast with the active shadow version (change gold-forecasting-v2, spec
+    gold-forecasting/model-versions) beside the registered models, into
+    predictions_v2.csv with its own digest and shadow=1, then settle that log.
+    Shadow rows never enter predictions.csv, so no registered forward verdict
+    can count them. Only live MT5 data is forecast, as for the registered cells."""
+    try:
+        from . import prereg2 as P2
+        from . import versions as V
+        cfg2 = cfg2 or P2.load_config_v2()
+        vid = V.active(cfg2)
+        if vid is None:
+            return 'no shadow version'
+        vcfg = V.version_cfg(cfg, cfg2, vid)
+        manifest = read_manifest(vcfg)
+        have = {r['key'] for r in read_rows(out_path(cfg, 'predictions_v2'))}
+        loader = loader or load_cell
+        rows = []
+        for cad, cells in FORWARD_CELLS.items():
+            if not live.get(cad, False) or not len(frames[cad]):
+                continue
+            df = frames[cad]
+            newest = df.index[-1]
+            todo = [c for c in cells if f'{c}|{cad}|{newest}|{vid}' not in have]
+            if not todo:
+                continue
+            inp = C.build_inputs(df, cad)
+            close = float(df['close'].iloc[-1])
+            for cell in todo:
+                digest = verify_cell(cell, manifest)
+                out = loader(cell, vcfg).predict(inp)
+                row = {k: (float(v[-1]) if np.isfinite(v[-1]) else '') for k, v in out.items()}
+                ret = row.get('ret_pct', '')
+                rows.append({'key': f'{cell}|{cad}|{newest}|{vid}', 'cell': cell, 'cadence': cad,
+                             'as_of_bar': str(newest), 'as_of_close': close, 'p_up': row.get('p_up', ''),
+                             'ret_pct': ret, 'vol_pct': row.get('vol_pct', ''),
+                             'implied_price': G.implied_price(close, ret) if ret != '' else '',
+                             'model_digest': digest, 'phase': ph, 'logged_at': now_iso,
+                             'version': vid, 'shadow': 1})
+        append_rows(out_path(cfg, 'predictions_v2'), rows, V2_PRED_FIELDS)
+        settled = settle(cfg, frames, now_iso, 'predictions_v2', 'settlements_v2')
+        append_rows(out_path(cfg, 'settlements_v2'), settled, SETTLE_FIELDS)
+        return f'{vid}: {len(rows)} forecast(s), {len(settled)} settled'
+    except Exception as e:  # noqa: BLE001 -- the shadow must never cost the registered pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'shadow', 'cadence': '*', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
+def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None) -> str:
+    """Large-move alerts (change gold-forecasting-v2, spec gold-forecasting/move-alerts):
+    one row and one notification per new h1_lstm forecast at or above the
+    calibrated threshold, then the realised move of every alert that settled. A
+    failed notification is reported in the returned status (it lands in the
+    health row) and never stops the row being written."""
+    try:
+        from . import alerts as A
+        alert_cfg = alert_cfg if alert_cfg is not None else A.settings()
+        notifier = notifier or A.notify
+        existing = read_rows(out_path(cfg, 'alerts'))
+        rows = A.check(new_preds, {r['key'] for r in existing}, alert_cfg, now_iso)
+        notes = []
+        for r in rows:
+            ok, err = notifier(r['vol_pct'])
+            r['notified'] = 'yes' if ok else 'failed'
+            if not ok:
+                notes.append(f'notification failed: {err}')
+        append_rows(out_path(cfg, 'alerts'), rows, A.ALERT_FIELDS)
+        setts = {r['key']: r for r in read_rows(out_path(cfg, 'settlements'))}
+        done = {r['key'] for r in read_rows(out_path(cfg, 'alert_settlements'))}
+        settled = A.settle(read_rows(out_path(cfg, 'alerts')), done, setts, now_iso)
+        append_rows(out_path(cfg, 'alert_settlements'), settled, A.ALERT_SETTLE_FIELDS)
+        if alert_cfg.get('threshold_vol_pct') is None:
+            return 'not calibrated'
+        return '; '.join([f'{len(rows)} alert(s), {len(settled)} settled'] + notes)
+    except Exception as e:  # noqa: BLE001 -- alerts must never cost the round-one pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'alerts', 'cadence': 'H1', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
+def run_with_health(cfg=None, runner=None) -> dict:
+    """One pass, always followed by one health row (spec gold-forecasting/logger-health):
+    a pass that finds the lock taken, the clock wrong, MT5 closed or a crash is still
+    recorded, so a stall is visible instead of silent."""
+    from . import health as HL
+    cfg = cfg or load_config()
+    runner = runner or (lambda: run_once(cfg))
+    started = _now()
+    row = {'started_at': started}
+    try:
+        st = runner()
+    except Locked as e:
+        row.update(outcome='locked', mt5='', note=str(e)[:200], ended_at=_now())
+        HL.record(row, cfg)
+        return {'status': str(e)}
+    except Exception as e:
+        row.update(outcome='error', mt5='', note=f'{type(e).__name__}: {e}'[:200], ended_at=_now())
+        HL.record(row, cfg)
+        raise
+    if st.get('status') == 'clock mismatch':
+        outcome = 'clock mismatch'
+    elif not st.get('mt5', True):
+        outcome = 'no live data'
+    else:
+        outcome = 'ok'
+    row.update(outcome=outcome, mt5='yes' if st.get('mt5') else 'no', newest_h1=st.get('newest_h1', ''),
+               forecasts=st.get('forecasts', 0), settled=st.get('settled', 0), gaps=st.get('gaps', 0),
+               note=(f"D1: {st.get('D1', '')}; H1: {st.get('H1', '')}; ranges: {st.get('ranges', '')}; "
+                     f"alerts: {st.get('alerts', '')}; shadow: {st.get('shadow', '')}")[:300], ended_at=_now())
+    HL.record(row, cfg)
+    return st
 
 
 def main(argv=None):
@@ -280,10 +436,7 @@ def main(argv=None):
     if args.report:
         from .forward_report import main as report_main
         return report_main()
-    try:
-        print(json.dumps(run_once()))
-    except Locked as e:
-        print(json.dumps({'status': str(e)}))
+    print(json.dumps(run_with_health()))
 
 
 if __name__ == '__main__':

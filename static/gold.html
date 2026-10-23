@@ -68,6 +68,11 @@
 td.mdl{font-weight:700}
 .empty{padding:22px;text-align:center;color:var(--ps-mut)}
 [hidden]{display:none !important}
+.range{border-top:1px solid var(--ps-line);padding-top:8px;display:flex;flex-direction:column;gap:3px}
+.range-row{display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.range-row b{font-variant-numeric:tabular-nums}
+.ps-notice.bigmove{background:var(--ps-gold-bg);color:var(--ps-gold);border-color:var(--ps-gold);margin-bottom:10px}
+.ps-notice.stall{background:var(--ps-dn-bg);color:var(--ps-dn);border-color:var(--ps-dn);margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -79,11 +84,14 @@ td.mdl{font-weight:700}
     </div>
     <span class="ps-pill gold" data-i18n="gross">Брутно, без разходи</span>
   </div>
+  <div class="ps-notice stall" id="stall" role="alert" hidden></div>
+  <div class="ps-notice bigmove" id="bigmove" role="status" hidden></div>
   <div class="ps-notice" data-i18n="notice">Изследване — без доказано предимство. Брутно, без разходи; не е търговски сигнал.</div>
 
   <div class="ps-tabs" role="tablist">
     <button class="ps-tab" role="tab" id="tab-now" aria-controls="panel-now" aria-selected="true" data-tab="now" data-i18n="tab_now">Сега</button>
     <button class="ps-tab" role="tab" id="tab-history" aria-controls="panel-history" aria-selected="false" data-tab="history" data-i18n="tab_history">История</button>
+    <button class="ps-tab" role="tab" id="tab-board" aria-controls="panel-board" aria-selected="false" data-tab="board" data-i18n="tab_board">Класиране</button>
   </div>
 
   <section id="panel-now" role="tabpanel" aria-labelledby="tab-now">
@@ -134,6 +142,20 @@ td.mdl{font-weight:700}
       <span><button type="button" class="ps-btn" id="prev" data-i18n="prev">← По-нови</button>
             <button type="button" class="ps-btn" id="next" data-i18n="next">По-стари →</button></span>
     </div>
+  </section>
+
+  <section id="panel-board" role="tabpanel" aria-labelledby="tab-board" hidden>
+    <div class="ps-toolbar">
+      <div class="ps-seg" role="group" id="lb-sort" aria-label="Sort">
+        <button type="button" data-sort="n" aria-pressed="true" data-i18n="lb_sort_n">Брой</button>
+        <button type="button" data-sort="hit_rate" aria-pressed="false" data-i18n="lb_sort_hit">Посока</button>
+        <button type="button" data-sort="vol_error_gain" aria-pressed="false" data-i18n="lb_sort_vol">Движение</button>
+        <button type="button" data-sort="coverage80" aria-pressed="false" data-i18n="lb_sort_cov">Диапазон</button>
+      </div>
+    </div>
+    <div class="ps-notice" style="margin-bottom:14px" data-i18n="lb_note">Живи резултати по модел и версия. Описателно — не е присъда.</div>
+    <div class="ps-table-wrap"><table class="ps-table" id="lb-table"></table></div>
+    <div class="ps-card" id="lb-alerts" style="margin-top:14px"></div>
   </section>
 
   <p class="ps-foot" data-i18n="footer">Данните идват само от записаните файлове. Страницата не пуска модел и не записва нищо.</p>
@@ -214,6 +236,38 @@ const I18N = {
              en: 'The logger is in its dry run: these rows are not formally scored yet.'},
   no_rows: {bg: 'Няма редове за този избор.', en: 'No rows for this choice.'},
   err: {bg: 'Историята не можа да се зареди:', en: 'The history could not be loaded:'},
+  range_title: {bg: 'Вероятен диапазон', en: 'Likely range'},
+  range80: {bg: '80 % вероятност', en: '80 % likely'},
+  range95: {bg: '95 % вероятност', en: '95 % likely'},
+  range_note_h1: {bg: 'Къде вероятно ще затвори златото следващия час.', en: 'Where gold is likely to close next hour.'},
+  range_note_d1: {bg: 'Къде вероятно ще затвори златото следващия ден.', en: 'Where gold is likely to close next day.'},
+  h_range: {bg: 'Диапазон 80 %', en: '80 % range'},
+  in_range: {bg: '✓ вътре', en: '✓ inside'}, out_range: {bg: '✗ извън', en: '✗ outside'},
+  bigmove: {bg: 'Очаква се голямо движение на златото през следващия час:', en: 'A large gold move is expected in the next hour:'},
+  bigmove_dir: {bg: 'Посоката е неизвестна.', en: 'Direction unknown.'},
+  bigmove_until: {bg: 'до', en: 'until'},
+  tab_board: {bg: 'Класиране', en: 'Leaderboard'},
+  lb_sort_n: {bg: 'Брой', en: 'Count'}, lb_sort_hit: {bg: 'Посока', en: 'Direction'},
+  lb_sort_vol: {bg: 'Движение', en: 'Move'}, lb_sort_cov: {bg: 'Диапазон', en: 'Range'},
+  lb_note: {bg: 'Живи резултати по модел и версия. Описателно — не е присъда.',
+            en: 'Live results by model and version. Descriptive — not a verdict.'},
+  lb_model: {bg: 'Модел', en: 'Model'}, lb_version: {bg: 'Версия', en: 'Version'},
+  lb_n: {bg: 'Проверени', en: 'Settled'}, lb_hit: {bg: 'Познати посоки (95 %)', en: 'Direction right (95 %)'},
+  lb_vol: {bg: 'Грешка в движението спрямо GARCH', en: 'Move error vs GARCH'},
+  lb_cov: {bg: 'Попадения в диапазона 80 / 95 %', en: 'Range coverage 80 / 95 %'},
+  lb_phase: {bg: 'Етап', en: 'Phase'},
+  lb_registered: {bg: 'регистриран', en: 'registered'}, lb_shadow: {bg: 'в сянка', en: 'shadow'},
+  lb_empty: {bg: 'Все още няма проверени живи прогнози.', en: 'No settled live forecasts yet.'},
+  lb_alerts: {bg: 'Сигнали за голямо движение', en: 'Large-move alerts'},
+  lb_alerts_text: {bg: 'Средно реално движение в часовете със сигнал срещу останалите:',
+                   en: 'Average actual move in alerted hours against the rest:'},
+  lb_alerts_none: {bg: 'Още няма проверени часове със сигнал.', en: 'No settled alerted hours yet.'},
+  stall: {bg: 'Логерът за злато е спрял.', en: 'The gold logger has stalled.'},
+  stall_since: {bg: 'Последен успешен запис преди', en: 'Last successful pass'},
+  stall_hours_ago: {bg: 'ч', en: 'h ago'},
+  stall_never: {bg: 'Няма успешен запис.', en: 'No successful pass yet.'},
+  stall_missed: {bg: 'Пропуснати пазарни часове за последните 24 ч:', en: 'Market hours missed in the last 24 h:'},
+  stall_fix: {bg: 'Проверете дали компютърът е буден и MT5 е отворен.', en: 'Check that the PC is awake and MT5 is open.'},
 };
 const NAMES = {h1_gbm: 'GBM', h1_lstm: 'LSTM ×5', h1_garch_hod: 'GARCH (час)', d1_gbm: 'GBM',
                d1_lstm: 'LSTM ×5', d1_garch: 'GARCH(1,1)'};
@@ -263,6 +317,14 @@ function tile(c) {
     if (cur.implied_price !== null) body += `<dt>${esc(t('price'))}</dt><dd>${money(cur.implied_price)}</dd>`;
     if (cur.vol_pct !== null) body += `<dt>${esc(t('move'))}</dt><dd>±${cur.vol_pct.toFixed(3)} %</dd>`;
     body += '</dl>';
+    if (cur.ranges && (cur.ranges['0.8'] || cur.ranges['0.95'])) {
+      body += `<div class="range"><div class="ps-kicker">${esc(t('range_title'))}</div>`;
+      for (const [lv, key] of [['0.8', 'range80'], ['0.95', 'range95']]) {
+        const r = cur.ranges[lv];
+        if (r) body += `<div class="range-row"><span>${esc(t(key))}</span><b>${money(r.lo)} – ${money(r.hi)}</b></div>`;
+      }
+      body += `<div class="meta">${esc(t(c.cadence === 'D1' ? 'range_note_d1' : 'range_note_h1'))}</div></div>`;
+    }
     body += `<div class="meta">${esc(t('asof'))} ${esc(when(cur.as_of_bar, c.cadence))} · ${esc(t(cur.phase || ''))}</div>`;
   } else if (c.last_window_end) {
     body = `<div class="meta">${esc(t('ended'))} ${esc(c.last_window_end)}.</div>`;
@@ -273,8 +335,17 @@ function tile(c) {
     <span class="label">${esc(t(c.label))}</span></div>${body}<div class="chips">${chips}</div></div>`;
 }
 
+function renderAlert() {
+  const el = $('bigmove');
+  const a = payload && payload.alert;
+  if (!a) { el.hidden = true; return; }
+  el.textContent = `${t('bigmove')} ±${num(a.vol_pct, 2)} % (${t('bigmove_until')} ${when(a.window_end, 'H1')}). ${t('bigmove_dir')}`;
+  el.hidden = false;
+}
+
 function render() {
   const el = document.getElementById('body');
+  renderAlert();
   if (!payload) return;
   if (payload.state === 'no_forecast' && !payload.cells.some((c) => Object.keys(c.verdicts || {}).length)) {
     el.innerHTML = `<p class="meta">${esc(t('none'))}</p>`;
@@ -366,6 +437,12 @@ function fc(r) {
   if (!r.predicted_dir) return '—';
   return `${r.predicted_dir === 'up' ? '▲' : '▼'} ${esc(t(r.predicted_dir))}, ${Math.round(r.probability * 100)} %`;
 }
+function rangeCell(r) {
+  if (r.range80_lo === null || r.range80_lo === undefined) return '—';
+  const flag = r.range80_inside === true ? `<span class="ps-hit">${esc(t('in_range'))}</span>`
+    : r.range80_inside === false ? `<span class="ps-miss">${esc(t('out_range'))}</span>` : '';
+  return `${money(r.range80_lo)} – ${money(r.range80_hi)} ${flag}`;
+}
 function moveCell(x) { return x === null || x === undefined ? '—' : '±' + num(x, 3) + ' %'; }
 function diff(r) {
   if (r.price_error === null || r.price_error === undefined) return '—';
@@ -414,6 +491,7 @@ function renderTable() {
   const cad = hist.cadence;
   if (!hist.rows.length) { el.innerHTML = `<tbody><tr><td class="empty">${esc(t('no_rows'))}</td></tr></tbody>`; return; }
   let head, body;
+  const showRange = hist.source === 'live' && hist.rows.some((r) => r.range80_lo !== null && r.range80_lo !== undefined);
   if (hist.layout === 'wide') {
     const cells = CELLS[cad];
     head = `<tr><th>${esc(t('h_bar'))}</th><th>${esc(t('h_close'))}</th><th>${esc(t('h_aprice'))}</th><th>${esc(t('h_amove'))}</th>` +
@@ -435,11 +513,11 @@ function renderTable() {
   } else {
     head = `<tr><th>${esc(t('h_bar'))}</th><th class="l">${esc(t('h_model'))}</th><th>${esc(t('h_close'))}</th>
       <th>${esc(t('h_fc'))}</th><th>${esc(t('h_fprice'))}</th><th>${esc(t('h_aprice'))}</th><th>${esc(t('h_diff'))}</th>
-      <th>${esc(t('h_dir'))}</th><th>${esc(t('h_emove'))}</th><th>${esc(t('h_amove'))}</th><th>${esc(t('h_status'))}</th></tr>`;
+      <th>${esc(t('h_dir'))}</th><th>${esc(t('h_emove'))}</th><th>${esc(t('h_amove'))}</th>${showRange ? `<th>${esc(t('h_range'))}</th>` : ''}<th>${esc(t('h_status'))}</th></tr>`;
     body = hist.rows.map((r) => `<tr><td>${esc(when(r.as_of_bar, cad))}</td><td class="l mdl">${esc(NAMES[r.cell] || r.cell)}</td>
       <td>${money(r.as_of_close)}</td><td>${fc(r)}</td><td>${money(r.implied_price)}</td><td>${money(r.actual_price)}</td>
       <td>${diff(r)}</td><td>${hitText(r.hit)}</td><td>${moveCell(r.vol_pct)}</td><td>${moveCell(r.realised_vol_pct)}</td>
-      <td>${statusPill(r.status)}</td></tr>`).join('');
+      ${showRange ? `<td>${rangeCell(r)}</td>` : ''}<td>${statusPill(r.status)}</td></tr>`).join('');
   }
   el.innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
 }
@@ -659,12 +737,14 @@ function showTab(name) {
   document.querySelectorAll('.ps-tab').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
   $('panel-now').hidden = name !== 'now';
   $('panel-history').hidden = name !== 'history';
+  $('panel-board').hidden = name !== 'board';
+  if (name === 'board' && !boardLoaded) { boardLoaded = true; loadBoard(); }
   if (name === 'history' && !loaded) { loaded = true; loadHistory(true); }
   if (name === 'history' && hist) renderChart();
 }
 
 document.querySelectorAll('.ps-tab').forEach((b) => b.addEventListener('click', () => {
-  history.replaceState(null, '', b.dataset.tab === 'history' ? '#history' : '#');
+  history.replaceState(null, '', b.dataset.tab === 'now' ? '#' : '#' + b.dataset.tab);
   showTab(b.dataset.tab);
 }));
 document.querySelector('.ps-tabs').addEventListener('keydown', (e) => {
@@ -691,9 +771,75 @@ let resizeTimer = null;
 window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!$('panel-history').hidden) renderChart(); }, 120); });
 document.addEventListener('ps:lang', (e) => { lang = e.detail; applyStatic(); render(); renderHistory(); });
 
+// ── Leaderboard (spec gold-forecasting/leaderboard) ─────────────────────────
+let board = null, boardSort = 'n', boardLoaded = false;
+async function loadBoard() {
+  try {
+    const r = await fetch('/api/gold/leaderboard?sort=' + encodeURIComponent(boardSort), {cache: 'no-store'});
+    board = r.ok ? await r.json() : null;
+  } catch (e) { board = null; }
+  renderBoard();
+}
+function versionCell(r) {
+  const tag = r.shadow ? `<span class="ps-pill gold">${esc(t('lb_shadow'))}</span>`
+    : `<span class="ps-pill acc">${esc(t('lb_registered'))}</span>`;
+  return `${tag} <span class="ps-faint">${esc(String(r.model_digest || '').slice(0, 8))}</span>`;
+}
+function renderBoard() {
+  document.querySelectorAll('#lb-sort button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sort === boardSort)));
+  const tbl = $('lb-table'), al = $('lb-alerts');
+  if (!board || !board.rows.length) {
+    tbl.innerHTML = `<tbody><tr><td class="empty">${esc(t('lb_empty'))}</td></tr></tbody>`;
+  } else {
+    const head = `<tr><th class="l">${esc(t('lb_model'))}</th><th class="l">${esc(t('lb_version'))}</th><th>${esc(t('lb_n'))}</th>` +
+      `<th>${esc(t('lb_hit'))}</th><th>${esc(t('lb_vol'))}</th><th>${esc(t('lb_cov'))}</th><th>${esc(t('lb_phase'))}</th></tr>`;
+    const body = board.rows.map((r) => {
+      const first = `<td class="l mdl">${esc(NAMES[r.cell] || r.cell)} · ${esc(r.cadence)}</td><td class="l">${versionCell(r)}</td><td>${num(r.n, 0)}</td>`;
+      if (r.state !== 'ok') {
+        return `<tr>${first}<td colspan="3" class="ps-faint">${esc(t('too_few'))}</td><td>${esc(t(r.phase || ''))}</td></tr>`;
+      }
+      const hit = r.hit_rate === undefined ? '—'
+        : `${num(r.hit_rate * 100, 1)} % <span class="ps-faint">[${num(r.hit_low * 100, 1)}–${num(r.hit_high * 100, 1)}]</span>`;
+      const vol = r.vol_mae_baseline === undefined ? (r.vol_mae === undefined ? '—' : `${num(r.vol_mae, 3)} %`)
+        : `${num(r.vol_mae_shared, 3)} % <span class="ps-faint">vs ${num(r.vol_mae_baseline, 3)} %</span>`;
+      const cov = r.coverage80 === undefined || r.coverage80 === null ? '—'
+        : `${num(r.coverage80 * 100, 1)} / ${num((r.coverage95 || 0) * 100, 1)} % <span class="ps-faint">(${num(r.coverage80_n, 0)})</span>`;
+      return `<tr>${first}<td>${hit}</td><td>${vol}</td><td>${cov}</td><td>${esc(t(r.phase || ''))}</td></tr>`;
+    }).join('');
+    tbl.innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
+  }
+  const a = board && board.alerts;
+  al.innerHTML = `<h3 style="margin:0 0 6px;font-size:15px">${esc(t('lb_alerts'))}</h3>` + (!a || !a.alerted_n
+    ? `<div class="meta">${esc(t('lb_alerts_none'))}</div>`
+    : `<div>${esc(t('lb_alerts_text'))} <b>±${num(a.alerted_mean_move, 3)} %</b> (${num(a.alerted_n, 0)}) vs ` +
+      `<b>±${num(a.other_mean_move, 3)} %</b> (${num(a.other_n, 0)}).</div><div class="meta">${esc(t('descriptive'))}</div>`);
+}
+document.querySelectorAll('#lb-sort button').forEach((b) => b.addEventListener('click', () => { boardSort = b.dataset.sort; loadBoard(); }));
+document.addEventListener('ps:lang', renderBoard);
+
+// ── Logger health (spec gold-forecasting/logger-health) ────────────────────
+let health = null;
+function renderHealth() {
+  const el = $('stall');
+  if (!health || !health.stalled) { el.hidden = true; return; }
+  const since = health.hours_since_success == null ? t('stall_never')
+    : `${t('stall_since')} ${num(health.hours_since_success, 1)} ${t('stall_hours_ago')}.`;
+  el.textContent = `${t('stall')} ${since} ${t('stall_missed')} ${health.missed_24h}. ${t('stall_fix')}`;
+  el.hidden = false;
+}
+async function loadHealth() {
+  try {
+    const r = await fetch('/api/gold/health', {cache: 'no-store'});
+    if (r.ok) health = await r.json();
+  } catch (e) { health = null; }
+  renderHealth();
+}
+document.addEventListener('ps:lang', renderHealth);
+
 applyStatic();
 load();
-showTab(location.hash === '#history' ? 'history' : 'now');
+loadHealth();
+showTab(['#history', '#board'].includes(location.hash) ? location.hash.slice(1) : 'now');
 </script>
 </body>
 </html>

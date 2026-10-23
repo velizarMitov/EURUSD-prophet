@@ -1,0 +1,101 @@
+{
+  "study": {
+    "range": {
+      "cells": {
+        "h1_range": {
+          "cadence": "H1",
+          "model": "h1_lstm",
+          "baseline": "h1_garch_hod"
+        },
+        "d1_range": {
+          "cadence": "D1",
+          "model": "d1_lstm",
+          "baseline": "d1_garch"
+        }
+      },
+      "levels": [
+        0.8,
+        0.95
+      ],
+      "scored_level": 0.8,
+      "gamma": 0.005,
+      "window": {
+        "H1": 500,
+        "D1": 250
+      },
+      "coverage_tolerance": 0.03
+    },
+    "macro": {
+      "fred": {
+        "dfii10": "DFII10",
+        "dtwexbgs": "DTWEXBGS",
+        "vixcls": "VIXCLS"
+      },
+      "mt5": {
+        "silver": [
+          "SILVER",
+          "XAGUSD"
+        ],
+        "brent": [
+          "Brent",
+          "UKOIL",
+          "XBRUSD"
+        ]
+      },
+      "bars": 20000,
+      "zscore_window": 60,
+      "cells": [
+        "d1_lstm_macro:vol",
+        "d1_lstm_macro:ret",
+        "d1_gbm_macro:ret",
+        "d1_range_macro"
+      ]
+    },
+    "direction2": {
+      "selective": {
+        "floor_min": 0.45,
+        "inner_splits": 5
+      },
+      "barrier": {
+        "k_hours": 6,
+        "m": 1.0,
+        "ewma_span": 20
+      },
+      "h4": {
+        "start_hours": [
+          0,
+          4,
+          8,
+          12,
+          16,
+          20
+        ]
+      }
+    }
+  },
+  "paths": {
+    "prereg_md": "results/gold/PRE_REGISTRATION_V2.md",
+    "prereg_json": "results/gold/PRE_REGISTRATION_V2.json",
+    "registries": {
+      "range": "results/gold/gold_range_hypothesis_log.csv",
+      "macro": "results/gold/gold_macro_hypothesis_log.csv",
+      "direction2": "results/gold/gold_direction2_hypothesis_log.csv"
+    },
+    "validation_report": "results/gold/validation_report_v2.md",
+    "macro_cache": "results/gold/macro",
+    "v2_artifacts": "research_models/gold/v2",
+    "v2_manifest": "results/gold/artifact_manifest_v2.csv",
+    "versions": "research_models/gold/versions"
+  },
+  "alerts": {
+    "percentile": 90.0,
+    "threshold_vol_pct": 0.1510700285434723,
+    "n_forecasts": 69793,
+    "calibrated_at": "2026-10-23T07:37:43+00:00",
+    "model_digest": "f65fcbd4230bda5b"
+  },
+  "retrain": {
+    "day_of_month": 1,
+    "time": "02:30"
+  }
+}

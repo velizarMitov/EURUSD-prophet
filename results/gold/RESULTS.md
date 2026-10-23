@@ -90,3 +90,34 @@ What this means:
 - **Descriptive:** DSR over 32 trials is 0.003 for h1_gbm and 0.054 for h1_lstm (a gross
   sign strategy shows nothing). H1 PBO is 0.29. No high-spread-hour concentration flag was
   raised (shares −0.005 and 0.079).
+
+## 2026-10-23 — round two, validation verdicts (`validation[70:80]`, seen in round one; gross of cost)
+
+Openspec change `gold-forecasting-v2`. Registration: `results/gold/PRE_REGISTRATION_V2.md`, committed on its own in
+`417af00` before any round-two score. Run once, 127 s; full table in `results/gold/validation_report_v2.md`. The
+validation block was already seen in round one, so every verdict needs forward confirmation. The test block was not
+touched.
+
+| family (alpha) | cell | n | result | verdict |
+|---|---|---|---|---|
+| range (0.025) | h1_range | 5,936 | Winkler 0.5586 vs GARCH 0.5612, CI [-0.0048, +0.0108]; coverage 80.0 % / 95.0 % (GARCH 86.1 % at 80 %) | DROP |
+| range (0.025) | d1_range | 96 | CI [-0.112, +0.134]; only 96 rows after the 250-row warm-up | DROP |
+| macro (0.0125) | d1_lstm_macro:vol | 346 | MAE 0.3882 % with vs 0.3890 % without, CI [-0.0047, +0.0058] | DROP |
+| macro (0.0125) | d1_range_macro | 96 | CI [-0.135, +0.041] | DROP |
+| macro (0.0125) | d1_lstm_macro:ret | 346 | Clark–West p 0.050 | DROP |
+| macro (0.0125) | d1_gbm_macro:ret | 346 | Clark–West p 0.016 | DROP |
+| direction2 (0.025) | h1_selective | 2,769 covered of 6,376 | 50.9 % vs majority 51.0 %, vs coin CI [-0.011, +0.029] | DROP |
+| direction2 (0.025) | h1_barrier | 4,280 | 51.0 %, vs coin CI [-0.012, +0.030] | DROP |
+| direction2 | h4_dir, d1_gbm_macro:dir, d1_lstm_macro:dir | 1,219 / 346 / 346 | below 2,640 required | UNDERPOWERED — NO DECISION |
+
+What this says, descriptively:
+
+- **h1 ranges are well calibrated but not sharper than GARCH.** Adaptive calibration hit its coverage targets exactly
+  where GARCH's static range over-covered (86.1 % at the 80 % level). A better-calibrated range is useful to read, but
+  the registered test asked whether it is sharper, and it is not, at this alpha. The live ranges keep running and
+  their coverage is tracked forward.
+- **The macro drivers add nothing measurable to the daily models** over 346 validation days.
+- **Abstaining and barrier labels do not create a direction edge** on H1. h1_selective covered 43.4 % of validation
+  hours against its training-fold floor of 45 %. Its threshold was fixed on training folds, so a lower validation
+  coverage is a distribution shift, not a tuning choice.
+- Round one's registries, registration, config and trial log are byte-identical after the run.

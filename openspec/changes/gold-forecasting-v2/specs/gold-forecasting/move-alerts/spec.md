@@ -10,7 +10,7 @@ one forecast with proven skill, without ever suggesting a direction or a trade.
 ### Requirement: The threshold is fixed from training data
 An alert SHALL fire when the frozen h1_lstm expected move for the next hour is at or
 above a threshold. The threshold SHALL be fixed as a percentile of that model's
-training-block forecasts, recorded in `gold_config.json` with its percentile and value,
+training-block forecasts, recorded in `src/gold/gold_config_v2.json` with its percentile and value,
 and SHALL never be tuned on live outcomes.
 
 #### Scenario: Configured percentile

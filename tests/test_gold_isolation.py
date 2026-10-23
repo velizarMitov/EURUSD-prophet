@@ -49,7 +49,8 @@ def test_api_imports_only_the_read_only_summary():
     hits = [m.group(0).strip() for m in re.finditer(r'^\s*(from\s+src\.gold[\w.]*\s+import[^\n]*|import\s+src\.gold[\w.]*)',
                                                    _read('api.py'), re.M)]
     for h in hits:
-        assert h.startswith(('from src.gold.summary import', 'from src.gold.history import')), \
+        assert h.startswith(('from src.gold.summary import', 'from src.gold.history import',
+                             'from src.gold.health import', 'from src.gold.leaderboard import')), \
             f'api.py imports more than the read-only views: {h}'
 
 

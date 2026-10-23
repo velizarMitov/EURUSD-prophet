@@ -27,6 +27,12 @@ See proposal.md for why. The constraints that shape the approach:
   about 2,640 rows at α = 0.025. Changing that edge would loosen the bar, which memory
   `feedback-infeasible-must-not-loosen-the-bar` forbids.
 
+- **Round one pins its config.** `PRE_REGISTRATION.json` records the SHA-256 of
+  `src/gold/gold_config.json`, and `study.check_stage_allowed` refuses every stage,
+  `final` included, if that file changes. All round-two settings therefore live in
+  `src/gold/gold_config_v2.json`, pinned by `PRE_REGISTRATION_V2.json`, and
+  `gold_config.json` is never edited. This was found while applying, on 2026-10-23.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -175,7 +181,7 @@ import, and the gold isolation test allowlist gains `src.gold.leaderboard` and
 - **Threshold.** `python -m src.gold.alerts --calibrate` computes the 90th percentile of
   the frozen h1_lstm's forecasts on its own fit rows (in-sample by design: it defines
   "unusually large for this model"). It writes the percentile and value to
-  `gold_config.json` under `alerts`. The logger refuses to alert without them.
+  `src/gold/gold_config_v2.json` under `alerts`. The logger refuses to alert without them.
 - **Notification.**
   - The logger runs a PowerShell one-liner through `subprocess` with a 10 s timeout,
     using `Windows.UI.Notifications.ToastNotificationManager`, with the BG text first

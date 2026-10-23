@@ -1,0 +1,4 @@
+started_at,ended_at,outcome,mt5,newest_h1,forecasts,settled,gaps,note
+2026-10-23T08:03:05+00:00,2026-10-23T08:04:28+00:00,ok,yes,2026-10-23 09:00:00+00:00,3,3,0,"D1: nothing new; H1: forecast 3 cell(s), 0 gap(s); ranges: 2 range(s), 0 settled; alerts: 1 alert(s), 0 settled; shadow: no shadow version"
+2026-10-23T08:13:46+00:00,2026-10-23T08:13:46+00:00,ok,,,,,,"refit: version 20261023, 22 artifacts"
+2026-10-23T08:25:54+00:00,2026-10-23T08:27:28+00:00,ok,yes,2026-10-23 09:00:00+00:00,0,0,0,"D1: nothing new; H1: nothing new; ranges: 0 range(s), 0 settled; alerts: 0 alert(s), 0 settled; shadow: 20261023: 6 forecast(s), 0 settled"

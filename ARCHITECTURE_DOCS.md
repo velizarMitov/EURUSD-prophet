@@ -1247,6 +1247,7 @@ result.
 | `forward_logger` / `forward_report` | hourly forward arbiter |
 | `summary` | `/api/gold` |
 | `history` | `/api/gold/history` (read-only, descriptive) |
+| `health` | `/api/gold/health`. Every logger pass appends to `results/gold/forward/health.csv`; there is a stall rule (change `gold-forecasting-v2`) |
 
 **Data facts (2026-10-21):**
 
@@ -1297,6 +1298,48 @@ without retraining. Corrections go to `results/gold/RESULTS.md`.
 - checks the clock over the whole history at 0.95 and over the last 26 weeks at 0.6;
 - stamps every row `dry_run` until `results/gold/forward/PRE_REGISTRATION.md` is
   committed.
+
+**Round two.** This comes from change `gold-forecasting-v2`, with the registration
+`results/gold/PRE_REGISTRATION_V2.md` (commit `417af00`) and the report
+`results/gold/validation_report_v2.md`.
+
+- **Families.** There are three new ones, with their own registries and alphas:
+  - range: `h1_range` and `d1_range`, α 0.025. These are adaptive-conformal price
+    ranges built from the frozen LSTM volatility forecast (`src/gold/ranges.py`).
+  - macro: 4 cells, α 0.0125. They use DFII10, DTWEXBGS and VIXCLS, lagged one US
+    business day, plus MT5 SILVER and Brent (`src/gold/macro.py`). The pinned feature
+    file is `results/gold/macro/pinned_features_d1.csv`.
+  - direction2, α 0.025 by round one's unchanged power rule: `h1_selective` (abstains),
+    `h1_barrier` (triple-barrier labels), and `h4_dir` and the daily macro direction
+    cells, which are UNDERPOWERED (`src/gold/direction2.py`).
+- **Settings.** All round-two settings live in `src/gold/gold_config_v2.json`, because
+  round one pins `gold_config.json`.
+- **The run.** `src/gold/study2.py` ran once, on validation, which was already seen in
+  round one. **Every cell was DROP or UNDERPOWERED.** The h1 ranges were exactly
+  calibrated (80.0 % / 95.0 %) but not significantly sharper than GARCH.
+- **Still running live** (results/gold/forward/RUNBOOK.md):
+  - the ranges, in `ranges.csv` and `range_settlements.csv`;
+  - the large-move alerts (`src/gold/alerts.py`), in `alerts.csv` and
+    `alert_settlements.csv`, plus a Windows toast and a `/gold` banner, with the
+    threshold at the 90th percentile of the frozen h1_lstm = ±0.151 %;
+  - the monthly shadow refit (`src/gold/versions.py`, task `EURUSDProphet-GoldRetrain`),
+    in `predictions_v2.csv` and `settlements_v2.csv`, promoted only by
+    `python -m src.gold.versions promote`;
+  - the read-only leaderboard (`src/gold/leaderboard.py`, `GET /api/gold/leaderboard`,
+    and the *Leaderboard* tab).
+
+**Health.** This comes from change `gold-forecasting-v2`. The task is installed with:
+- WakeToRun and StartWhenAvailable;
+- permission to start and keep running on battery;
+- MultipleInstances IgnoreNew and a 20-minute limit.
+
+The installer also prints the power plan's wake-timer state.
+`forward_logger.run_with_health` appends one `health.csv` row per pass, whatever the
+outcome. `src/gold/health.status` counts the market hours of the last 24 that have no H1
+forecast, on the New York session with its daily break. `/gold` warns while the market
+is open if either:
+- the last success is more than 2 hours old; or
+- more than 3 hours were missed.
 
 **View.** `/gold` (`static/gold.html`, BG/EN) and `GET /api/gold`, linked from
 `/advanced`. They show the newest logged forecast per cell: direction, expected return,

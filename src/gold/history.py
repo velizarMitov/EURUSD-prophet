@@ -63,7 +63,8 @@ STUDY_DIGEST = {'validation': 'study validation fit [0:70 %]', 'test': 'study te
 COLUMNS = ['source', 'cell', 'cadence', 'model_digest', 'as_of_bar', 'as_of_close',
            'p_up', 'predicted_dir', 'probability', 'ret_pct', 'implied_price', 'vol_pct',
            'exit_bar', 'actual_price', 'realised_dir', 'realised_ret_pct', 'realised_vol_pct',
-           'status', 'hit', 'price_error', 'move_error', 'phase', 'logged_at', 'reason']
+           'status', 'hit', 'price_error', 'move_error', 'phase', 'logged_at', 'reason',
+           'range80_lo', 'range80_hi', 'range80_inside', 'range95_lo', 'range95_hi', 'range95_inside']
 
 _CACHE: dict = {}
 
@@ -161,13 +162,33 @@ def _live_frame(cfg):
                                    'as_of_bar': g['as_of_bar'], 'status': 'missed',
                                    'reason': g.get('reason', ''), 'logged_at': g.get('logged_at', '')})
         rows = pd.concat([rows, pd.DataFrame(missed)], ignore_index=True) if len(rows) else pd.DataFrame(missed)
-    return rows.reindex(columns=COLUMNS)
+    rows = rows.reindex(columns=COLUMNS)
+    return _attach_ranges(rows, fwd)
+
+
+def _attach_ranges(rows: pd.DataFrame, fwd: str) -> pd.DataFrame:
+    """The round-two live ranges (change gold-forecasting-v2) for each forecast
+    key, with whether the exit close fell inside; blank where none was logged."""
+    rng = _read(os.path.join(fwd, 'ranges.csv'))
+    if rng.empty or rows.empty:
+        return rows
+    keys = rows['cell'] + '|' + rows['cadence'] + '|' + rows['as_of_bar']
+    rs = _read(os.path.join(fwd, 'range_settlements.csv'))
+    inside = {} if rs.empty else {(k, str(lv)): v for k, lv, v in zip(rs['key'], rs['level'], rs['inside'])}
+    for level, tag in (('0.8', 'range80'), ('0.95', 'range95')):
+        part = rng[rng['level'].astype(str) == level].drop_duplicates('key').set_index('key')
+        rows[f'{tag}_lo'] = _num(part['lo'].reindex(keys)).to_numpy()
+        rows[f'{tag}_hi'] = _num(part['hi'].reindex(keys)).to_numpy()
+        flag = [inside.get((k, level)) for k in keys]
+        rows[f'{tag}_inside'] = [None if f is None else str(f).lower() == 'true' for f in flag]
+    return rows
 
 
 def live(cfg=None) -> pd.DataFrame:
     cfg = cfg or load_config()
     fwd = repo_path(cfg['paths']['forward'])
-    paths = [os.path.join(fwd, f) for f in ('predictions.csv', 'settlements.csv', 'gaps.csv')]
+    paths = [os.path.join(fwd, f) for f in ('predictions.csv', 'settlements.csv', 'gaps.csv',
+                                            'ranges.csv', 'range_settlements.csv')]
     return _cached(('live', fwd), paths, lambda: _live_frame(cfg))
 
 

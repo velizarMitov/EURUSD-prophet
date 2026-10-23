@@ -30,4 +30,25 @@ $cmd = "`"$wscript`" //B //Nologo `"$runner`" src.gold.forward_logger $name"
 if ($cmd.Length -gt 261) { throw "task command is $($cmd.Length) characters; schtasks allows 261" }
 & schtasks.exe /Create /F /TN $name /TR $cmd /SC HOURLY /MO 1 /ST 00:03 | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "schtasks failed for $name (exit $LASTEXITCODE)" }
-Write-Output "installed $name"
+
+# Reliability (openspec change gold-forecasting-v2, spec gold-forecasting/logger-health).
+# Installed with defaults the task neither woke the PC nor ran on battery, and the
+# night of 2026-10-21/22 lost 8 hours. Wake to run, catch up once after a missed
+# start (the logger records missed bars as gaps, it never back-fills), run and keep
+# running on battery, never two at once, and give up after 20 minutes.
+$settings = New-ScheduledTaskSettingsSet -WakeToRun -StartWhenAvailable `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
+Set-ScheduledTask -TaskName $name -Settings $settings | Out-Null
+Write-Output "installed $name (wake to run, catch up after a missed start, runs on battery)"
+
+# A task can only wake the PC if the active power plan allows wake timers. Report
+# the setting; never change the owner's power plan.
+$q = (& powercfg.exe /q SCHEME_CURRENT SUB_SLEEP RTCWAKE) -join "`n"
+$states = @{ '0x00000000' = 'disabled'; '0x00000001' = 'enabled'; '0x00000002' = 'important wake timers only' }
+$ac = if ($q -match 'Current AC Power Setting Index:\s*(0x[0-9a-fA-F]+)') { $states[$Matches[1].ToLower()] } else { 'unknown' }
+$dc = if ($q -match 'Current DC Power Setting Index:\s*(0x[0-9a-fA-F]+)') { $states[$Matches[1].ToLower()] } else { 'unknown' }
+Write-Output "wake timers in the active power plan: plugged in = $ac, on battery = $dc"
+if ($ac -ne 'enabled') {
+    Write-Output "  -> the PC will not wake for the logger while plugged in. Enable 'Allow wake timers' in Power Options > Sleep."
+}

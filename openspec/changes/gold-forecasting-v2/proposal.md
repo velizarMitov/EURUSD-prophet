@@ -118,7 +118,8 @@ The first round's hourly logger also showed operational gaps:
 - **Extended:**
   - `forward_logger`: range columns, alerts, health, and shadow versions;
   - `study`: second-round stages;
-  - `gold_config.json`;
+  - a new `src/gold/gold_config_v2.json` (`gold_config.json` stays byte-identical:
+    round one pins its digest);
   - `static/gold.html`: the Leaderboard tab, range display and warning banners;
   - `scripts/gold/`: task settings and the retrain task.
 - **New files:**

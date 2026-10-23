@@ -704,6 +704,37 @@ def gold_history_endpoint(source: str = "live", cadence: str = "H1", cell: str |
         raise HTTPException(status_code=500, detail=f"gold history unavailable: {type(e).__name__}: {e}")
 
 
+@app.get("/api/gold/health")
+def gold_health_endpoint():
+    """
+    Is the hourly gold logger alive (openspec change gold-forecasting-v2, spec
+    gold-forecasting/logger-health): last pass, last success, missed market hours
+    in the last 24, and `stalled`, which /gold turns into a warning. READ-ONLY.
+    """
+    try:
+        from src.gold.health import status
+        return status()
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"gold health unavailable: {type(e).__name__}: {e}")
+
+
+@app.get("/api/gold/leaderboard")
+def gold_leaderboard_endpoint(sort: str = "n"):
+    """
+    Every gold model and version ranked on LIVE settled rows (openspec change
+    gold-forecasting-v2, spec gold-forecasting/leaderboard): hit rate against a
+    coin, move error against its GARCH baseline, range coverage, shadow flag.
+    Descriptive, never a verdict. READ-ONLY. Gross of cost.
+    """
+    try:
+        from src.gold.leaderboard import build
+        return build(sort=sort)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"gold leaderboard unavailable: {type(e).__name__}: {e}")
+
+
 @app.get("/gold")
 def gold_page():
     """Static page rendering /api/gold, bilingual like the home page."""

@@ -83,6 +83,17 @@ def forward_verdicts(cfg) -> dict:
         return {r['cell']: r for r in json.load(fh).get('verdicts', [])}
 
 
+def range_map(cfg) -> dict:
+    """{prediction key: {level: {lo, hi}}} from the round-two ranges log
+    (change gold-forecasting-v2); empty before the first range is logged."""
+    out = {}
+    for r in _rows(os.path.join(repo_path(cfg['paths']['forward']), 'ranges.csv')):
+        lo, hi = _num(r.get('lo')), _num(r.get('hi'))
+        if lo is not None and hi is not None:
+            out.setdefault(r['key'], {})[str(r['level'])] = {'lo': lo, 'hi': hi}
+    return out
+
+
 def current_forecast(row: dict, cadence: str, now: pd.Timestamp) -> tuple[dict | None, str | None]:
     as_of = pd.Timestamp(row['as_of_bar'])
     end = target_window_end(as_of, cadence)
@@ -111,6 +122,7 @@ def build(cfg: dict | None = None, now=None) -> dict:
     for r in preds:                                  # file order is logging order
         newest[r['cell']] = r
     recorded, fwd = verdicts(cfg), forward_verdicts(cfg)
+    ranges = range_map(cfg)
     cells = []
     for cell, cad in CELLS:
         fv = fwd.get(cell, {})
@@ -120,6 +132,8 @@ def build(cfg: dict | None = None, now=None) -> dict:
                  'current': None, 'last_window_end': None}
         if cell in newest:
             entry['current'], entry['last_window_end'] = current_forecast(newest[cell], cad, now)
+            if entry['current'] is not None:
+                entry['current']['ranges'] = ranges.get(newest[cell]['key'])
         cells.append(entry)
     test = None
     tp = repo_path(cfg['paths']['test_report'])
@@ -127,7 +141,12 @@ def build(cfg: dict | None = None, now=None) -> dict:
         with open(tp, encoding='utf-8') as fh:
             test = [{k: r.get(k) for k in ('family', 'cell', 'verdict', 'n_rows')}
                     for r in json.load(fh).get('results', [])]
-    return {'generated_at': str(now), 'clock': f'{LABEL_TZ} bar labels',
+    try:
+        from .alerts import open_alert
+        alert = open_alert(cfg, now)
+    except Exception:  # noqa: BLE001 -- the alert banner is optional
+        alert = None
+    return {'generated_at': str(now), 'clock': f'{LABEL_TZ} bar labels', 'alert': alert,
             'state': 'forecasts' if preds else 'no_forecast',
             'cost_basis': 'gross of cost — no spread, pips or P&L',
             'label': NO_EDGE, 'cells': cells, 'test_report': test}

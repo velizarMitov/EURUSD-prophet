@@ -135,6 +135,14 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
      go to `results/gold/RESULTS.md`.
    - Gold features must stay scale-free: the price tripled, so a raw level puts the test
      block outside the training range.
+   - **Round two** (change `gold-forecasting-v2`) adds the range, macro and direction2
+     families, registered in `PRE_REGISTRATION_V2` and scored once: all DROP or
+     UNDERPOWERED. Its settings live in `src/gold/gold_config_v2.json`.
+     - **Never edit `gold_config.json`.** Round one pins its digest, and every study stage
+       refuses if it changes.
+     - **Refits are shadow versions** (`src/gold/versions.py`). Only
+       `python -m src.gold.versions promote` changes the registered models, and it
+       refuses while a forward window is open.
 
 ## Notebook specifics
 
