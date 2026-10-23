@@ -125,6 +125,21 @@ All round-two output goes to its own files. Round one's `predictions.csv`,
 - **Testing and recalibrating.** `python -m src.gold.alerts --test-notification` raises
   a sample toast. Recalibrate only after a promotion, with `--calibrate`.
 
+**Round-two models, for observation only.**
+- **Why they run.** All four round-two cells were DROP on validation. The owner chose
+  on 2026-10-23 to watch them live anyway: `d1_lstm_macro`, `d1_gbm_macro`,
+  `h1_selective` and `h1_barrier`. Their registered verdicts stand. Live data can
+  confirm a cleared cell, never revive a dropped one.
+- **Fitting.** Each was fitted once on every pinned row
+  (`python -m src.gold.models_v2 --fit`) into `research_models/gold/v2/`, with digests in
+  `results/gold/artifact_manifest_v2.csv`.
+- **Logging.** They are logged into `predictions_v2.csv` with version `v2` and
+  `shadow=0`.
+- **`h1_selective`.** It leaves `p_up` blank when it abstains.
+- **`h1_barrier`.** It settles on its barrier label after 6 hours, not on the next bar.
+- **Macro inputs.** The macro cells fetch FRED and MT5 inputs on every new daily bar.
+  If a series is missing, only they skip, and `failures.csv` names the series.
+
 **Monthly refit and shadow version.**
 - **The refit.** `EURUSDProphet-GoldRetrain` runs on the 1st at 02:30
   (`install_retrain_task.ps1` / `uninstall_retrain_task.ps1`). It fits every forward

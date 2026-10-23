@@ -141,7 +141,7 @@ Each group ends with no new failures against that baseline.
   - the stage refuses a second run;
   - the round-one registries are unchanged;
   - the report lists every registered cell.
-- [ ] 6.2 Fit the admitted round-two models for live use with the `final` path into
+- [x] 6.2 Fit the admitted round-two models for live use with the `final` path into
   `research_models/gold/v2/`, with manifest digests. The logger forecasts them into
   `predictions_v2.csv` and `settlements_v2.csv` in the dry-run phase. Verify that a
   fixture pass writes v2 rows with digests and settles them, and that round-one files
@@ -213,3 +213,21 @@ Each group ends with no new failures against that baseline.
 - [x] 10.3 Restart the server through the launcher and reinstall both tasks. Confirm
   that the next hourly pass writes health, range and v2 rows, then report to the owner
   with links and the round-two validation verdicts.
+
+## Notes from applying (2026-10-23)
+
+- **Round-two settings moved to their own file.** They live in `src/gold/gold_config_v2.json`: round one pins the
+  digest of `gold_config.json`, and every study stage, `final` included, refuses if that file changes. The
+  registration pins only the `study` section, so writing the alert threshold later does not invalidate it.
+- **Round-two tests use synthetic data only.** An early version of the range tests scored the real validation file
+  before the registration existed. Nothing was printed, and the tests were rewritten on synthetic data.
+- **Live ranges are written only for forecasts made in the same pass.** A first draft would have back-filled ranges
+  for old forecasts whose outcomes already existed. It was caught before it ran.
+- **An empty direction2 family keeps the registered bar.** The power table now reports the requirement at the
+  registered family size (α 0.01, n 3,244) rather than the looser single-cell one.
+- **The round-two validation result:** every cell DROP or UNDERPOWERED (RESULTS.md, 2026-10-23).
+- **Task 6.2: the owner chose option 2.** The four dropped cells run live for observation only (`src/gold/models_v2.py`,
+  `predictions_v2.csv`, version `v2`). Barrier rows settle on their label after 6 hours. Macro gaps skip only the
+  macro cells.
+- **Owner action.** The power plan allows only "important" wake timers when plugged in and none on battery.
+  `install_task.ps1` reports this but never changes it.

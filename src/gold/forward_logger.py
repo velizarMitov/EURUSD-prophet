@@ -198,14 +198,14 @@ def forecast_cadence(cad, df, cfg, models, digests, ph, now_iso):
     return preds, gaps, fails, f'forecast {len(preds)} cell(s), {len(gaps)} gap(s)'
 
 
-def settle(cfg, frames, now_iso, preds_name='predictions', setts_name='settlements'):
+def settle(cfg, frames, now_iso, preds_name='predictions', setts_name='settlements', skip=None):
     """Settle every unsettled prediction whose next bar now exists. The round-two
     shadow log (predictions_v2 / settlements_v2) is settled by the same rule."""
     done = {r['key'] for r in read_rows(out_path(cfg, setts_name))}
     out = []
     cache = {}
     for r in read_rows(out_path(cfg, preds_name)):
-        if r['key'] in done:
+        if r['key'] in done or (skip is not None and skip(r)):
             continue
         cad = r['cadence']
         df = frames[cad]
@@ -276,6 +276,8 @@ def run_once(cfg=None, frames=None, loader=load_cell, ph=None) -> dict:
         status['ranges'] = log_ranges(cfg, now_iso, new_preds)
         status['alerts'] = log_alerts(cfg, now_iso, new_preds)
         status['shadow'] = log_shadow(cfg, frames, live, ph, now_iso)
+        status['v2'] = log_v2(cfg, frames, live, ph, now_iso)
+        status['v2_settled'] = settle_v2(cfg, frames, now_iso)
         status['phase'] = ph
         status['mt5'] = live['H1'] or live['D1']
         status['newest_h1'] = str(frames['H1'].index[-1]) if len(frames['H1']) else ''
@@ -353,14 +355,115 @@ def log_shadow(cfg, frames, live, ph, now_iso, cfg2=None, loader=None) -> str:
                              'model_digest': digest, 'phase': ph, 'logged_at': now_iso,
                              'version': vid, 'shadow': 1})
         append_rows(out_path(cfg, 'predictions_v2'), rows, V2_PRED_FIELDS)
-        settled = settle(cfg, frames, now_iso, 'predictions_v2', 'settlements_v2')
-        append_rows(out_path(cfg, 'settlements_v2'), settled, SETTLE_FIELDS)
-        return f'{vid}: {len(rows)} forecast(s), {len(settled)} settled'
+        return f'{vid}: {len(rows)} forecast(s)'
     except Exception as e:  # noqa: BLE001 -- the shadow must never cost the registered pass
         append_rows(out_path(cfg, 'failures'), [{'cell': 'shadow', 'cadence': '*', 'as_of_bar': '',
                                                  'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
                     FAIL_FIELDS)
         return f'failed: {type(e).__name__}'
+
+
+def log_v2(cfg, frames, live, ph, now_iso, cfg2=None, loader=None, macro_fn=None) -> str:
+    """The round-two cells, logged for OBSERVATION only (change gold-forecasting-v2,
+    task 6.2: all were DROP on validation; the owner chose to watch them live).
+    Same rules as the registered cells: newest closed bar, live MT5 data only,
+    digest-verified artifacts, one row per bar, into predictions_v2.csv with
+    version 'v2' and shadow 0. A macro source that cannot supply a series skips
+    only the macro cells and is recorded in failures.csv with the series named."""
+    try:
+        from . import models_v2 as M2
+        from . import prereg2 as P2
+        cfg2 = cfg2 or P2.load_config_v2()
+        man = M2.manifest(cfg2)
+        if not man:
+            return 'no v2 models'
+        loader = loader or (lambda cell: M2.load(cell, cfg, cfg2))
+        have = {r['key'] for r in read_rows(out_path(cfg, 'predictions_v2'))}
+        rows, notes = [], []
+        for cad in ('D1', 'H1'):
+            if not live.get(cad, False) or not len(frames[cad]):
+                continue
+            df = frames[cad]
+            newest = df.index[-1]
+            todo = [c for c, spec in M2.CELLS.items() if spec['cadence'] == cad
+                    and c in man and f'{c}|{cad}|{newest}|{M2.VERSION}' not in have]
+            if not todo:
+                continue
+            inp = C.build_inputs(df, cad)
+            inp_macro = None
+            if cad == 'D1' and any(M2.CELLS[c]['macro'] for c in todo):
+                from . import macro as M
+                try:
+                    mac = (macro_fn or (lambda d: M2.live_macro(cfg2, d)))(df)
+                    inp_macro = M.with_macro(inp, mac)[1]
+                except M.MacroUnavailable as e:
+                    append_rows(out_path(cfg, 'failures'), [{'cell': 'macro', 'cadence': 'D1', 'as_of_bar': str(newest),
+                                                             'error': f'gap: {e}', 'logged_at': now_iso}], FAIL_FIELDS)
+                    notes.append(f'macro gap: {e}')
+                    todo = [c for c in todo if not M2.CELLS[c]['macro']]
+            close = float(df['close'].iloc[-1])
+            for cell in todo:
+                try:
+                    digest = verify_cell(cell, man)
+                    model, meta = loader(cell)
+                    row = M2.forecast(cell, model, meta, inp_macro if M2.CELLS[cell]['macro'] else inp)
+                    ret = row.get('ret_pct', '')
+                    rows.append({'key': f'{cell}|{cad}|{newest}|{M2.VERSION}', 'cell': cell, 'cadence': cad,
+                                 'as_of_bar': str(newest), 'as_of_close': close, 'p_up': row.get('p_up', ''),
+                                 'ret_pct': ret, 'vol_pct': row.get('vol_pct', ''),
+                                 'implied_price': G.implied_price(close, ret) if ret != '' else '',
+                                 'model_digest': digest, 'phase': ph, 'logged_at': now_iso,
+                                 'version': M2.VERSION, 'shadow': 0})
+                except Exception as e:  # noqa: BLE001 -- one cell's failure is recorded, the rest go on
+                    append_rows(out_path(cfg, 'failures'), [{'cell': cell, 'cadence': cad, 'as_of_bar': str(newest),
+                                                             'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                                FAIL_FIELDS)
+        append_rows(out_path(cfg, 'predictions_v2'), rows, V2_PRED_FIELDS)
+        return '; '.join([f'{len(rows)} forecast(s)'] + notes)
+    except Exception as e:  # noqa: BLE001 -- round two must never cost the registered pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'v2', 'cadence': '*', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
+def settle_v2(cfg, frames, now_iso, cfg2=None) -> int:
+    """Settle predictions_v2.csv: barrier rows by their barrier label once the
+    k-hour window has closed (a time-out settles as not eligible); every other
+    row (round-two and shadow) by the next bar, as the registered cells."""
+    try:
+        from . import direction2 as D2
+        from . import prereg2 as P2
+        cfg2 = cfg2 or P2.load_config_v2()
+        is_barrier = lambda r: r['cell'] == 'h1_barrier'
+        out = settle(cfg, frames, now_iso, 'predictions_v2', 'settlements_v2', skip=is_barrier)
+        done = {r['key'] for r in read_rows(out_path(cfg, 'settlements_v2'))}
+        pending = [r for r in read_rows(out_path(cfg, 'predictions_v2')) if is_barrier(r) and r['key'] not in done]
+        if pending and 'H1' in frames and len(frames['H1']):
+            df = frames['H1']
+            b = cfg2['study']['direction2']['barrier']
+            k = b['k_hours']
+            lab = D2.barrier_labels(df, k, b['m'], b['ewma_span'])
+            pos = {t: i for i, t in enumerate(df.index)}
+            tg = G.build_targets(df['close'])
+            for r in pending:
+                i = pos.get(pd.Timestamp(r['as_of_bar']))
+                if i is None or i + k >= len(df):
+                    continue
+                label = lab['label'].iloc[i]
+                out.append({'key': r['key'], 'cell': r['cell'], 'cadence': 'H1', 'as_of_bar': r['as_of_bar'],
+                            'exit_bar': str(df.index[i + k]), 'exit_close': float(df['close'].iloc[i + k]),
+                            'realised_dir': '' if np.isnan(label) else int(label),
+                            'realised_ret_pct': float(tg['ret'][i]), 'realised_vol_pct': float(tg['vol'][i]),
+                            'eligible': bool(lab['eligible'].iloc[i] and not np.isnan(label)),
+                            'phase': r['phase'], 'settled_at': now_iso})
+        append_rows(out_path(cfg, 'settlements_v2'), out, SETTLE_FIELDS)
+        return len(out)
+    except Exception as e:  # noqa: BLE001
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'v2-settle', 'cadence': '*', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return 0
 
 
 def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None) -> str:
@@ -424,7 +527,7 @@ def run_with_health(cfg=None, runner=None) -> dict:
     row.update(outcome=outcome, mt5='yes' if st.get('mt5') else 'no', newest_h1=st.get('newest_h1', ''),
                forecasts=st.get('forecasts', 0), settled=st.get('settled', 0), gaps=st.get('gaps', 0),
                note=(f"D1: {st.get('D1', '')}; H1: {st.get('H1', '')}; ranges: {st.get('ranges', '')}; "
-                     f"alerts: {st.get('alerts', '')}; shadow: {st.get('shadow', '')}")[:300], ended_at=_now())
+                     f"alerts: {st.get('alerts', '')}; shadow: {st.get('shadow', '')}; v2: {st.get('v2', '')}")[:300], ended_at=_now())
     HL.record(row, cfg)
     return st
 

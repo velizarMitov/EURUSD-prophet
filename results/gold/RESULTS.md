@@ -121,3 +121,7 @@ What this says, descriptively:
   hours against its training-fold floor of 45 %. Its threshold was fixed on training folds, so a lower validation
   coverage is a distribution shift, not a tuning choice.
 - Round one's registries, registration, config and trial log are byte-identical after the run.
+
+Owner decision, 2026-10-23: the four dropped round-two cells (`d1_lstm_macro`, `d1_gbm_macro`, `h1_selective`,
+`h1_barrier`) are logged live for observation on the leaderboard (`predictions_v2.csv`, version `v2`). This changes
+none of the verdicts above: forward data can confirm a cleared cell, never revive a dropped one.

@@ -127,8 +127,10 @@ def test_the_logger_forecasts_the_shadow_into_its_own_file(env, tmp_path):
     assert status.startswith('20261201: 6 forecast') and len(rows) == 6
     assert all(r['shadow'] == '1' and r['version'] == '20261201' for r in rows)
     assert not os.path.exists(FL.out_path(cfg, 'predictions'))       # nothing reaches the registered log
-    FL.log_shadow(cfg, _frames(h1, 401), {'H1': True, 'D1': True}, 'dry_run', 'later', cfg2,
+    later = _frames(h1, 401)
+    FL.log_shadow(cfg, later, {'H1': True, 'D1': True}, 'dry_run', 'later', cfg2,
                   loader=lambda cell, vcfg: FakeModel())
+    assert FL.settle_v2(cfg, later, 'later', cfg2) > 0           # one settle step for the whole v2 log
     assert FL.read_rows(FL.out_path(cfg, 'settlements_v2'))
 
 
