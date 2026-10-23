@@ -1,0 +1,205 @@
+{
+ "change": "gold-forecasting-v2",
+ "round": 2,
+ "created_at": "2026-10-23T07:33:27+00:00",
+ "disclosure": "The validation block [70:80] was scored in round one (2026-10-21) and its results were seen before this registration. The test block [80:100] was spent in round one and is never scored in round two. Every round-two verdict needs forward confirmation.",
+ "verdict_label": "needs forward confirmation",
+ "round_one": {
+  "registration_sha256": "7da929a2424201d6e6fd9df7886701e5f11cd7511617f3bd0a2deb383bde075d",
+  "registration_commit": "ab420d3412250834feb50d87c6547b4d1ec98f76",
+  "config_sha256": "3d3dd5bf03e05d4098850b38268307a9195eff17dbc2e02a19d27a46cd1c31bc",
+  "families_untouched": [
+   "direction",
+   "return",
+   "volatility"
+  ]
+ },
+ "config_v2_study_sha256": "27e03c50945fc1130d7997b6de4c29b041153036b7e2ca8bb6b1ca2bfee3e9c0",
+ "data": {
+  "D1": {
+   "timeframe": "D1",
+   "cache": "results/gold/gold_d1.csv",
+   "source": "cache",
+   "symbol": "GOLD",
+   "rows": 3466,
+   "first": "2013-08-08 00:00:00+00:00",
+   "last": "2026-10-20 00:00:00+00:00",
+   "last_bar": "2026-10-20 00:00:00+00:00",
+   "sha256": "8c050f2ccd8fae741fd156ab930a0fa784773e97618d77bd2b33f475d5092430"
+  },
+  "H1": {
+   "timeframe": "H1",
+   "cache": "results/gold/gold_h1.csv",
+   "source": "cache",
+   "symbol": "GOLD",
+   "rows": 70015,
+   "first": "2015-01-02 04:00:00+00:00",
+   "last": "2026-10-21 15:00:00+00:00",
+   "last_bar": "2026-10-21 15:00:00+00:00",
+   "sha256": "01db01fc7593fdb6bfa16f6c1f5c11319878986897b509c2b7c8f508c9f5ae53"
+  }
+ },
+ "arbiter": "validation[70:80] of the round-one pinned rows; test[80:100] spent and never used",
+ "cost_basis": "GROSS of cost -- statistical skill only, never a trading result",
+ "families": {
+  "range": {
+   "cells": [
+    "h1_range",
+    "d1_range"
+   ],
+   "alpha": 0.025,
+   "definition": "sigma = E|r| x sqrt(pi/2) from the frozen LSTM volatility forecast; range = as-of close x exp(+/- q_t x sigma / 100); q_t by adaptive conformal inference (gamma 0.005, window {'H1': 500, 'D1': 250}) from past settled |z| only; the first `window` validation rows warm up and are not scored",
+   "baseline": "GARCH sigma (h1_garch_hod / d1_garch) with the static normal quantile, same rows",
+   "verdict": "CLEARED iff the two-sided (1 - alpha) paired moving-block bootstrap CI of mean(winkler_baseline - winkler_model) at the 80% level has lower bound > 0 AND the 80% coverage is within +/-3% of target; else DROP. The 95 % level and a static-Gaussian LSTM range are reported, not decisive."
+  },
+  "macro": {
+   "cells": [
+    "d1_lstm_macro:vol",
+    "d1_lstm_macro:ret",
+    "d1_gbm_macro:ret",
+    "d1_range_macro"
+   ],
+   "alpha": 0.0125,
+   "inputs": {
+    "fred": {
+     "dfii10": "DFII10",
+     "dtwexbgs": "DTWEXBGS",
+     "vixcls": "VIXCLS"
+    },
+    "mt5": {
+     "silver": [
+      "SILVER",
+      "XAGUSD"
+     ],
+     "brent": [
+      "Brent",
+      "UKOIL",
+      "XBRUSD"
+     ]
+    },
+    "timing": "FRED values dated on or before the previous US business day; MT5 bars labelled on or before the gold D1 bar; forward-fill only"
+   },
+   "pinned": {
+    "features_file": "results/gold/macro/pinned_features_d1.csv",
+    "features_sha256": "c639bd37073e647e3875524177b357ba215ebe6ac5a1621fddbf12bd552c354d",
+    "complete_rows": 2821,
+    "first_complete": "2016-01-26 00:00:00+00:00"
+   },
+   "baseline": "the same model and hyperparameters without the macro block, on identical rows",
+   "verdict": "vol and range: CLEARED iff the paired bootstrap CI of mean(|err_without| - |err_with|) (Winkler for range) has lower bound > 0; return: CLEARED iff the one-sided Clark-West p < alpha against the model without macro; else DROP."
+  },
+  "direction2": {
+   "cells": [
+    "h1_selective",
+    "h1_barrier",
+    "h4_dir",
+    "d1_gbm_macro:dir",
+    "d1_lstm_macro:dir"
+   ],
+   "admitted": [
+    "h1_selective",
+    "h1_barrier"
+   ],
+   "alpha": 0.025,
+   "edge": 0.03,
+   "power": 0.8,
+   "power_table": [
+    {
+     "cell": "h1_selective",
+     "n_validation": 2869,
+     "n_required": 2640.3,
+     "status": "ADMITTED"
+    },
+    {
+     "cell": "h1_barrier",
+     "n_validation": 4487,
+     "n_required": 2640.3,
+     "status": "ADMITTED"
+    },
+    {
+     "cell": "h4_dir",
+     "n_validation": 1219,
+     "n_required": 2640.3,
+     "status": "UNDERPOWERED \u2014 NO DECISION"
+    },
+    {
+     "cell": "d1_gbm_macro:dir",
+     "n_validation": 346,
+     "n_required": 2640.3,
+     "status": "UNDERPOWERED \u2014 NO DECISION"
+    },
+    {
+     "cell": "d1_lstm_macro:dir",
+     "n_validation": 346,
+     "n_required": 2640.3,
+     "status": "UNDERPOWERED \u2014 NO DECISION"
+    }
+   ],
+   "fixed_point": [
+    {
+     "family_size": 5,
+     "alpha": 0.01,
+     "n_required": 3244.1578260206056,
+     "admitted": 2
+    },
+    {
+     "family_size": 2,
+     "alpha": 0.025,
+     "n_required": 2640.2879847768977,
+     "admitted": 2
+    }
+   ],
+   "counts": {
+    "n_h1_dir": 6376,
+    "n_barrier": 4487,
+    "barrier_timeouts": 685,
+    "n_h4": 1219,
+    "n_d1_dir": 346
+   },
+   "selective_floor": 0.45,
+   "selective": {
+    "tau": "largest |p - 0.5| keeping inner-fold training coverage >= the floor",
+    "inner_splits": 5
+   },
+   "barrier": {
+    "k_hours": 6,
+    "m": 1.0,
+    "ewma_span": 20
+   },
+   "h4": {
+    "start_hours": [
+     0,
+     4,
+     8,
+     12,
+     16,
+     20
+    ]
+   },
+   "baselines": "training-majority class and a 50 % coin, on the same scored rows",
+   "verdict": "CLEARED iff both paired bootstrap CIs (vs majority, vs coin) have lower bound > 0; abstentions and time-outs are never scored; else DROP."
+  }
+ },
+ "expected_outcomes": {
+  "h1_range": "likely CLEARED: it rides on the h1_lstm volatility edge that cleared validation and test",
+  "d1_range": "uncertain: the d1_lstm volatility edge cleared validation but not the test block",
+  "d1_lstm_macro:vol": "likely DROP: 346 validation days leave little room to show a paired gain",
+  "d1_lstm_macro:ret": "DROP expected: no gold return cell has ever cleared",
+  "d1_gbm_macro:ret": "DROP expected: no gold return cell has ever cleared",
+  "d1_range_macro": "likely DROP, for the same reason as d1_lstm_macro:vol",
+  "h1_selective": "DROP expected: round-one H1 direction sat at a coin; abstaining rarely creates an edge",
+  "h1_barrier": "DROP expected, if admitted",
+  "h4_dir": "UNDERPOWERED expected",
+  "d1_gbm_macro:dir": "UNDERPOWERED expected: 346 validation days",
+  "d1_lstm_macro:dir": "UNDERPOWERED expected: 346 validation days"
+ },
+ "ci_method": {
+  "kind": "paired circular moving-block bootstrap",
+  "block_length": {
+   "D1": 5,
+   "H1": 24
+  },
+  "n_boot": 2000,
+  "seed": 42
+ }
+}
