@@ -73,6 +73,14 @@ td.mdl{font-weight:700}
 .range-row b{font-variant-numeric:tabular-nums}
 .ps-notice.bigmove{background:var(--ps-gold-bg);color:var(--ps-gold);border-color:var(--ps-gold);margin-bottom:10px}
 .ps-notice.stall{background:var(--ps-dn-bg);color:var(--ps-dn);border-color:var(--ps-dn);margin-bottom:10px}
+/* GVZ morning check (change gold-gvz-morning-check): size only, never direction. */
+.gvz{display:flex;flex-direction:column;gap:8px;border-top:3px solid var(--ps-gold);margin-bottom:6px}
+.gvz .src{font-size:12.5px;color:var(--ps-mut);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.gvz .src b{color:var(--ps-ink);font-size:15px}
+.gvz .ps-big{font-variant-numeric:tabular-nums}
+.gvz-stale{font-size:13px;font-weight:650;color:var(--ps-dn);background:var(--ps-dn-bg);border-radius:6px;padding:4px 8px}
+.meter{position:relative;height:8px;border-radius:4px;background:var(--ps-surface-2);border:1px solid var(--ps-line);overflow:hidden}
+.meter i{position:absolute;left:0;top:0;bottom:0;background:var(--ps-gold);opacity:.85}
 </style>
 </head>
 <body>
@@ -95,6 +103,7 @@ td.mdl{font-weight:700}
   </div>
 
   <section id="panel-now" role="tabpanel" aria-labelledby="tab-now">
+    <div id="gvz"></div>
     <div id="body"><p class="meta" data-i18n="loading">Зареждане…</p></div>
   </section>
 
@@ -268,6 +277,18 @@ const I18N = {
   stall_never: {bg: 'Няма успешен запис.', en: 'No successful pass yet.'},
   stall_missed: {bg: 'Пропуснати пазарни часове за последните 24 ч:', en: 'Market hours missed in the last 24 h:'},
   stall_fix: {bg: 'Проверете дали компютърът е буден и MT5 е отворен.', en: 'Check that the PC is awake and MT5 is open.'},
+  gvz_title: {bg: 'Сутрешна проверка · GVZ', en: 'Morning check · GVZ'},
+  gvz_expects: {bg: 'Пазарът на опции очаква движение около', en: 'The options market expects a move of about'},
+  gvz_day: {bg: 'за един цял ден (едно стандартно отклонение)', en: 'over one full day (one standard deviation)'},
+  gvz_at: {bg: 'при цена', en: 'at a price of'},
+  gvz_pctile: {bg: 'Перцентил спрямо историята от', en: 'Percentile against the history since'},
+  gvz_quiet: {bg: 'тихо', en: 'quiet'}, gvz_wild: {bg: 'бурно', en: 'wild'},
+  gvz_model: {bg: 'Модел LSTM, следващ час', en: 'LSTM model, next hour'},
+  gvz_model_none: {bg: 'няма текуща прогноза', en: 'no current forecast'},
+  gvz_note: {bg: 'Посоката е неизвестна. GVZ е 30-дневното очакване на пазара на опции върху GLD, а не прогноза на модел.',
+             en: 'Direction unknown. GVZ is the options market\'s 30-day expectation on GLD, not a model forecast.'},
+  gvz_stale: {bg: 'Стойността е остаряла: последната е от', en: 'This value is stale: the latest is from'},
+  gvz_none: {bg: 'Все още няма записана стойност на GVZ.', en: 'No GVZ value has been stored yet.'},
 };
 const NAMES = {h1_gbm: 'GBM', h1_lstm: 'LSTM ×5', h1_garch_hod: 'GARCH (час)', d1_gbm: 'GBM',
                d1_lstm: 'LSTM ×5', d1_garch: 'GARCH(1,1)'};
@@ -343,9 +364,38 @@ function renderAlert() {
   el.hidden = false;
 }
 
+// GVZ morning check: the market's own number beside the model's; size only.
+const day = (s) => new Date(s + 'T12:00:00').toLocaleDateString(loc(), {weekday: 'short', day: '2-digit', month: '2-digit'});
+function renderGvz() {
+  const el = $('gvz');
+  const g = payload && payload.gvz;
+  if (!g) { el.innerHTML = ''; return; }
+  const head = `<div class="tile-top"><h3>${esc(t('gvz_title'))}</h3>`;
+  if (g.state === 'none') {
+    el.innerHTML = `<div class="ps-card gvz">${head}</div><p class="meta">${esc(t('gvz_none'))}</p></div>`;
+    return;
+  }
+  const usd = g.implied_move_usd === null ? '' :
+    ` <span class="meta">(±${money(g.implied_move_usd)} $ ${esc(t('gvz_at'))} ${money(g.gold_close)})</span>`;
+  const p = g.percentile === null ? null : Math.max(0, Math.min(100, g.percentile));
+  el.innerHTML = `<div class="ps-card gvz">${head}
+      <span class="src">GVZ <b>${num(g.value, 2)}</b> · ${esc(day(g.date))} · ${esc(g.source)}</span></div>
+    ${g.state === 'stale' ? `<div class="gvz-stale">${esc(t('gvz_stale'))} ${esc(day(g.date))}.</div>` : ''}
+    <div>${esc(t('gvz_expects'))}</div>
+    <div><span class="ps-big">±${num(g.implied_move_pct, 2)} %</span>${usd}</div>
+    <div class="meta">${esc(t('gvz_day'))}</div>
+    ${p === null ? '' : `<div class="meter" role="img" aria-label="${esc(t('gvz_pctile'))} ${esc(g.history_start.slice(0, 4))}: ${p}"><i style="width:${p}%"></i></div>
+    <div class="ci-scale"><span>${esc(t('gvz_quiet'))}</span><span>${esc(t('gvz_wild'))}</span></div>
+    <div class="meta">${esc(t('gvz_pctile'))} ${esc(g.history_start.slice(0, 4))}: <b>${p}</b></div>`}
+    <dl class="facts"><dt>${esc(t('gvz_model'))}</dt>
+      <dd>${g.lstm_vol_pct === null || g.lstm_vol_pct === undefined ? esc(t('gvz_model_none')) : '±' + num(g.lstm_vol_pct, 3) + ' %'}</dd></dl>
+    <p class="meta" style="margin:0">${esc(t('gvz_note'))}</p></div>`;
+}
+
 function render() {
   const el = document.getElementById('body');
   renderAlert();
+  renderGvz();
   if (!payload) return;
   if (payload.state === 'no_forecast' && !payload.cells.some((c) => Object.keys(c.verdicts || {}).length)) {
     el.innerHTML = `<p class="meta">${esc(t('none'))}</p>`;

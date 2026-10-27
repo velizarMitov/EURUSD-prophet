@@ -141,3 +141,74 @@ def test_concurrent_pass_is_refused(env):
     with FL.RunLock(lock):
         with pytest.raises(FL.Locked):
             _run(cfg, _frames(h1, 3000))
+
+
+# ── GVZ step (change gold-gvz-morning-check, task 3.1) ──────────────────────
+
+def _gvz_cfg2(tmp_path):
+    from src.gold import prereg2 as P2
+    c = copy.deepcopy(P2.load_config_v2())
+    c['paths']['macro_cache'] = str(tmp_path / 'macro')
+    c['gvz']['log'] = str(tmp_path / 'gvz_log.csv')
+    c['gvz']['settlements'] = str(tmp_path / 'gvz_settlements.csv')
+    return c
+
+
+def _gvz_boom(*a, **k):
+    raise ConnectionError('offline')
+
+
+def test_gvz_fresh_cache_contacts_no_source(env):
+    cfg, tmp, h1 = env
+    c2 = _gvz_cfg2(tmp)
+    os.makedirs(c2['paths']['macro_cache'])
+    pd.DataFrame({'date': ['2026-10-26'], 'gvz': [23.55]}).to_csv(
+        os.path.join(c2['paths']['macro_cache'], c2['gvz']['yahoo_cache']), index=False)
+    calls = []
+
+    def spy(*a, **k):
+        calls.append(a)
+        raise AssertionError('no source may be contacted')
+    tue_1403_sofia = pd.Timestamp('2026-10-27 12:03', tz='UTC')
+    note = FL.log_gvz(cfg, 'now', {'H1': h1}, cfg2=c2, now=tue_1403_sofia, fred_fetch=spy, yahoo_fetch=spy)
+    assert calls == [] and note.startswith('up to date')
+
+
+def _strip(rows, *drop):
+    return [{k: v for k, v in r.items() if k not in drop} for r in rows]
+
+
+def test_gvz_failure_is_recorded_and_leaves_the_pass_unchanged(env):
+    cfg, tmp, h1 = env
+    c2 = _gvz_cfg2(tmp)
+    step = lambda c, now_iso, frames: FL.log_gvz(c, now_iso, frames, cfg2=c2,      # noqa: E731
+                                                 fred_fetch=_gvz_boom, yahoo_fetch=_gvz_boom)
+    plain = copy.deepcopy(cfg)
+    plain['paths']['forward'] = str(tmp / 'forward_plain')
+    plain['paths']['artifacts'] = str(tmp / 'art')
+    for upto in (2000, 2003):
+        st = FL.run_once(cfg, frames=_frames(h1, upto), loader=lambda cell, c: FakeModel(), ph='dry_run', gvz=step)
+        FL.run_once(plain, frames=_frames(h1, upto), loader=lambda cell, c: FakeModel(), ph='dry_run')
+    assert st['gvz'].startswith('failed GvzUnavailable')
+    fails = [r for r in _rows(cfg, 'failures') if r['cell'] == 'gvz']
+    assert fails and 'GVZ' in fails[0]['error']
+    assert _strip(_rows(cfg, 'predictions'), 'logged_at') == _strip(_rows(plain, 'predictions'), 'logged_at')
+    assert _strip(_rows(cfg, 'settlements'), 'settled_at') == _strip(_rows(plain, 'settlements'), 'settled_at')
+    assert len(_rows(cfg, 'settlements')) > 0
+
+
+def test_injected_frames_skip_gvz_unless_a_step_is_passed(env):
+    cfg, _, h1 = env
+    assert 'gvz' not in _run(cfg, _frames(h1, 2000))
+
+
+def test_health_note_keeps_alerts_and_gvz_within_its_limit(env):
+    from src.gold import health as HL
+    cfg, _, _ = env
+    st = {'D1': 'forecast 3 cell(s)', 'H1': 'forecast 3 cell(s)', 'ranges': '2 range(s), 1 settled',
+          'alerts': '0 alert(s), 0 settled', 'gvz': 'fresh 2026-10-26 yfinance, logged, settled 1',
+          'shadow': 's' * 90, 'v2': 'v' * 90, 'mt5': True, 'newest_h1': 'x'}
+    FL.run_with_health(cfg, runner=lambda: st)
+    with open(HL.health_path(cfg), newline='', encoding='utf-8') as fh:
+        note = list(csv.DictReader(fh))[-1]['note']
+    assert len(note) <= 300 and 'alerts: 0 alert(s)' in note and 'gvz: fresh 2026-10-26 yfinance' in note

@@ -1,0 +1,2 @@
+date,logged_at,gvz,gvz_date,gvz_source,percentile,implied_move_pct,implied_move_usd,gold_close,gold_close_bar,lstm_vol_pct,lstm_as_of_bar
+2026-10-27,2026-10-27T11:13:12+00:00,23.55,2026-10-26,yfinance,89,1.4835,59.47,4008.49,2026-10-27 11:00:00+00:00,0.12636740505695343,2026-10-27 11:00:00+00:00

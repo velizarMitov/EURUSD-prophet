@@ -133,6 +133,10 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
      `results/gold/artifact_manifest.csv`.
    - Its forward logger is the scheduled task `EURUSDProphet-GoldLogger`. Corrections
      go to `results/gold/RESULTS.md`.
+   - **GVZ morning check** (change `gold-gvz-morning-check`, `src/gold/gvz.py`): FRED
+     `GVZCLS` + yfinance top-up, the first card on `/gold`. Its logs,
+     `results/gold/gvz_log.csv` and `gvz_settlements.csv`, are descriptive and never
+     scored. A GVZ claim needs its own pre-registration.
    - Gold features must stay scale-free: the price tripled, so a raw level puts the test
      block outside the training range.
    - **Round two** (change `gold-forecasting-v2`) adds the range, macro and direction2

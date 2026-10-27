@@ -38,3 +38,24 @@ def test_gold_page_renders_the_verdict_labels_and_no_cost_words(client):
 def test_console_links_to_the_gold_page():
     with open(os.path.join(REPO, 'static', 'index.html'), encoding='utf-8') as fh:
         assert 'href="/gold"' in fh.read()
+
+
+# ── GVZ morning-check card (change gold-gvz-morning-check, task 5.1) ────────
+
+GVZ_BANNED = ('buy', 'sell', 'stop', 'entry', 'target', 'купи', 'продай', 'стоп')
+
+
+def test_gold_page_has_the_gvz_card_and_api_carries_its_block(client):
+    html = client.get('/gold').text
+    assert 'id="gvz"' in html and 'renderGvz()' in html
+    assert client.get('/api/gold').json()['gvz']['state'] in ('ok', 'stale', 'none')
+
+
+def test_gvz_strings_carry_no_trade_words_in_either_language():
+    with open(os.path.join(REPO, 'static', 'gold.html'), encoding='utf-8') as fh:
+        html = fh.read()
+    start = html.index('  gvz_title:')
+    block = html[start:html.index('};', start)].lower()
+    assert 'gvz_none' in block and 'посоката е неизвестна' in block and 'direction unknown' in block
+    for w in GVZ_BANNED + COST_WORDS:
+        assert w not in block, w

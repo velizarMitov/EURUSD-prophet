@@ -2,7 +2,8 @@
 gold-forecasting/gold-view).
 
 Reads only recorded files: the forward logger's predictions, the family
-registries, the one-shot test report and the forward verdicts. Runs no model,
+registries, the one-shot test report, the forward verdicts and the GVZ caches
+the logger keeps (change gold-gvz-morning-check). Runs no model,
 fetches no market data, writes nothing -- and imports no model library, so
 api.py can serve it without loading TensorFlow or XGBoost.
 
@@ -114,7 +115,32 @@ def current_forecast(row: dict, cadence: str, now: pd.Timestamp) -> tuple[dict |
     return cur, None
 
 
-def build(cfg: dict | None = None, now=None) -> dict:
+def gvz_block(h1_row: dict | None, lstm: dict | None, now_label: pd.Timestamp, cfg2=None) -> dict:
+    """The morning-check block (change gold-gvz-morning-check): GVZ from the
+    caches the logger keeps, the dollar move at the newest H1 close the logger
+    recorded, and the h1_lstm move only while that forecast is current. Files
+    only; any error reads as no data."""
+    try:
+        from . import gvz as GV
+        close = _num(h1_row.get('as_of_close')) if h1_row else None
+        bar = h1_row.get('as_of_bar') if h1_row else None
+        now_utc = pd.Timestamp(now_label.tz_localize(None)).tz_localize(LABEL_TZ)
+        out = GV.reading(cfg2 if cfg2 is not None else _cfg2(), now_utc, close, bar)
+        cur = (lstm or {}).get('current')
+        if out['state'] != 'none':
+            out['lstm_vol_pct'] = cur.get('vol_pct') if cur else None
+            out['lstm_as_of_bar'] = cur.get('as_of_bar') if cur else None
+        return out
+    except Exception:  # noqa: BLE001 -- the card is optional; the rest of the payload stands
+        return {'state': 'none'}
+
+
+def _cfg2():
+    from .prereg2 import load_config_v2
+    return load_config_v2()
+
+
+def build(cfg: dict | None = None, now=None, cfg2=None) -> dict:
     cfg = cfg or load_config()
     now = label_clock_now(now) if not isinstance(now, pd.Timestamp) else now
     preds = _rows(os.path.join(repo_path(cfg['paths']['forward']), 'predictions.csv'))
@@ -147,6 +173,8 @@ def build(cfg: dict | None = None, now=None) -> dict:
     except Exception:  # noqa: BLE001 -- the alert banner is optional
         alert = None
     return {'generated_at': str(now), 'clock': f'{LABEL_TZ} bar labels', 'alert': alert,
+            'gvz': gvz_block(newest.get('h1_lstm'), next((c for c in cells if c['cell'] == 'h1_lstm'), None), now,
+                             cfg2),
             'state': 'forecasts' if preds else 'no_forecast',
             'cost_basis': 'gross of cost — no spread, pips or P&L',
             'label': NO_EDGE, 'cells': cells, 'test_report': test}

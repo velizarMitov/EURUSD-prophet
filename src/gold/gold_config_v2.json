@@ -97,5 +97,22 @@
   "retrain": {
     "day_of_month": 1,
     "time": "02:30"
+  },
+  "gvz": {
+    "fred_id": "GVZCLS",
+    "yahoo_symbol": "^GVZ",
+    "history_start": "2013-01-01",
+    "trading_days_per_year": 252,
+    "stale_after_days": 5,
+    "log_after_sofia": "13:00",
+    "session_labels": [
+      12,
+      21
+    ],
+    "min_session_bars": 9,
+    "fred_cache": "gvzcls.csv",
+    "yahoo_cache": "gvz_yfinance.csv",
+    "log": "results/gold/gvz_log.csv",
+    "settlements": "results/gold/gvz_settlements.csv"
   }
 }

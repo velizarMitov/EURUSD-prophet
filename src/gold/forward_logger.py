@@ -223,10 +223,14 @@ def settle(cfg, frames, now_iso, preds_name='predictions', setts_name='settlemen
     return out
 
 
-def run_once(cfg=None, frames=None, loader=load_cell, ph=None) -> dict:
+def run_once(cfg=None, frames=None, loader=load_cell, ph=None, gvz=None) -> dict:
+    """One pass. A pass on injected frames (tests, replays) skips the GVZ step
+    unless one is passed as `gvz`: it would otherwise reach the network and the
+    live results/gold/ GVZ files."""
     cfg = cfg or load_config()
     now_iso = _now()
     status, new_preds = {}, []
+    gvz = gvz or (log_gvz if frames is None else None)
     with RunLock(os.path.join(repo_path(cfg['paths']['artifacts']), 'forward.lock')):
         live = {'D1': True, 'H1': True}
         if frames is None:
@@ -275,6 +279,8 @@ def run_once(cfg=None, frames=None, loader=load_cell, ph=None) -> dict:
         status['settled'] = len(settled)
         status['ranges'] = log_ranges(cfg, now_iso, new_preds)
         status['alerts'] = log_alerts(cfg, now_iso, new_preds)
+        if gvz is not None:
+            status['gvz'] = gvz(cfg, now_iso, frames)
         status['shadow'] = log_shadow(cfg, frames, live, ph, now_iso)
         status['v2'] = log_v2(cfg, frames, live, ph, now_iso)
         status['v2_settled'] = settle_v2(cfg, frames, now_iso)
@@ -499,6 +505,36 @@ def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None) -> str:
         return f'failed: {type(e).__name__}'
 
 
+def log_gvz(cfg, now_iso, frames, cfg2=None, now=None, fred_fetch=None, yahoo_fetch=None) -> str:
+    """GVZ morning check (change gold-gvz-morning-check, spec gold-forecasting/gvz-check):
+    refresh GVZ only while the newest stored session is older than the last
+    completed US session, then the weekday observation row after 13:00 Sofia and
+    any settlement that is due. A refresh failure is recorded and the observation
+    still uses what is cached; no failure here ever touches another row of the pass."""
+    try:
+        from . import gvz as GV
+        from . import prereg2 as P2
+        cfg2 = cfg2 or P2.load_config_v2()
+        note = 'up to date'
+        if GV.needs_refresh(cfg2, now):
+            try:
+                note = GV.refresh(cfg2, now, fred_fetch=fred_fetch, yahoo_fetch=yahoo_fetch)
+            except GV.GvzUnavailable as e:
+                append_rows(out_path(cfg, 'failures'), [{'cell': 'gvz', 'cadence': 'D1', 'as_of_bar': '',
+                                                         'error': str(e), 'logged_at': now_iso}], FAIL_FIELDS)
+                note = 'failed GvzUnavailable'
+        h1 = frames.get('H1') if frames else None
+        if GV.observe(cfg2, h1, out_path(cfg, 'predictions'), now, now_iso):
+            note += ', logged'
+        settled = GV.settle(cfg2, h1, now, now_iso)
+        return note + (f', settled {len(settled)}' if settled else '')
+    except Exception as e:  # noqa: BLE001 -- GVZ must never cost the round-one pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'gvz', 'cadence': 'D1', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed {type(e).__name__}'
+
+
 def run_with_health(cfg=None, runner=None) -> dict:
     """One pass, always followed by one health row (spec gold-forecasting/logger-health):
     a pass that finds the lock taken, the clock wrong, MT5 closed or a crash is still
@@ -527,7 +563,8 @@ def run_with_health(cfg=None, runner=None) -> dict:
     row.update(outcome=outcome, mt5='yes' if st.get('mt5') else 'no', newest_h1=st.get('newest_h1', ''),
                forecasts=st.get('forecasts', 0), settled=st.get('settled', 0), gaps=st.get('gaps', 0),
                note=(f"D1: {st.get('D1', '')}; H1: {st.get('H1', '')}; ranges: {st.get('ranges', '')}; "
-                     f"alerts: {st.get('alerts', '')}; shadow: {st.get('shadow', '')}; v2: {st.get('v2', '')}")[:300], ended_at=_now())
+                     f"alerts: {st.get('alerts', '')}; gvz: {st.get('gvz', '')}; shadow: {st.get('shadow', '')}; "
+                     f"v2: {st.get('v2', '')}")[:300], ended_at=_now())
     HL.record(row, cfg)
     return st
 

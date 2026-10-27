@@ -11,7 +11,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 1. Configuration
 
-- [ ] 1.1 Add the top-level `gvz` block from design D9 to `src/gold/gold_config_v2.json`.
+- [x] 1.1 Add the top-level `gvz` block from design D9 to `src/gold/gold_config_v2.json`.
   Leave `study`, `alerts`, `retrain` and `paths` untouched.
 
   Verify with a new test in `tests/test_gold_gvz.py`:
@@ -21,7 +21,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 2. Acquisition and the read half (`src/gold/gvz.py`)
 
-- [ ] 2.1 Implement the read half.
+- [x] 2.1 Implement the read half.
   - `read_series(cfg2)` merges `gvzcls.csv` (FRED) and `gvz_yfinance.csv` (top-up),
     keeping FRED for every FRED date and tagging each value with its source.
   - `reading(cfg2, now, gold_close, close_bar)` returns the D7 block: percentile from
@@ -37,7 +37,7 @@ registration or manifest, or `src/gold/gold_config.json`.
   - no stored value gives `state: none`;
   - with no gold close, the percent is present and the dollar value is `None`;
   - importing `src.gold.gvz` does not import `yfinance` (check `sys.modules`).
-- [ ] 2.2 Implement `refresh(cfg2, now, fred_fetch=None, yahoo_fetch=None)` with
+- [x] 2.2 Implement `refresh(cfg2, now, fred_fetch=None, yahoo_fetch=None)` with
   injectable fetchers.
   - FRED goes through `src.macro_data.fetch_fred_feature` into `gvzcls.csv`, over the
     full window on the first run and the last 30 days afterwards.
@@ -54,7 +54,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 3. Logger integration (`src/gold/forward_logger.py`)
 
-- [ ] 3.1 Add `log_gvz(cfg, now_iso, frames, ...)`, called in `run_once` right after
+- [x] 3.1 Add `log_gvz(cfg, now_iso, frames, ...)`, called in `run_once` right after
   `log_alerts` and wrapped like the other optional steps.
   - It refreshes only when the newest stored date is before the last completed US
     session (design D4).
@@ -69,7 +69,7 @@ registration or manifest, or `src/gold/gold_config.json`.
   - when both sources raise, a `gvz` failure row and a `gvz: failed` note appear, and the
     pass's predictions and settlements are identical to a run without GVZ;
   - the health note still contains `alerts:` and `gvz:` within 300 characters.
-- [ ] 3.2 Add `observe(...)` and `settle(...)` to `gvz.py`, and call them from
+- [x] 3.2 Add `observe(...)` and `settle(...)` to `gvz.py`, and call them from
   `log_gvz`.
   - **Observe:** on the first Monday-to-Friday pass at or after 13:00 Europe/Sofia, append
     one row to `results/gold/gvz_log.csv` with the D6 columns. It takes the gold close from
@@ -87,7 +87,7 @@ registration or manifest, or `src/gold/gold_config.json`.
   - 10 bars settle with a range, 7 bars settle blank with count 7, and nothing settles
     at 20:03 Sofia;
   - `gvz_log.csv` is byte-identical before and after settlement.
-- [ ] 3.3 Verify the logs are never scored: add a test that runs `log_gvz` over a
+- [x] 3.3 Verify the logs are never scored: add a test that runs `log_gvz` over a
   simulated month and asserts that every file under `results/gold/` named in
   `cfg['paths']['registries']`, `PRE_REGISTRATION*.json`, `artifact_manifest*.csv` and
   `leaderboard` output is byte-identical. Add another asserting that
@@ -95,7 +95,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 4. API (`src/gold/summary.py`)
 
-- [ ] 4.1 In `build()`, add the `gvz` block through `gvz.reading(...)` (design D5, D7).
+- [x] 4.1 In `build()`, add the `gvz` block through `gvz.reading(...)` (design D5, D7).
   - The gold close and bar come from the newest H1 row in `predictions.csv`.
   - `lstm_vol_pct` and `lstm_as_of_bar` come from the current `h1_lstm` entry.
   - It sits inside `try/except`, so an error yields `{"state": "none"}`.
@@ -110,7 +110,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 5. The card (`static/gold.html`)
 
-- [ ] 5.1 Add `<div id="gvz">` at the top of `#panel-now` and `renderGvz()`, called from
+- [x] 5.1 Add `<div id="gvz">` at the top of `#panel-now` and `renderGvz()`, called from
   `render()` and on `ps:lang`. Add the BG/EN strings to `I18N` with the layout and states
   of design D8: ok, stale (the warning line uses the existing `stall` colour) and none.
   The card has no direction arrows and no trade or cost words.
@@ -120,13 +120,21 @@ registration or manifest, or `src/gold/gold_config.json`.
     existing `COST_WORDS` test still passes;
   - a new test asserts that the GVZ strings in both languages contain none of `buy`,
     `sell`, `stop`, `entry`, `target`, `купи`, `продай` or `стоп`.
-- [ ] 5.2 Check the card in the running app: restart via the launcher, open `/gold` in
+- [x] 5.2 Check the card in the running app: restart via the launcher, open `/gold` in
   light and dark themes at phone and desktop widths, switch BG/EN, and stub a stale cache
   once to see the warning. Record the check in this task.
+  - 2026-10-27: `scripts/launch.vbs` restarted the stale server (pid 36200 → 24944). After
+    the restart, `/api/gold` carries `gvz` (23.55, 2026-10-26, yfinance, percentile 89,
+    ±1.4835 % = ±59.47 $ at 4,008.49, LSTM ±0.126 %).
+  - Screenshots with gstack browse:
+    - 1280 px, BG, light: renders, with no console errors.
+    - 390 px, EN, dark: no horizontal scroll (scrollWidth 390).
+  - The stale state (payload stubbed in the browser only, value dated Fri 16.10) shows the
+    red warning line. The none state shows "Все още няма записана стойност на GVZ."
 
 ## 6. Documentation
 
-- [ ] 6.1 Add a short GVZ morning-check paragraph to `ARCHITECTURE_DOCS.md §3.12` (gold).
+- [x] 6.1 Add a short GVZ morning-check paragraph to `ARCHITECTURE_DOCS.md §3.12` (gold).
   It covers:
   - the sources and the cache files;
   - the logger step;
@@ -141,7 +149,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 - [ ] 7.1 Run the full suite `python -m pytest -q`. Verify there are no new failures
   against the baseline and that `git status` shows only the files this change names.
-- [ ] 7.2 Run one live logger pass (`python -m src.gold.forward_logger`). Verify:
+- [x] 7.2 Run one live logger pass (`python -m src.gold.forward_logger`). Verify:
   - `results/gold/macro/gvzcls.csv` holds history from 2013;
   - `gvz_yfinance.csv` holds only dates after FRED's newest;
   - the health row's note has a `gvz:` segment;

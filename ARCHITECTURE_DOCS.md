@@ -1346,6 +1346,35 @@ is open if either:
 implied price `close·exp(r/100)` and expected move, each labelled "research — no proven
 edge". They show no spread, pips or P&L.
 
+**GVZ morning check.** This comes from openspec change `gold-gvz-morning-check`, spec
+`gold-forecasting/gvz-check`, module `src/gold/gvz.py`. GVZ (CBOE Gold ETF Volatility
+Index) is the options market's 30-day volatility on GLD: a market reading shown beside
+the model, never a model claim.
+
+- **Sources.** FRED `GVZCLS` goes through the shared `src.macro_data` chain into
+  `results/gold/macro/gvzcls.csv`. yfinance `^GVZ` tops up the US sessions FRED has not
+  published yet (at 13:00 Sofia FRED is usually two sessions behind) into
+  `results/gold/macro/gvz_yfinance.csv`. FRED wins on every date it has. Only completed
+  US sessions are stored.
+- **The logger step.** `forward_logger.log_gvz` runs after the alerts. It refreshes only
+  while the newest stored session is older than the last completed one, and a failure
+  lands in `failures.csv` and the health note, never in another row. A pass on injected
+  frames skips it unless a step is passed.
+- **The API block.** `GET /api/gold` carries `gvz`, built from the caches only:
+  - the value, date and source;
+  - the percentile against the history since 2013;
+  - the arithmetic implied daily move GVZ/√252, in % and in $ at the newest logged H1
+    close;
+  - a stale flag after 5 days;
+  - the current h1_lstm move.
+
+  The *Now* tab shows it as the first card.
+- **The logs.** `results/gold/gvz_log.csv` holds one row per weekday, at the first pass at
+  or after 13:00 Sofia. `results/gold/gvz_settlements.csv` holds the realised
+  13:00–23:00 Sofia range (labels 12:00–21:00, blank under 9 bars). Both are append-only
+  and **descriptive, never scored**: no registry, alpha, verdict or leaderboard entry. A
+  future GVZ claim needs its own pre-registration.
+
 **History.** This comes from openspec change `app-shell-and-gold-history`, spec
 `gold-forecasting/gold-history`. The *History* tab on `/gold` and
 `GET /api/gold/history` (`src/gold/history.py`) show every gold forecast next to what
