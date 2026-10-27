@@ -12,11 +12,16 @@ claim, and it logs the two daily, unscored, so the owner can compare them over t
 The system SHALL acquire the daily GVZ close from FRED series `GVZCLS`, through the
 project's shared FRED fallback chain (API, then public CSV, then the on-disk cache), from
 the configured history start. It SHALL store the values in a gold-owned cache, with one
-value per US session date.
+value per US weekday. A US market holiday SHALL carry the previous session's close, and
+SHALL never carry a later one.
 
 #### Scenario: FRED reachable
 - **WHEN** the refresh runs and FRED answers
 - **THEN** every published `GVZCLS` value from the history start is in the cache, dated by its US session
+
+#### Scenario: US holiday
+- **WHEN** FRED has no value for a US market holiday
+- **THEN** the cache holds that weekday with the previous session's close
 
 #### Scenario: FRED unreachable with a cache
 - **WHEN** FRED cannot be reached and the cache exists

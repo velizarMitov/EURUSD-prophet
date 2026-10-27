@@ -147,7 +147,7 @@ registration or manifest, or `src/gold/gold_config.json`.
 
 ## 7. Integration
 
-- [ ] 7.1 Run the full suite `python -m pytest -q`. Verify there are no new failures
+- [x] 7.1 Run the full suite `python -m pytest -q`. Verify there are no new failures
   against the baseline and that `git status` shows only the files this change names.
 - [x] 7.2 Run one live logger pass (`python -m src.gold.forward_logger`). Verify:
   - `results/gold/macro/gvzcls.csv` holds history from 2013;
