@@ -71,7 +71,21 @@ td.mdl{font-weight:700}
 .range{border-top:1px solid var(--ps-line);padding-top:8px;display:flex;flex-direction:column;gap:3px}
 .range-row{display:flex;justify-content:space-between;gap:10px;font-size:14px}
 .range-row b{font-variant-numeric:tabular-nums}
-.ps-notice.bigmove{background:var(--ps-gold-bg);color:var(--ps-gold);border-color:var(--ps-gold);margin-bottom:10px}
+/* Large-move alert: the one thing on this page that must not be missed. Size only. */
+/* Ink on the solid gold: white on light-theme #9a6b00 (4.7:1), near-black on dark-theme #e5b85c (9.9:1). */
+.ps-page{--bigmove-ink:#fff}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])) .ps-page{--bigmove-ink:#1b1400} }
+:root[data-theme="dark"] .ps-page{--bigmove-ink:#1b1400}
+.ps-notice.bigmove{display:flex;gap:14px;align-items:center;background:var(--ps-gold);color:var(--bigmove-ink);border:2px solid var(--ps-gold);
+  border-radius:12px;padding:14px 18px;margin-bottom:12px;box-shadow:var(--ps-shadow-lg);animation:bigmove-pulse 1.6s ease-in-out 4}
+.bigmove .ico{font-size:30px;line-height:1}
+.bigmove .txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bigmove .hd{font-size:15px;font-weight:800;letter-spacing:.01em}
+.bigmove .sz{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+.bigmove .sz span{font-size:16px;font-weight:700}
+.bigmove .ft{font-size:13.5px;font-weight:650}
+@keyframes bigmove-pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb, var(--ps-gold) 35%, transparent)}}
+@media (prefers-reduced-motion: reduce){.ps-notice.bigmove{animation:none}}
 .ps-notice.stall{background:var(--ps-dn-bg);color:var(--ps-dn);border-color:var(--ps-dn);margin-bottom:10px}
 /* GVZ morning check (change gold-gvz-morning-check): size only, never direction. */
 .gvz{display:flex;flex-direction:column;gap:8px;border-top:3px solid var(--ps-gold);margin-bottom:6px}
@@ -93,7 +107,7 @@ td.mdl{font-weight:700}
     <span class="ps-pill gold" data-i18n="gross">Брутно, без разходи</span>
   </div>
   <div class="ps-notice stall" id="stall" role="alert" hidden></div>
-  <div class="ps-notice bigmove" id="bigmove" role="status" hidden></div>
+  <div class="ps-notice bigmove" id="bigmove" role="alert" hidden></div>
   <div class="ps-notice" data-i18n="notice">Изследване — без доказано предимство. Брутно, без разходи; не е търговски сигнал.</div>
 
   <div class="ps-tabs" role="tablist">
@@ -255,6 +269,9 @@ const I18N = {
   bigmove: {bg: 'Очаква се голямо движение на златото през следващия час:', en: 'A large gold move is expected in the next hour:'},
   bigmove_dir: {bg: 'Посоката е неизвестна.', en: 'Direction unknown.'},
   bigmove_until: {bg: 'до', en: 'until'},
+  bigmove_hour: {bg: 'Часът', en: 'The hour'},
+  bigmove_sofia: {bg: 'софийско време', en: 'Sofia time'},
+  bigmove_tab: {bg: 'Голямо движение', en: 'Large move'},
   tab_board: {bg: 'Класиране', en: 'Leaderboard'},
   lb_sort_n: {bg: 'Брой', en: 'Count'}, lb_sort_hit: {bg: 'Посока', en: 'Direction'},
   lb_sort_vol: {bg: 'Движение', en: 'Move'}, lb_sort_cov: {bg: 'Диапазон', en: 'Range'},
@@ -356,12 +373,27 @@ function tile(c) {
     <span class="label">${esc(t(c.label))}</span></div>${body}<div class="chips">${chips}</div></div>`;
 }
 
+// Bar labels are the Berlin wall clock stored as UTC; Sofia is Berlin + 1 h all year.
+const sofiaHour = (s) => {
+  const d = new Date(new Date(s.replace(' ', 'T')).getTime() + 3600e3);
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+};
+const baseTitle = document.title;
 function renderAlert() {
   const el = $('bigmove');
   const a = payload && payload.alert;
-  if (!a) { el.hidden = true; return; }
-  el.textContent = `${t('bigmove')} ±${num(a.vol_pct, 2)} % (${t('bigmove_until')} ${when(a.window_end, 'H1')}). ${t('bigmove_dir')}`;
+  if (!a) { el.hidden = true; document.title = baseTitle; return; }
+  // The dollar size uses the close the alert was raised on, when the h1_lstm tile still shows it.
+  const c = (payload.cells || []).find((x) => x.cell === 'h1_lstm');
+  const close = c && c.current && c.current.as_of_bar === a.as_of_bar ? c.current.as_of_close : null;
+  const usd = close === null ? '' : ` <span>(≈ ±${money(close * a.vol_pct / 100)} $)</span>`;
+  const start = new Date(new Date(a.window_end.replace(' ', 'T')).getTime() - 3600e3).toISOString();
+  el.innerHTML = `<div class="ico" aria-hidden="true">⚠</div><div class="txt">
+    <div class="hd">${esc(t('bigmove'))}</div>
+    <div class="sz">±${num(a.vol_pct, 2)} %${usd}</div>
+    <div class="ft">${esc(t('bigmove_hour'))} ${sofiaHour(start)}–${sofiaHour(a.window_end)} (${esc(t('bigmove_sofia'))}). ${esc(t('bigmove_dir'))}</div></div>`;
   el.hidden = false;
+  document.title = `⚠ ${t('bigmove_tab')} ±${num(a.vol_pct, 2)} % · ${baseTitle}`;
 }
 
 // GVZ morning check: the market's own number beside the model's; size only.
@@ -889,6 +921,11 @@ document.addEventListener('ps:lang', renderHealth);
 applyStatic();
 load();
 loadHealth();
+// The logger writes at :03 each hour, so an alert can appear while the page sits open:
+// re-read every minute (a background tab too, so its title can carry the ⚠), and at
+// once when the tab comes back into view.
+setInterval(() => { load(); loadHealth(); }, 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { load(); loadHealth(); } });
 showTab(['#history', '#board'].includes(location.hash) ? location.hash.slice(1) : 'now');
 </script>
 </body>

@@ -42,11 +42,15 @@ TEXT = {
 }
 
 # PowerShell's own Windows Runtime toast API: no extra dependency. The texts come
-# in through environment variables, so no quoting can break the command.
+# in through environment variables, so no quoting can break the command. A plain
+# toast leaves the screen after ~5 s and was missed on 2026-10-27, so this one is a
+# reminder: it stays on screen with a sound until its button closes it.
 _TOAST_PS = r"""
 $ErrorActionPreference = 'Stop'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
-$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+$t = New-Object Windows.Data.Xml.Dom.XmlDocument
+$t.LoadXml('<toast scenario="reminder"><visual><binding template="ToastGeneric"><text/><text/></binding></visual><audio src="ms-winsoundevent:Notification.Reminder"/><actions><action activationType="system" arguments="dismiss" content=""/></actions></toast>')
 $x = $t.GetElementsByTagName('text')
 $x.Item(0).AppendChild($t.CreateTextNode($env:PS_TOAST_TITLE)) > $null
 $x.Item(1).AppendChild($t.CreateTextNode($env:PS_TOAST_BODY)) > $null

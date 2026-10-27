@@ -116,5 +116,17 @@ def test_page_banner_is_bilingual():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'gold.html'),
                encoding='utf-8').read()
     assert 'id="bigmove"' in src
-    for key in ('bigmove', 'bigmove_dir', 'bigmove_until'):
+    for key in ('bigmove', 'bigmove_dir', 'bigmove_until', 'bigmove_hour', 'bigmove_sofia', 'bigmove_tab'):
         assert f'  {key}: {{bg: ' in src
+
+
+def test_page_rereads_alerts_while_open():
+    # An alert written at :03 must reach a page that was opened earlier (missed on 2026-10-27).
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'gold.html'),
+               encoding='utf-8').read()
+    assert 'setInterval(() => { load(); loadHealth(); }, 60e3)' in src
+    assert "addEventListener('visibilitychange'" in src
+
+
+def test_notification_stays_until_dismissed():
+    assert 'scenario="reminder"' in A._TOAST_PS and 'arguments="dismiss"' in A._TOAST_PS
