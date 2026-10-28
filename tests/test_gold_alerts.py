@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -130,3 +131,25 @@ def test_page_rereads_alerts_while_open():
 
 def test_notification_stays_until_dismissed():
     assert 'scenario="reminder"' in A._TOAST_PS and 'arguments="dismiss"' in A._TOAST_PS
+
+
+def _page():
+    return open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'gold.html'),
+                encoding='utf-8').read()
+
+
+def test_banner_texts_name_size_and_never_a_trade():
+    keys = re.findall(r"^  (bigmove\w*): \{bg: '([^']*)', en: '([^']*)'\}", _page(), re.M)
+    assert {k for k, _, _ in keys} >= {'bigmove', 'bigmove_dir', 'bigmove_hour', 'bigmove_sofia', 'bigmove_tab'}
+    for key, bg, en in keys:
+        for w in BANNED:
+            assert w not in bg.lower() and w not in en.lower(), (key, w)
+
+
+def test_tab_title_carries_the_alert_and_is_restored():
+    src = _page()
+    body = src[src.index('function renderAlert()'):]
+    body = body[:body.index('\n}\n')]
+    assert "if (!a) { el.hidden = true; document.title = baseTitle; return; }" in body
+    assert "document.title = `⚠ ${t('bigmove_tab')} ±${num(a.vol_pct, 2)} % · ${baseTitle}`;" in body
+    assert 'const baseTitle = document.title;' in src

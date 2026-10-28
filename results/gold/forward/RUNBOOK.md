@@ -119,8 +119,12 @@ All round-two output goes to its own files. Round one's `predictions.csv`,
 - **On each alert,** a new h1_lstm forecast at or above the threshold:
   - writes one `alerts.csv` row, deduplicated by bar;
   - raises one Windows notification, Bulgarian then English, which names the size only
-    and says the direction is unknown;
-  - shows a banner on `/gold` while that hour is open.
+    and says the direction is unknown. It is a reminder toast with a sound: it stays on
+    screen until its button is pressed (a plain toast left after ~5 s and was missed on
+    2026-10-27). Focus assist / Do Not Disturb can still hide it;
+  - shows a banner on `/gold` while that hour is open. An open page re-reads it every
+    minute, so it need not be reloaded. The banner names the hour in Sofia time and
+    the size in % and $, and the tab title starts with ⚠.
 - **Settlement.** `alert_settlements.csv` records the realised move.
 - **Testing and recalibrating.** `python -m src.gold.alerts --test-notification` raises
   a sample toast. Recalibrate only after a promotion, with `--calibrate`.

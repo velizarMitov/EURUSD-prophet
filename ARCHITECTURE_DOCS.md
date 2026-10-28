@@ -1321,7 +1321,14 @@ without retraining. Corrections go to `results/gold/RESULTS.md`.
   - the ranges, in `ranges.csv` and `range_settlements.csv`;
   - the large-move alerts (`src/gold/alerts.py`), in `alerts.csv` and
     `alert_settlements.csv`, plus a Windows toast and a `/gold` banner, with the
-    threshold at the 90th percentile of the frozen h1_lstm = ±0.151 %;
+    threshold at the 90th percentile of the frozen h1_lstm = ±0.151 %. Change
+    `gold-alert-visibility` (2026-10-28) made them hard to miss:
+    - the toast is a reminder with a sound that stays until dismissed;
+    - an open `/gold` page re-reads `/api/gold` every minute and when its tab comes back
+      into view, so no reload is needed;
+    - the banner is a solid block that names the hour in Sofia time and the size in %
+      and in $ at the alerted close;
+    - the tab title starts with ⚠ while the alert's hour is open;
   - the monthly shadow refit (`src/gold/versions.py`, task `EURUSDProphet-GoldRetrain`),
     in `predictions_v2.csv` and `settlements_v2.csv`, promoted only by
     `python -m src.gold.versions promote`;
