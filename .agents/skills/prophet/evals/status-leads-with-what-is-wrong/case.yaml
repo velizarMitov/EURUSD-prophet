@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: status-leads-with-what-is-wrong
+expected_outcome: |
+  Claude loads the prophet skill, runs its status pass, and answers in Bulgarian:
+  first the red signals, then the yellow ones, each with where to see it and who acts,
+  then one line for what is fine and one line on the direction hit rate. It calls no
+  endpoint that writes and makes no prediction.

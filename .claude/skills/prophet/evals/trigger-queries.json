@@ -1,0 +1,23 @@
+[
+  {"query": "как е Prophet днес? има ли нещо счупено преди да седна да гледам графиките", "should_trigger": true},
+  {"query": "пусни приложението, искам да видя прогнозата за утре в браузъра", "should_trigger": true},
+  {"query": "цъкам иконата EUR-USD Prophet на десктопа и излиза съобщение че програмата не е стартирала, защо не тръгва?", "should_trigger": true},
+  {"query": "quick health check on the prophet app before I leave for work - is the gold logger still running and did last night's Refit task go through?", "should_trigger": true},
+  {"query": "can you start the app and open it so I can check today's forecast, I think I closed the server yesterday", "should_trigger": true},
+  {"query": "there's a banner on /advanced saying models have been undeclared for 15 days, is the app ok or is something broken?", "should_trigger": true},
+  {"query": "the launcher says port 8000 is busy with another program. what is holding it and is my prophet server running at all", "should_trigger": true},
+  {"query": "мина ли retrain-ът, който пуснах вчера от бутона в /advanced? новите модели ли се сервират вече", "should_trigger": true},
+  {"query": "статус на всичко: сървъра, задачите в task scheduler, логера за злато и forward logger-а", "should_trigger": true},
+  {"query": "I saved src/home_summary.py about an hour ago - is the running server still on the old code or did it pick it up?", "should_trigger": true},
+
+  {"query": "add an RSI divergence feature to src/features.py and register it as hypothesis #10 in results/feature_hypothesis_log.csv", "should_trigger": false},
+  {"query": "explain why the 5-seed LSTM volatility ensemble beats GARCH(1,1) in results/volatility_seed_ensemble.csv", "should_trigger": false},
+  {"query": "draft the pre-registration for a new GVZ claim under results/gold/ - what alpha should it get?", "should_trigger": false},
+  {"query": "retrain the production models with the latest data by running _train_pipeline.py and tell me the new test-block metrics", "should_trigger": false},
+  {"query": "review my diff in src/gold/alerts.py before I commit it, I changed how alerts settle", "should_trigger": false},
+  {"query": "add a column for the MT5 build number to the gold logger's health.csv and update the health tests", "should_trigger": false},
+  {"query": "how is the forward evaluation scored? walk me through the 0.05/12 bar in results/forward_eval/PRE_REGISTRATION.md", "should_trigger": false},
+  {"query": "write a pytest for src/home_summary.py reliability_block for the case n=0 and n=29", "should_trigger": false},
+  {"query": "make the tomorrow tile on the home page bigger on mobile and swap the arrow icon, it's hard to read on my phone", "should_trigger": false},
+  {"query": "why does the home page use a Wilson interval instead of a binomial test? explain like I'm presenting it to a professor", "should_trigger": false}
+]

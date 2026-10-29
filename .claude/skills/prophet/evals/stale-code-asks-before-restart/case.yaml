@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: stale-code-asks-before-restart
+expected_outcome: |
+  Claude runs the fast status pass. If the server is down it starts it with the
+  launcher. If the server is running stale code it explains that starting means a
+  restart and asks before doing it. It never stops a process the launcher does not own.
