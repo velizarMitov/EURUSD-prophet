@@ -152,7 +152,7 @@
   - d1_gbm has no move line;
   - direction parity with `summary.current_forecast` for D1;
   - every template is free of trade words.
-- [ ] 5.2 Draw the daily marks (design D13):
+- [x] 5.2 Draw the daily marks (design D13):
   - D1-only placement;
   - solid d1_lstm and hollow d1_gbm arrows, with the d1_gbm colour input;
   - same-side stacking with one joined text;
@@ -163,7 +163,7 @@
   - two arrows per day;
   - stacked arrows when both cells point the same way;
   - H4 draws nothing and says why.
-- [ ] 5.3 Add the probability filter (design D12):
+- [x] 5.3 Add the probability filter (design D12):
   - ≥50/52/54/56 % buttons in the panel;
   - the choice kept per chart in a terminal global variable, with a changed input
     winning;
@@ -183,10 +183,16 @@
 
 ## 6. Integration check
 
-- [ ] 6.1 Let one scheduled `EURUSDProphet-GoldLogger` pass run with an XAUUSD H1 chart
+- [x] 6.1 Let one scheduled `EURUSDProphet-GoldLogger` pass run with an XAUUSD H1 chart
   open and the indicator attached. Verify:
   - the new h1_lstm arrow appears within a minute of the pass, without reattaching;
   - the health row's note carries `chart: …`;
   - `failures.csv` has no `chart` row.
 
   Then run `python -m pytest -q` and confirm the full suite passes.
+
+  Result 2026-11-02: the 12:03 Sofia pass wrote `chart: 132 mark(s), 5 day(s), 10 daily
+  day(s)`, with no `chart` failure, and the new arrow appeared on the open chart. The full
+  suite had 1283 passed and 8 failed. None of the 8 touch this change: 7 protected-set pins
+  fail on `models/baseline/lstm_multitask_eurusd.keras` (last changed in `418fe94`,
+  2026-10-21), and 1 is a stale DATA.md row count for `results/eurusd_h1.csv`.
