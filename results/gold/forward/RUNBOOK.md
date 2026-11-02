@@ -170,6 +170,77 @@ All round-two output goes to its own files. Round one's `predictions.csv`,
 
   `python -m src.gold.versions status` shows the active shadow and the window.
 
+## Gold signals on the MT5 chart (change `gold-mt5-chart-signals`)
+
+The indicator `ProphetGoldSignals` draws the h1_lstm forecasts and the large-move alerts
+of the last 5 trading days on an XAUUSD / GOLD chart at H1 or lower:
+- an up or down arrow on each forecast hour, with the probability beside it;
+- a two-headed marker on each alerted hour, with the expected size in % and $;
+- the outcome beside each mark once its hour has settled: right or wrong with the
+  realised move, the realised size for an alert, or "not counted";
+- a full description on hover, in Sofia time;
+- a corner panel with the current forecast, any open alert, the 5-day count and the data
+  time.
+
+The count is descriptive, not a verdict. Every description carries "research — no proven
+edge, gross of cost". The indicator only reads a file and draws: it has no trading,
+network or DLL call.
+
+**Where the data comes from.** Each logger pass runs `forward_logger.log_chart` after the
+alerts. It rebuilds `%APPDATA%\MetaQuotes\Terminal\Common\Files\EURUSDProphet\gold_signals.tsv`
+from `predictions.csv`, `settlements.csv`, `alerts.csv` and `alert_settlements.csv`
+(`src/gold/mt5_export.py`). That folder is shared by every terminal on the PC. It is the
+only gold write outside the repo, and nothing in the repo reads it back. A failed export
+appears as a `chart` row in `failures.csv` and as `chart: failed …` in the health note. It
+never costs the pass.
+
+**Install, attach, remove.**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\gold\install_mt5_indicator.ps1    # copy + compile into every terminal, write the file once
+python -m src.gold.mt5_export                                                       # rebuild the file by hand
+powershell -ExecutionPolicy Bypass -File scripts\gold\uninstall_mt5_indicator.ps1  # remove both again
+```
+
+The installer prints one `compiled` or `FAILED` line per terminal. A failure is followed by
+MetaEditor's log. Then, in each terminal you use:
+1. Navigator → Indicators → EURUSDProphet → ProphetGoldSignals. Use right-click →
+   Refresh if it is not listed yet.
+2. Drag it onto an XAUUSD / GOLD H1 chart.
+3. In its settings, choose BG or EN, the colours and the panel corner.
+
+Take it off open charts before uninstalling: a chart keeps a loaded indicator until it is
+removed.
+
+**Check.**
+- The first line of the file shows `version=1` and the data time:
+  `Get-Content "$env:APPDATA\MetaQuotes\Terminal\Common\Files\EURUSDProphet\gold_signals.tsv" -Encoding utf8 -TotalCount 1`.
+- `Select-String results\gold\forward\failures.csv -Pattern '^chart,'` finds no row.
+- On the chart, a new arrow appears within a minute of each :03 pass. The indicator
+  re-reads the file every 30 s.
+
+**Troubleshooting.**
+- **"No gold data found"**: the file does not exist yet. Run `python -m src.gold.mt5_export`.
+- **"Data is old: …"** while gold is trading: no pass has written the file for over two
+  hours. The PC slept, the task stopped, or MT5 was closed. See *Staying alive* above.
+  Over a weekend this warning is not shown.
+- **"Chart clock shift: +1 h vs the logger"**: this chart's broker is not on the
+  logger's Europe/Berlin clock, and the marks are shifted to match.
+  - In the March and late-October weeks when US and EU summer time disagree, marks from
+    before the switch can sit an hour off.
+  - Each description names the Sofia hour, which is always right.
+- **"This chart is not gold"** or **"Signals show on H1 or a lower timeframe"**: no marks
+  are drawn on other symbols, or above H1.
+- **Prices and $ sizes** come from the logger's broker. Another broker's chart can differ
+  by cents to a dollar. The marks sit on that chart's own candles.
+- **Portable-mode terminal** (started with `/portable`): it has no
+  `%APPDATA%\MetaQuotes\Terminal\<id>\origin.txt`, so the installer does not see it.
+  1. Copy `mql5\Indicators\ProphetGoldSignals.mq5` into
+     `<install folder>\MQL5\Indicators\EURUSDProphet\`.
+  2. Compile it in MetaEditor (F7).
+  3. If its panel then says no gold data was found, that terminal reads another shared
+     folder. Set `MT5_COMMON_FILES` to that folder for the logger task.
+
 ## Reading the history
 
 The *History* tab on `/gold` reads these files without changing them, through
@@ -192,4 +263,5 @@ only and are **never scored** (task 8.3 runs the dry run for at least two weeks)
 ## What the logger never does
 
 It never trades, sizes or simulates P&L. It never writes under `models/` or
-`results/forward_eval/`, and it never refits a model.
+`results/forward_eval/`, and it never refits a model. Its only write outside the repo is
+the chart file `Common\Files\EURUSDProphet\gold_signals.tsv`.

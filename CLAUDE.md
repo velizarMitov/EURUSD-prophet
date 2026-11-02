@@ -133,6 +133,13 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
      `results/gold/artifact_manifest.csv`.
    - Its forward logger is the scheduled task `EURUSDProphet-GoldLogger`. Corrections
      go to `results/gold/RESULTS.md`.
+   - **MT5 chart signals** (change `gold-mt5-chart-signals`, `src/gold/mt5_export.py`):
+     - Each logger pass rebuilds `Common\Files\EURUSDProphet\gold_signals.tsv`.
+     - The read-only indicator `mql5/Indicators/ProphetGoldSignals.mq5` reads it and
+       draws h1_lstm arrows and alert markers for the last 5 trading days.
+     - That file is the only gold write outside the repo, and nothing reads it back.
+     - Python builds all chart wording, and it must never name a trade.
+     - Install with `scripts/gold/install_mt5_indicator.ps1`.
    - **GVZ morning check** (change `gold-gvz-morning-check`, `src/gold/gvz.py`): FRED
      `GVZCLS` + yfinance top-up, the first card on `/gold`. Its logs,
      `results/gold/gvz_log.csv` and `gvz_settlements.csv`, are descriptive and never

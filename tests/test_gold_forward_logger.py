@@ -202,13 +202,46 @@ def test_injected_frames_skip_gvz_unless_a_step_is_passed(env):
     assert 'gvz' not in _run(cfg, _frames(h1, 2000))
 
 
-def test_health_note_keeps_alerts_and_gvz_within_its_limit(env):
+def test_health_note_keeps_alerts_chart_and_gvz_within_its_limit(env):
     from src.gold import health as HL
     cfg, _, _ = env
     st = {'D1': 'forecast 3 cell(s)', 'H1': 'forecast 3 cell(s)', 'ranges': '2 range(s), 1 settled',
-          'alerts': '0 alert(s), 0 settled', 'gvz': 'fresh 2026-10-26 yfinance, logged, settled 1',
+          'alerts': '0 alert(s), 0 settled', 'chart': '111 mark(s), 5 day(s) 2026-10-27..2026-11-02',
+          'gvz': 'fresh 2026-10-26 yfinance, logged, settled 1',
           'shadow': 's' * 90, 'v2': 'v' * 90, 'mt5': True, 'newest_h1': 'x'}
     FL.run_with_health(cfg, runner=lambda: st)
     with open(HL.health_path(cfg), newline='', encoding='utf-8') as fh:
         note = list(csv.DictReader(fh))[-1]['note']
     assert len(note) <= 300 and 'alerts: 0 alert(s)' in note and 'gvz: fresh 2026-10-26 yfinance' in note
+    assert 'alerts: 0 alert(s), 0 settled; chart: 111 mark(s), 5 day(s) 2026-10-27..2026-11-02;' in note
+
+
+def test_chart_export_failure_is_recorded_and_leaves_the_pass_unchanged(env):
+    """Spec gold-forecasting/mt5-chart-signals: a failed chart export never costs the pass."""
+    cfg, tmp, h1 = env
+
+    def boom(c):
+        raise PermissionError('Common\\Files is read-only')
+
+    step = lambda c, now_iso: FL.log_chart(c, now_iso, exporter=boom)          # noqa: E731
+    plain = copy.deepcopy(cfg)
+    plain['paths']['forward'] = str(tmp / 'forward_plain')
+    for upto in (2000, 2003):
+        st = FL.run_once(cfg, frames=_frames(h1, upto), loader=lambda cell, c: FakeModel(), ph='dry_run', chart=step)
+        FL.run_once(plain, frames=_frames(h1, upto), loader=lambda cell, c: FakeModel(), ph='dry_run')
+    assert st['chart'] == 'failed: PermissionError'
+    fails = [r for r in _rows(cfg, 'failures') if r['cell'] == 'chart']
+    assert len(fails) == 2 and 'read-only' in fails[0]['error']
+    for name, stamp in (('predictions', 'logged_at'), ('settlements', 'settled_at'), ('alerts', 'logged_at')):
+        assert _strip(_rows(cfg, name), stamp) == _strip(_rows(plain, name), stamp)
+    assert len(_rows(cfg, 'settlements')) > 0
+
+
+def test_chart_export_runs_after_the_alerts_of_the_pass(env, monkeypatch):
+    cfg, _, h1 = env
+    seen = []
+    monkeypatch.setattr(FL, 'log_alerts', lambda c, now_iso, preds: seen.append('alerts') or '0 alert(s)')
+    step = lambda c, now_iso: seen.append('chart') or '3 mark(s)'              # noqa: E731
+    st = FL.run_once(cfg, frames=_frames(h1, 2000), loader=lambda cell, c: FakeModel(), ph='dry_run', chart=step)
+    assert seen == ['alerts', 'chart'] and st['chart'] == '3 mark(s)'
+    assert 'chart' not in _run(cfg, _frames(h1, 2001))                          # injected frames skip it by default

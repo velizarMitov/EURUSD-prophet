@@ -1329,6 +1329,19 @@ without retraining. Corrections go to `results/gold/RESULTS.md`.
     - the banner is a solid block that names the hour in Sofia time and the size in %
       and in $ at the alerted close;
     - the tab title starts with ⚠ while the alert's hour is open;
+  - the gold signals on the MT5 chart (change `gold-mt5-chart-signals`, spec
+    `gold-forecasting/mt5-chart-signals`):
+    - each logger pass runs `forward_logger.log_chart` after the alerts;
+    - `src/gold/mt5_export.py` rebuilds one file, `Common\Files\EURUSDProphet\gold_signals.tsv`
+      in the MT5 shared folder. It is the only gold write outside the repo, and nothing
+      reads it back;
+    - the read-only indicator `mql5/Indicators/ProphetGoldSignals.mq5` draws an up/down
+      arrow per h1_lstm forecast hour and a two-headed marker per alert, for the last
+      5 trading days, each with its outcome. It also shows a hover description in Sofia
+      time and a panel;
+    - Python writes every word, so the no-trade-words rule is tested in pytest;
+    - the marks follow the chart broker's clock;
+    - `scripts/gold/install_mt5_indicator.ps1` compiles the indicator into every terminal;
   - the monthly shadow refit (`src/gold/versions.py`, task `EURUSDProphet-GoldRetrain`),
     in `predictions_v2.csv` and `settlements_v2.csv`, promoted only by
     `python -m src.gold.versions promote`;

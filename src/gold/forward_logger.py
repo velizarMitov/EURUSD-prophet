@@ -223,14 +223,15 @@ def settle(cfg, frames, now_iso, preds_name='predictions', setts_name='settlemen
     return out
 
 
-def run_once(cfg=None, frames=None, loader=load_cell, ph=None, gvz=None) -> dict:
-    """One pass. A pass on injected frames (tests, replays) skips the GVZ step
-    unless one is passed as `gvz`: it would otherwise reach the network and the
-    live results/gold/ GVZ files."""
+def run_once(cfg=None, frames=None, loader=load_cell, ph=None, gvz=None, chart=None) -> dict:
+    """One pass. A pass on injected frames (tests, replays) skips the GVZ and
+    chart steps unless one is passed as `gvz` / `chart`: they would otherwise
+    reach the network, the live results/gold/ GVZ files and the MT5 chart file."""
     cfg = cfg or load_config()
     now_iso = _now()
     status, new_preds = {}, []
     gvz = gvz or (log_gvz if frames is None else None)
+    chart = chart or (log_chart if frames is None else None)
     with RunLock(os.path.join(repo_path(cfg['paths']['artifacts']), 'forward.lock')):
         live = {'D1': True, 'H1': True}
         if frames is None:
@@ -279,6 +280,8 @@ def run_once(cfg=None, frames=None, loader=load_cell, ph=None, gvz=None) -> dict
         status['settled'] = len(settled)
         status['ranges'] = log_ranges(cfg, now_iso, new_preds)
         status['alerts'] = log_alerts(cfg, now_iso, new_preds)
+        if chart is not None:
+            status['chart'] = chart(cfg, now_iso)
         if gvz is not None:
             status['gvz'] = gvz(cfg, now_iso, frames)
         status['shadow'] = log_shadow(cfg, frames, live, ph, now_iso)
@@ -505,6 +508,23 @@ def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None) -> str:
         return f'failed: {type(e).__name__}'
 
 
+def log_chart(cfg, now_iso, exporter=None) -> str:
+    """Gold signals on the MT5 chart (change gold-mt5-chart-signals, spec
+    gold-forecasting/mt5-chart-signals): rebuild the file the indicator reads
+    from this pass's logs, on every pass -- settlements and the clock change the
+    chart even when nothing new was forecast. A failure is recorded and never
+    touches another row of the pass."""
+    try:
+        if exporter is None:
+            from .mt5_export import export as exporter
+        return exporter(cfg)
+    except Exception as e:  # noqa: BLE001 -- the chart must never cost the round-one pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'chart', 'cadence': 'H1', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
 def log_gvz(cfg, now_iso, frames, cfg2=None, now=None, fred_fetch=None, yahoo_fetch=None) -> str:
     """GVZ morning check (change gold-gvz-morning-check, spec gold-forecasting/gvz-check):
     refresh GVZ only while the newest stored session is older than the last
@@ -563,7 +583,8 @@ def run_with_health(cfg=None, runner=None) -> dict:
     row.update(outcome=outcome, mt5='yes' if st.get('mt5') else 'no', newest_h1=st.get('newest_h1', ''),
                forecasts=st.get('forecasts', 0), settled=st.get('settled', 0), gaps=st.get('gaps', 0),
                note=(f"D1: {st.get('D1', '')}; H1: {st.get('H1', '')}; ranges: {st.get('ranges', '')}; "
-                     f"alerts: {st.get('alerts', '')}; gvz: {st.get('gvz', '')}; shadow: {st.get('shadow', '')}; "
+                     f"alerts: {st.get('alerts', '')}; chart: {st.get('chart', '')}; gvz: {st.get('gvz', '')}; "
+                     f"shadow: {st.get('shadow', '')}; "
                      f"v2: {st.get('v2', '')}")[:300], ended_at=_now())
     HL.record(row, cfg)
     return st

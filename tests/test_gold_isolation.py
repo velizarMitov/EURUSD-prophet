@@ -71,3 +71,21 @@ def test_gold_never_reads_spread_or_volume_as_data():
     for rel, src in _gold_sources():
         m = access.search(src)
         assert not m, f'{rel} addresses {m.group(0)}'
+
+
+def test_only_the_chart_export_writes_outside_the_repo():
+    """The one named exception (change gold-mt5-chart-signals): mt5_export alone
+    names the MT5 shared folder, and nothing in the repo reads the chart file back."""
+    mt5_dir = re.compile(r'MetaQuotes|Common[\\/]+Files|MT5_COMMON_FILES')
+    namers = sorted(rel for rel, src in _gold_sources() if mt5_dir.search(src))
+    assert namers == ['src/gold/mt5_export.py'], namers
+    readers = []
+    for root, dirs, files in os.walk(REPO):
+        dirs[:] = [d for d in dirs if d not in ('.git', '.venv', 'node_modules', 'tests', 'openspec', '__pycache__')]
+        for f in files:
+            if f.endswith('.py') and f != 'mt5_export.py':
+                path = os.path.join(root, f)
+                with open(path, encoding='utf-8', errors='ignore') as fh:
+                    if 'gold_signals' in _code(fh.read()):
+                        readers.append(os.path.relpath(path, REPO))
+    assert readers == [], readers

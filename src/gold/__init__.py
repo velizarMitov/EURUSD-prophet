@@ -12,6 +12,9 @@ ISOLATION CONTRACT
   * Writes only under results/gold/ and the gitignored research_models/gold/.
     Never writes under models/, never reads config.json, never touches
     results/forward_eval/ (the EUR/USD forward arbiter).
+    One named exception (change gold-mt5-chart-signals): mt5_export writes the
+    single file MT5 Common\\Files\\EURUSDProphet\\gold_signals.tsv, outside the
+    repo, for the chart indicator. Nothing in the repo reads it back.
   * Uses src/forecast_eval's pure functions (splits, targets, stats,
     benchmarks, overfit, power maths) read-only; never modifies them.
   * Spread, tick volume and real volume are dropped at acquisition and used
@@ -29,6 +32,7 @@ Layout (design D1):
   study           validation / test / final stages
   forward_logger  hourly forward logging and settlement
   summary         read-only payload for /api/gold
+  mt5_export      the file the MT5 chart indicator draws from
 """
 
 from __future__ import annotations
