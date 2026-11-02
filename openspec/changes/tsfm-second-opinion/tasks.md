@@ -63,7 +63,7 @@
   - the files exist and report their first and last bars and row counts (gold about
     11 years, EUR/USD about 15; corrected at implementation from the planning estimates
     of 16 and 10).
-- [ ] 3.2 Add `finetune.py --train`, run in `.venv-tsfm` on the GPU: LoRA per model and
+- [x] 3.2 Add `finetune.py --train`, run in `.venv-tsfm` on the GPU: LoRA per model and
   instrument.
   - **Stage 1:** train on bars before 2024-11-01 and score the holdout year every 100
     steps, up to 3,000 steps.
@@ -94,7 +94,7 @@
   Save it under `research_models/external_tsfm/baseline_eurusd/` with its digest (design
   D5). Verify with a test that the fit sees no bar on or after 2025-11-01, and that a
   reload gives identical forecasts.
-- [ ] 4.3 Create `src/external/tsfm/replay.py`:
+- [x] 4.3 Create `src/external/tsfm/replay.py`:
   - the {zero-shot, fine-tuned} × {returns, closes} × {2,048, long} grid per model and
     instrument, without the fine-tuned entries of a failed fine-tune;
   - the choice by lowest first-half MAE;

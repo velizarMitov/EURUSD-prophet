@@ -1,0 +1,119 @@
+{
+ "alpha": 0.0125,
+ "cap": "2027-04-30",
+ "cells": [
+  {
+   "artifacts": {
+    "chronos2": "ebb2ec865b31c448",
+    "chronos2_gold_lora": "38214c0081a62204"
+   },
+   "baseline": {
+    "digest": "752a367f3d696338",
+    "name": "h1_garch_hod",
+    "source": "gold family, frozen registered cell"
+   },
+   "cell": "external_tsfm:chronos2_gold",
+   "config_id": "chronos2:fine_tuned:returns:8192",
+   "instrument": "gold",
+   "model": "chronos2",
+   "score": "MAE of size_pct vs realised |return|",
+   "target": "next-hour |return| %"
+  },
+  {
+   "artifacts": {
+    "chronos2": "ebb2ec865b31c448",
+    "chronos2_eurusd_lora": "7d49ab9268c8c2e1"
+   },
+   "baseline": {
+    "digest": "f544f74da0a59474",
+    "name": "baseline_eurusd",
+    "source": "GARCH(1,1) x hour-of-day, fitted 2020-11-01 .. before 2025-11-01"
+   },
+   "cell": "external_tsfm:chronos2_eurusd",
+   "config_id": "chronos2:fine_tuned:returns:8192",
+   "instrument": "eurusd",
+   "model": "chronos2",
+   "score": "MAE of size_pct vs realised |return|",
+   "target": "next-hour |return| %"
+  },
+  {
+   "artifacts": {
+    "timesfm25": "dac1d6da84b999d2"
+   },
+   "baseline": {
+    "digest": "752a367f3d696338",
+    "name": "h1_garch_hod",
+    "source": "gold family, frozen registered cell"
+   },
+   "cell": "external_tsfm:timesfm25_gold",
+   "config_id": "timesfm25:zero_shot:returns:2048",
+   "instrument": "gold",
+   "model": "timesfm25",
+   "score": "MAE of size_pct vs realised |return|",
+   "target": "next-hour |return| %"
+  },
+  {
+   "artifacts": {
+    "timesfm25": "dac1d6da84b999d2",
+    "timesfm25_eurusd_lora": "dfa65fdb11c1585a"
+   },
+   "baseline": {
+    "digest": "f544f74da0a59474",
+    "name": "baseline_eurusd",
+    "source": "GARCH(1,1) x hour-of-day, fitted 2020-11-01 .. before 2025-11-01"
+   },
+   "cell": "external_tsfm:timesfm25_eurusd",
+   "config_id": "timesfm25:fine_tuned:returns:2048",
+   "instrument": "eurusd",
+   "model": "timesfm25",
+   "score": "MAE of size_pct vs realised |return|",
+   "target": "next-hour |return| %"
+  }
+ ],
+ "clean_start": "2025-11-01",
+ "direction": "logged and shown, never registered, never judged",
+ "family": "external_tsfm",
+ "family_size": 4,
+ "label": "external model \u2014 research, no proven edge",
+ "n_min": 500,
+ "n_target": 1500,
+ "power": {
+  "available": true,
+  "eurusd": {
+   "detectable_edge_pp": 0.0025209338681959777,
+   "scale_vs_gold": 0.23276904233291526,
+   "se_at_n_pp": 0.00075492279990685
+  },
+  "gold": {
+   "detectable_edge_pp": 0.0108301939249741,
+   "se_at_n_pp": 0.0032432268154763046
+  },
+  "reference": "gold h1_lstm vs h1_garch_hod, test block (results/gold/test_report.json)",
+  "reference_edge_pp": 0.01133022781950857,
+  "reference_n": 12780,
+  "reference_se_pp": 0.0011111111986871318,
+  "statement": "At N = 1500 the standard error of the paired MAE difference is about 0.0032 pp for gold, so an edge of 0.0108 pp is detected with 80% power at alpha 0.0125. Gold h1_lstm's own edge over h1_garch_hod was 0.0113 pp: an external edge of that size would be borderline. About 110 eligible hours a week means N arrives in roughly 14 weeks.",
+  "weeks_to_n": 13.6
+ },
+ "replay": {
+  "label": "DESCRIPTIVE: chooses a configuration only, never a verdict",
+  "path": "results/external_tsfm/replay/replay.json"
+ },
+ "test": {
+  "bootstrap": {
+   "block_len": 24,
+   "n_boot": 2000,
+   "seed": 42,
+   "two_sided": true
+  },
+  "keep_rule": "lower bound of the 98.75% interval > 0",
+  "rows": "phase registered, eligible, model and baseline both present, in as-of order",
+  "statistic": "mean of |baseline - realised| - |size - realised| on paired rows"
+ },
+ "untouched": [
+  "EUR/USD 0.05/9 feature bar",
+  "gold registries",
+  "the horizon study record"
+ ],
+ "written_at": "2026-11-02T20:39:46+00:00"
+}

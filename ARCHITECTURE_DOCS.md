@@ -1548,7 +1548,7 @@ the gold study's own h1_lstm on the same rows. Those comparisons inform no choic
 - A card on `/gold`.
 - One line in the MT5 gold panel (`mt5_export.second_opinion`, indicator 2.10).
 
-Every text carries "external model, zero-shot — research, no proven edge".
+Every text carries "external model — research, no proven edge".
 
 ---
 

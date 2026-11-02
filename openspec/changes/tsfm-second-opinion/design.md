@@ -219,7 +219,7 @@ seconds on CPU, since both models patch the input to about 512 tokens.
   whose hour is current at export time. It reads `results/external_tsfm/forward/`
   read-only. When nothing is current the line is empty.
 - The indicator adds that line to the hourly panel when it is non-empty, with the
-  "external model, zero-shot" label as its tooltip.
+  "external model" label as its tooltip.
 - The file format stays version 2. An unknown meta key is ignored by older indicators,
   which simply show no line.
 
@@ -274,7 +274,7 @@ seconds on CPU, since both models patch the input to about 512 tokens.
   halved until it fits, recorded in the meta.
 
 - **The owner treats agreement as confirmation.** Two models agreeing is not evidence of
-  skill. → Every text carries "external model, zero-shot — research, no proven edge".
+  skill. → Every text carries "external model — research, no proven edge".
   Agreement is labelled descriptive. The view shows KEEP/DROP only from the registered
   score.
 - **The upstream packages change their APIs.** → Exact pins in `requirements-tsfm.txt`, the

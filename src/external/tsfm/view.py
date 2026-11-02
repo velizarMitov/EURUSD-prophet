@@ -32,8 +32,8 @@ SHORT = {'chronos2': 'Chronos', 'timesfm25': 'TimesFM'}
 INHOUSE = {'gold': 'h1_lstm', 'eurusd': 'h1_gbm'}
 
 TEXTS = {
-    'label': {'bg': 'външен модел, zero-shot — изследване, без доказано предимство',
-              'en': 'external model, zero-shot — research, no proven edge'},
+    'label': {'bg': 'външен модел — изследване, без доказано предимство',
+              'en': 'external model — research, no proven edge'},
     'title': {'bg': 'Второ мнение', 'en': 'Second opinion'},
     'subtitle': {'bg': 'Какво очакват два външни модела за размера на следващия час, до нашите модели.',
                  'en': 'What two external models expect for the size of the next hour, beside our own models.'},

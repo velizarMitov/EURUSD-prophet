@@ -80,7 +80,7 @@ h1_lstm, linking to `/second-opinion`. It SHALL read the second-opinion endpoint
 - **THEN** the card shows both sizes and whether each agrees with h1_lstm on size and on direction
 
 ### Requirement: Every view carries the honesty label and no trade words
-Every second-opinion text SHALL carry "external model, zero-shot — research, no proven
+Every second-opinion text SHALL carry "external model — research, no proven
 edge" until a registered verdict exists. No text SHALL contain buy, sell, long, short,
 entry, stop, target or take-profit wording, in BG or EN.
 

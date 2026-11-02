@@ -92,8 +92,8 @@ TEXT = {
                        'gbm {r_d1_gbm} of {t_d1_gbm} (descriptive, not a test)'},
     'filter': {'bg': 'Филтър ≥{min} %: избор за показване, не е тестван праг',
                'en': 'Filter ≥{min} %: a display choice, not a tested rule'},
-    'second_tip': {'bg': 'външен модел, zero-shot — изследване, без доказано предимство; съгласието е описателно',
-                   'en': 'external model, zero-shot — research, no proven edge; agreement is descriptive'},
+    'second_tip': {'bg': 'външен модел — изследване, без доказано предимство; съгласието е описателно',
+                   'en': 'external model — research, no proven edge; agreement is descriptive'},
 }
 
 

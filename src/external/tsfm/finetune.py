@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from . import ARTIFACTS, CLEAN_START, FINETUNE, INSTRUMENTS, MODELS, REPO, RESULTS, repo_path
+from . import ARTIFACTS, CLEAN_START, FINETUNE, INSTRUMENTS, MODELS, REPO, RESULTS, gpu_job, repo_path
 from . import client as CL
 from . import data as D
 from . import sources as S
@@ -202,13 +202,14 @@ def train_pair(model: str, instrument: str, repo: str = REPO, call=CL.call) -> d
 def train(repo: str = REPO, pairs=None, call=CL.call) -> dict:
     meta = read_meta(repo)
     meta['versions'] = versions(repo)
-    for model, inst in pairs or [(m, i) for m in MODELS for i in INSTRUMENTS]:
-        entry = train_pair(model, inst, repo, call)
-        meta.setdefault('pairs', {})[f'{model}_{inst}'] = entry
-        write_meta(meta, repo)
-        print(f'{model} {inst}: {entry["status"]}'
-              + (f' ({entry.get("chosen_steps")} steps)' if entry['status'] == 'trained' else f' -- {entry["reason"]}'),
-              flush=True)
+    with gpu_job(repo):
+        for model, inst in pairs or [(m, i) for m in MODELS for i in INSTRUMENTS]:
+            entry = train_pair(model, inst, repo, call)
+            meta.setdefault('pairs', {})[f'{model}_{inst}'] = entry
+            write_meta(meta, repo)
+            print(f'{model} {inst}: {entry["status"]}'
+                  + (f' ({entry.get("chosen_steps")} steps)' if entry['status'] == 'trained'
+                     else f' -- {entry["reason"]}'), flush=True)
     return meta
 
 

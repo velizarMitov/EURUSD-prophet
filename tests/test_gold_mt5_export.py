@@ -397,7 +397,7 @@ def test_the_second_opinion_line_comes_from_the_external_view(cfg, monkeypatch):
     monkeypatch.setattr(VW, 'gold_line', line)
     meta = X.build(cfg, NOW)['meta']
     assert meta['second_bg'] == SECOND_BG
-    assert meta['second_tip_en'].startswith('external model, zero-shot — research, no proven edge')
+    assert meta['second_tip_en'].startswith('external model — research, no proven edge')
     assert {lang for lang, _ in seen} == {'bg', 'en'}
     # the view is asked on the label clock: Berlin wall time, stamped UTC
     assert seen[0][1] == pd.Timestamp(NOW.astimezone(X.LABEL_TZ).replace(tzinfo=None), tz='UTC')

@@ -2,6 +2,8 @@
 name: openspec-archive-change
 description: Archive a completed OpenSpec change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete. Also use when the user says "openspec archive" or "opsx archive".
 allowed-tools: Bash(openspec:*)
+model: sonnet
+effort: medium
 license: MIT
 compatibility: Requires openspec CLI.
 metadata:
@@ -9,6 +11,8 @@ metadata:
   version: "1.0"
   generatedBy: "1.14.0"
 ---
+
+**Scope:** this command archives one change and nothing else. If the arguments also ask for another workflow (for example `/opsx:apply ...`), finish the archive, then stop and ask the user to run that as its own command.
 
 Archive a completed change in the experimental workflow.
 

@@ -207,7 +207,7 @@ adds one line after any open alert, e.g. "Второ мнение: Chronos ±0,1
 размер: Chronos не е съгласен, TimesFM е съгласен с h1_lstm":
 - each external model's current gold size, and whether it is on the same side of the
   large-move threshold as h1_lstm;
-- hovering the line shows "external model, zero-shot — research, no proven edge; agreement
+- hovering the line shows "external model — research, no proven edge; agreement
   is descriptive";
 - the line is absent while no external forecast is current. The external logger runs at
   :01, so the :03 export carries the hour's line. See `results/external_tsfm/RUNBOOK.md`.

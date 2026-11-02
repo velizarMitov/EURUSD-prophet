@@ -134,7 +134,7 @@ def test_every_text_carries_no_trade_words(repo):
 
 
 def test_the_honesty_label():
-    assert VW.TEXTS['label']['en'] == 'external model, zero-shot — research, no proven edge'
+    assert VW.TEXTS['label']['en'] == 'external model — research, no proven edge'
     assert VW.TEXTS['label']['bg']
 
 
@@ -180,7 +180,7 @@ def test_the_endpoint_returns_both_instruments_and_writes_nothing(client):
     body = r.json()
     assert set(body['instruments']) == {'gold', 'eurusd'}
     assert all(len(b['models']) == 2 for b in body['instruments'].values())
-    assert body['label']['en'] == 'external model, zero-shot — research, no proven edge'
+    assert body['label']['en'] == 'external model — research, no proven edge'
     assert _mtimes() == before
 
 

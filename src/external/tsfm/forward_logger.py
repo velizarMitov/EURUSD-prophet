@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 
 from . import (ARTIFACTS, FORWARD, INSTRUMENTS, MODELS, PREREG_JSON, PREREG_MD, REPLAY, REPO,
-               repo_path)
+               gpu_busy, repo_path)
 from . import baseline as B
 from . import client as CL
 from . import data as D
@@ -264,7 +264,7 @@ def forecast_pass(frames: dict, ph: str, repo: str, call, now_iso: str):
         if not jobs:
             continue
         r = call({'op': 'forecast', 'model': model, 'weights_dir': V.weights_dir(model, repo), 'jobs': jobs,
-                  'device': 'auto'})
+                  'device': 'cpu' if gpu_busy(repo) else 'auto'})
         if not r.get('ok'):
             fails += [{'model': model, 'instrument': inst, 'as_of_bar': str(todo[inst]), 'error': r.get('error'),
                        'logged_at': now_iso} for inst in meta]

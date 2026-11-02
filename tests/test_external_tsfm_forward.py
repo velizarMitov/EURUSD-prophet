@@ -81,6 +81,18 @@ def test_the_newest_closed_bar_is_forecast_once(repo):
     assert st['forecasts'] == 0 and st['instruments'] == {'gold': 'nothing new', 'eurusd': 'nothing new'}
 
 
+def test_a_running_gpu_job_sends_the_hourly_pass_to_the_cpu(repo):
+    """The 15:01 pass on 2026-11-02 took the GPU from under the fine-tuning
+    (CUDA out of memory). While a GPU job holds its lock, the pass uses the CPU."""
+    from src.external.tsfm import gpu_job
+    call, calls = _fake_call()
+    with gpu_job(repo):
+        L.run_once(repo, frames=_frames('2026-11-04 10:00'), call=call, ph='dry_run')
+    L.run_once(repo, frames=_frames('2026-11-04 11:00'), call=call, ph='dry_run')
+    assert [c['device'] for c in calls] == ['cpu', 'cpu', 'auto', 'auto']
+    assert not os.path.exists(os.path.join(repo, 'research_models', 'external_tsfm', 'gpu_job.lock'))
+
+
 def test_three_missed_hours_become_gaps_never_late_forecasts(repo):
     call, _ = _fake_call()
     L.run_once(repo, frames=_frames('2026-11-04 10:00'), call=call, ph='dry_run')

@@ -55,6 +55,9 @@ PREREG_MD = f'{RESULTS}/PRE_REGISTRATION.md'
 PREREG_JSON = f'{RESULTS}/PRE_REGISTRATION.json'
 VERDICTS = f'{RESULTS}/verdicts.json'
 VENV_PYTHON = '.venv-tsfm/Scripts/python.exe'
+# Held while a long GPU job (fine-tuning, replay) runs: the hourly pass then
+# forecasts on the CPU, so it never takes the 8 GB card from under the job.
+GPU_LOCK = f'{ARTIFACTS}/gpu_job.lock'
 
 
 def repo_path(rel: str, repo: str = REPO) -> str:
@@ -62,3 +65,27 @@ def repo_path(rel: str, repo: str = REPO) -> str:
     if os.path.isabs(rel):
         return rel
     return os.path.join(repo, *rel.split('/'))
+
+
+class gpu_job:
+    """Context manager that holds GPU_LOCK for a long GPU job. A lock left behind
+    by a crash only makes the hourly pass use the CPU, which is safe."""
+
+    def __init__(self, repo: str = REPO):
+        self.path = repo_path(GPU_LOCK, repo)
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, 'w', encoding='utf-8') as fh:
+            fh.write(str(os.getpid()))
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+
+def gpu_busy(repo: str = REPO) -> bool:
+    return os.path.exists(repo_path(GPU_LOCK, repo))

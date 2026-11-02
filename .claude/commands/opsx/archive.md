@@ -2,9 +2,13 @@
 name: "OPSX: Archive"
 description: "Archive a completed change in the experimental workflow"
 allowed-tools: Bash(openspec:*)
+model: sonnet
+effort: medium
 category: "Workflow"
 tags: ["workflow", "archive", "experimental"]
 ---
+
+**Scope:** this command archives one change and nothing else. If the arguments also ask for another workflow (for example `/opsx:apply ...`), finish the archive, then stop and ask the user to run that as its own command.
 
 Archive a completed change in the experimental workflow.
 

@@ -48,7 +48,7 @@ N_TARGET = 1500
 N_MIN = 500
 CAP = '2027-04-30'
 EDGE_POWER = 0.80
-LABEL = 'external model, zero-shot — research, no proven edge'
+LABEL = 'external model — research, no proven edge'
 
 
 class AlreadyRegistered(RuntimeError):

@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from . import ARTIFACTS, CLEAN_START, INSTRUMENTS, MODELS, PREREG_JSON, REPLAY, REPO, repo_path
+from . import ARTIFACTS, CLEAN_START, INSTRUMENTS, MODELS, PREREG_JSON, REPLAY, REPO, gpu_job, repo_path
 from . import client as CL
 from . import data as D
 from . import finetune as FT
@@ -294,7 +294,8 @@ def main(argv=None):
     if a.freeze:
         print(json.dumps(freeze(), indent=1))
         return
-    rep = replay()
+    with gpu_job():
+        rep = replay()
     print(json.dumps(rep['choice'], indent=1))
 
 
