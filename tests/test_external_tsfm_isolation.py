@@ -18,9 +18,11 @@ TSFM_IMPORT = re.compile(r'^\s*(from\s+src\.external\.tsfm\b|from\s+src\.externa
                          r'|import\s+src\.external\.tsfm\b)', re.M)
 WORKER_ALLOWED = {'numpy', 'torch', 'chronos', 'timesfm', 'peft', 'transformers', 'safetensors'}
 # The production config.json is the repo-root one; a model folder's own
-# config.json (vendor.PINS) is a different file.
+# config.json (vendor.PINS) is a different file. Likewise `models/` is the
+# production folder as a PATH; a payload key 'models' is not.
 FOREIGN = re.compile(r'results/gold|results/forward_eval|results/horizon_study'
-                     r"""|['"]models[/\\'"]|(?:REPO\s*,\s*|repo_path\(\s*)['"]config\.json""")
+                     r"""|['"]models[/\\]|(?:REPO|repo)\s*,\s*['"]models['"]"""
+                     r"""|(?:REPO\s*,\s*|repo_path\(\s*)['"]config\.json""")
 WRITES = re.compile(r"""open\([^)]*['"][wax]b?\+?['"]|\.to_csv\(|os\.replace\(|json\.dump\(|np\.save\("""
                     r"""|\.write_text\(|\.write_bytes\(|shutil\.|os\.remove\(|os\.makedirs\(""")
 
@@ -128,6 +130,8 @@ def test_check_flags_a_repo_import_in_the_worker():
 def test_check_flags_a_foreign_path_outside_sources():
     assert foreign_namers({'forward_logger.py': "OUT = 'results/gold/forward/x.csv'"}) == ['forward_logger.py']
     assert foreign_namers({'replay.py': "p = os.path.join(REPO, 'models/', 'x')"}) == ['replay.py']
+    assert foreign_namers({'replay.py': "p = os.path.join(REPO, 'models', 'x')"}) == ['replay.py']
+    assert foreign_namers({'view.py': "block['models'].append(entry)"}) == []
     assert foreign_namers({'view.py': "open('results/horizon_study/study_record.json')"}) == ['view.py']
     assert foreign_namers({'prereg.py': "cfg = repo_path('config.json')"}) == ['prereg.py']
     assert foreign_namers({'vendor.py': "{'config.json': ('blob', 'abc')}"}) == []

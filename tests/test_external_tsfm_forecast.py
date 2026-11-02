@@ -75,6 +75,21 @@ def test_summarise_names_every_decile():
     assert [k for k in s if k.startswith('q')] == [f'q{i}' for i in range(10, 100, 10)]
 
 
+def test_the_vectorised_versions_equal_the_scalar_ones():
+    rng = np.random.default_rng(7)
+    rows = np.sort(rng.normal(rng.normal(0, 0.05, (300, 1)), rng.uniform(0.01, 0.4, (300, 1)), (300, 9)), axis=1)
+    rows[0] = _uniform(-0.2, 0.2)
+    rows[1] = np.array([0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.15, 0.20, 0.30])
+    rows[2] = np.array([-0.1, -0.1, -0.05, 0.0, 0.0, 0.0, 0.05, 0.1, 0.1])
+    s = Q.size_many(rows)
+    p = Q.p_up_many(rows)
+    for i, r in enumerate(rows):
+        assert s[i] == pytest.approx(Q.size(r), abs=1e-9)
+        assert p[i] == pytest.approx(Q.p_up(r), abs=1e-12)
+        for x in (-1.0, -0.15, 0.0, 0.07, 1.0):
+            assert Q.cdf_many(r[None, :], np.array([x]))[0] == pytest.approx(float(Q.cdf(r, x)), abs=1e-12)
+
+
 def test_unknown_mode_and_missing_close_are_refused():
     with pytest.raises(ValueError):
         Q.to_return_deciles(_uniform(-1, 1), 'ticks')

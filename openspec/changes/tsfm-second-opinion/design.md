@@ -33,9 +33,12 @@
       context of 2,048.
     - TimesFM 2.5 takes up to 16,384 and ships a LoRA/PEFT fine-tuning example. It
       normalises its input internally (RevIN), so raw values go in.
-- **History available.**
-  - Gold: `results/gold/gold_h1.csv` holds about 99,000 H1 bars (about 16 years).
-  - EUR/USD: about 10 years of H1 through MT5.
+- **History available** (measured at implementation, 2026-11-02).
+  - Gold: `results/gold/gold_h1.csv` holds 64,295 H1 bars before 2025-11-01, from
+    2015-01 (about 11 years). The broker's earlier months are daily bars labelled H1 and
+    are trimmed from the cache.
+  - EUR/USD: the deepest MT5 read is about 100,000 bars: 93,763 before 2025-11-01, from
+    2010-10 (about 15 years).
 
 ## Goals / Non-Goals
 
@@ -122,7 +125,8 @@ seconds on CPU, since both models patch the input to about 512 tokens.
     not come from `results/eurusd_h1.csv`, which shrank below its DATA.md count on
     2026-11-02.
 - **Grid.** {zero-shot, fine-tuned} × {returns, closes} × {2,048, long}, where long is
-  8,192 for Chronos-2 and 16,384 for TimesFM. That is 8 configurations per model and
+  8,192 for Chronos-2 and 16,256 for TimesFM (its 16,384 limit includes the 128-step
+  output patch). That is 8 configurations per model and
   instrument. The rule is the lowest first-half MAE (2025-11-01 to 2026-04-30). The second
   half is a descriptive check. A fine-tune that failed removes its four configurations.
 - **Cost.** Rolling forecasts are batched (64 windows per worker call) on the GPU. The full
@@ -186,10 +190,13 @@ seconds on CPU, since both models patch the input to about 512 tokens.
     is > 0;
   - DROP otherwise;
   - UNDERPOWERED — NO DECISION below 500 rows at the cap.
-- **Power.** gold `h1_lstm`'s own edge over GARCH was 0.0113 pp of MAE, with SE ≈ 0.00128 at
-  n = 12,767. At n = 1,500 the SE is ≈ 0.0037, so the detectable edge at 80 % power is
-  ≈ 0.0125 pp. An edge as small as h1_lstm's would be borderline. The pre-registration
-  states this. About 110 eligible hours a week means N arrives in roughly 14 weeks.
+- **Power.** gold `h1_lstm`'s own edge over GARCH was 0.0113 pp of MAE. The SE implied
+  by its test-block CI is ≈ 0.00111 at n = 12,780; the planning draft's 0.00128 was
+  corrected at implementation. At n = 1,500 the SE is ≈ 0.0032, so the detectable edge at
+  80 % power is ≈ 0.011 pp. An edge as small as h1_lstm's would be borderline.
+  `prereg.power_statement` computes this from `results/gold/test_report.json`, and the
+  pre-registration states it. About 110 eligible hours a week means N arrives in roughly
+  14 weeks.
 
 ### D8. The second-opinion view
 - **Data source.** `src/external/tsfm/view.py` reads only:
@@ -222,11 +229,17 @@ seconds on CPU, since both models patch the input to about 512 tokens.
   with a digest. Gold comes from `gold_h1.csv`, and EUR/USD from the deepest MT5 read the
   reader allows. Any bar on or after 2025-11-01 makes the freeze refuse. The fine-tune
   reads only these files, so the boundary is checked in one place.
-- **Method.** LoRA on each model, in `.venv-tsfm` on the GPU:
-  - **Chronos-2:** the fine-tuning entry point of the pinned `chronos-forecasting`
-    version. If the pinned version has none, AutoGluon's Chronos-2 wrapper is used, pinned
-    in the same side environment.
-  - **TimesFM 2.5:** the repository's PEFT/LoRA example, vendored at a pinned commit.
+- **Method.** LoRA on each model, in `.venv-tsfm` on the GPU (as implemented):
+  - **Chronos-2:** the pinned `chronos-forecasting` 2.3.2 has its own entry point,
+    `Chronos2Pipeline.fit(finetune_mode='lora')`. It is used at the package's
+    recommended LoRA rate of 1e-5, batch 32 and context 2,048, so AutoGluon is not needed.
+  - **TimesFM 2.5:** the pinned package has no trainer. The worker injects LoRA adapters
+    (`peft`, r = 8) into the attention and feed-forward layers and trains them through
+    the same first-step path the forecasts use, at 1e-4. That path matches the package's
+    `forecast()` to 1e-6. The batch is 32, in two micro-batches of 16, which keeps the
+    peak under 4.3 GB of the 8 GB card.
+  - Both stages use a constant learning rate, so step k of stage 1 and a stage-2 run of
+    k steps see the same rate.
   - **Target and loss.** Next-bar log return in percent. Each model uses its own quantile
     loss, with the input mode fixed as in the replay grid. Fine-tuning uses the returns
     series, and the closes mode reuses the same adapter.
@@ -296,6 +309,12 @@ seconds on CPU, since both models patch the input to about 512 tokens.
 
 ## Open Questions
 
-- Which exact package versions and revision commits to pin is settled at install time
-  (D2), by what works with Python 3.13 on CPU. The rest of the design does not depend on
-  it.
+- Resolved at implementation (2026-11-02):
+  - `.venv-tsfm` is Python 3.11 with `torch 2.11.0+cu128`, `chronos-forecasting 2.3.2`,
+    `timesfm 2.0.2`, `peft 0.21.2` and `transformers 5.18.0`.
+  - `timesfm 2.0.2` is the newest release that ships only TimesFM 2.5. From 3.0.0 the
+    package also carries `timesfm3`, whose weights (2026-08) may have seen the clean
+    window.
+  - The revisions are the weight-upload commits: `amazon/chronos-2@95a9710` (2025-10-30)
+    and `google/timesfm-2.5-200m-pytorch@d418f3e` (2025-10-01). Every later commit of
+    both repos edits only the README.

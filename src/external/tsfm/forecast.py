@@ -63,9 +63,43 @@ def p_up(values) -> float:
     return float(np.clip(1.0 - cdf(values, 0.0), *P_CLIP))
 
 
-def closes_to_returns(price_deciles, last_close: float) -> np.ndarray:
+def cdf_many(values, x) -> np.ndarray:
+    """`cdf` row by row for an (n, 9) array of deciles and n points."""
+    v = np.maximum.accumulate(np.asarray(values, dtype=float), axis=1) + _EPS * np.arange(len(LEVELS))
+    x = np.asarray(x, dtype=float)
+    k = np.clip((v < x[:, None]).sum(axis=1), 1, len(LEVELS) - 1)    # segment [k-1, k]; ends extend
+    rows = np.arange(len(v))
+    lo, hi = v[rows, k - 1], v[rows, k]
+    out = LEVELS[k - 1] + (x - lo) * (LEVELS[k] - LEVELS[k - 1]) / (hi - lo)
+    return np.clip(out, 0.0, 1.0)
+
+
+def size_many(values, iters: int = 80) -> np.ndarray:
+    """`size` for every row of an (n, 9) array, by one vectorised bisection."""
+    v = np.asarray(values, dtype=float)
+    hi = np.maximum(np.maximum(np.abs(v[:, 0]), np.abs(v[:, -1])), 1e-9)
+    for _ in range(64):
+        short = (cdf_many(v, hi) - cdf_many(v, -hi)) < 0.5
+        if not short.any():
+            break
+        hi = np.where(short, hi * 2.0, hi)
+    lo = np.zeros(len(v))
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        below = (cdf_many(v, mid) - cdf_many(v, -mid)) < 0.5
+        lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
+    return 0.5 * (lo + hi)
+
+
+def p_up_many(values) -> np.ndarray:
+    v = np.asarray(values, dtype=float)
+    return np.clip(1.0 - cdf_many(v, np.zeros(len(v))), *P_CLIP)
+
+
+def closes_to_returns(price_deciles, last_close) -> np.ndarray:
+    """100 * ln(q / last close); `last_close` may be a column (n, 1) for n rows."""
     q = np.maximum(np.asarray(price_deciles, dtype=float), 1e-12)
-    return 100.0 * np.log(q / float(last_close))
+    return 100.0 * np.log(q / np.asarray(last_close, dtype=float))
 
 
 def summarise(return_deciles) -> dict:

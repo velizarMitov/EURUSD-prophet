@@ -54,6 +54,16 @@ def test_api_imports_only_the_read_only_summary():
             f'api.py imports more than the read-only views: {h}'
 
 
+def test_api_imports_only_the_read_only_second_opinion_view():
+    """Of the external foundation models (openspec change tsfm-second-opinion),
+    api.py may import only src.external.tsfm.view, which runs no model and
+    writes nothing; the models run in their own environment."""
+    hits = re.findall(r'^\s*(?:from|import)\s+src\.external\.tsfm[\w.]*[^\n]*', _read('api.py'), re.M)
+    assert hits, 'api.py should serve /api/second-opinion'
+    for h in hits:
+        assert h.strip().startswith('from src.external.tsfm.view import'), h
+
+
 def test_gold_names_no_production_write_target():
     for rel, src in _gold_sources():
         assert not re.search(r"""['"]models[/\\'"]""", src), f'{rel} names the production models/ folder'
@@ -81,7 +91,8 @@ def test_only_the_chart_export_writes_outside_the_repo():
     assert namers == ['src/gold/mt5_export.py'], namers
     readers = []
     for root, dirs, files in os.walk(REPO):
-        dirs[:] = [d for d in dirs if d not in ('.git', '.venv', 'node_modules', 'tests', 'openspec', '__pycache__')]
+        dirs[:] = [d for d in dirs if d not in ('.git', '.venv', '.venv-tsfm', 'node_modules', 'tests', 'openspec',
+                                                '__pycache__')]
         for f in files:
             if f.endswith('.py') and f != 'mt5_export.py':
                 path = os.path.join(root, f)

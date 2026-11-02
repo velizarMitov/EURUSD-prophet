@@ -1442,6 +1442,114 @@ actual price. A volatility cell shows expected against actual move, and the GARC
 baseline appears as a dashed line. The series colours are validated with the dataviz
 palette validator in both themes. The page also offers a CSV of the rows on screen.
 
+### 3.13 External foundation models: the `external_tsfm` second opinion (openspec change `tsfm-second-opinion`; research-only, GROSS of cost)
+
+Two external, open-weight time-series foundation models forecast the **size** of the next
+H1 move of gold and EUR/USD:
+- **Chronos-2** (Amazon, 120M, Apache-2.0), weights uploaded 2025-10-30;
+- **TimesFM 2.5** (Google, 200M, Apache-2.0), weights refreshed 2025-10-01.
+
+They are a second opinion beside the in-house models: never an input, an ensemble member
+or a feature, so they spend nothing in the EUR/USD `0.05/9` family. The evidence pointed
+here. Kronos failed on direction (Brier skill −0.62) but passed an incremental volatility
+test, and the literature finds the same (size yes, direction no). Operations:
+`results/external_tsfm/RUNBOOK.md`.
+
+**Isolation.** The models run only in `src/external/tsfm/worker.py`, inside a separate
+environment, `.venv-tsfm` (Python 3.11, `requirements-tsfm.txt`). The worker is started
+with `python -I` and imports no repo module. The app's `.venv` and `requirements.txt`
+never change.
+- Every other module runs in `.venv`. It calls the worker through `client.call`, which has
+  a 120 s limit and never raises.
+- No production module imports the package. `api.py` imports only the read-only `view`.
+- Writes go only under `results/external_tsfm/` and `research_models/external_tsfm/`.
+  `sources.py` is the one module that names another family's files, and it only reads.
+- `tests/test_external_tsfm_isolation.py` enforces all of this, and each check is shown
+  to fire on an injected violation.
+
+**Pinning.** `vendor.PINS` fixes each model's Hugging Face revision, which is the commit
+that uploaded the weights, and the upstream digests. `--fetch` refuses any download that
+differs. Every file a model loads is verified against `results/external_tsfm/artifact_manifest.csv`
+before every load: weights, fine-tuned adapters and the EUR/USD baseline.
+`timesfm==2.0.2` is pinned because from 3.0.0 the package also ships `timesfm3`, whose
+weights (2026-08) may have seen the clean window.
+
+**The clean window and the boundary.** `CLEAN_START = 2025-11-01` is after both
+releases. No as-of bar before it is ever scored, replayed or reported. The fine-tuning
+uses everything before it, by design:
+- `finetune.py --freeze` writes each instrument's whole pre-window H1 history and
+  refuses any later bar. Gold has 64,295 bars from 2015-01; the earlier cache months are
+  daily bars labelled H1 and were trimmed. EUR/USD has 93,763 bars from 2010-10, the
+  deepest MT5 read, about 100,000 bars.
+- **Stage 1:** LoRA on the bars before 2024-11-01. The holdout year is scored every 100
+  steps up to 3,000 by the mean pinball loss of the 9 deciles. Step 0 is the zero-shot
+  model.
+- **Stage 2:** LoRA from the base weights on every pre-window bar, for the chosen number
+  of steps, seed 42, constant learning rate.
+- Chronos-2 uses its package's own `Chronos2Pipeline.fit(finetune_mode='lora')` at
+  1e-5. TimesFM 2.5 has no trainer, so the worker trains LoRA on its attention and
+  feed-forward layers through the same first-step path its forecasts use, at 1e-4, with
+  micro-batches of 16 (peak under 4.3 GB on the 8 GB card). That path reproduces the
+  package's compiled decode at horizon 1 to 1e-6.
+- A fine-tune that fails, or never beats zero-shot on the holdout, is dropped.
+  `finetune_meta.json` records curves, steps, versions, GPU and a probe; `--check`
+  reloads each adapter and requires identical probe deciles.
+
+**From deciles to a forecast** (`forecast.py`). The CDF is piecewise-linear through the
+deciles 0.1 … 0.9, extended linearly at the ends and clipped. The **size** is the median
+of |R| (`F(m) − F(−m) = 0.5`), the MAE-optimal point. **P(up)** is `1 − F(0)`, clipped
+to [0.1, 0.9]. In `closes` mode each price decile `q` becomes `100·ln(q / last close)`.
+
+**Replay** (`replay.py`, descriptive). As-of bars run from 2025-11-01 to 2026-10-31, with
+the market-break eligibility rule. Per model and instrument, the grid is
+{zero-shot, fine-tuned} × {returns, closes} × {2,048, long context}. The long context is
+8,192 for Chronos-2 and 16,256 for TimesFM, since its 16,384 limit includes the 128-step
+output patch. The configuration with the lowest **first-half** MAE (before 2026-05-01) is
+chosen; the second half is a check. `REPLAY.md` also shows the baselines and, for gold,
+the gold study's own h1_lstm on the same rows. Those comparisons inform no choice. Once
+`PRE_REGISTRATION.json` exists, a re-run keeps the registered choice.
+
+**The family** (`prereg.py`, `forward_report.py`):
+- **Cells:** 4, {Chronos-2, TimesFM} × {gold, EUR/USD}. Each forecasts next-hour |return| %
+  and is scored by MAE.
+- **Baselines:** gold uses the frozen `h1_garch_hod` cell. EUR/USD uses a frozen
+  GARCH(1,1) × hour-of-day with the same estimator class, fitted once on 2020-11-01 ..
+  2025-10-31 (`baseline.py`).
+- **Test:** α = 0.05/4 = 0.0125. The statistic is |baseline error| − |model error| on
+  paired, eligible, registered rows, in a two-sided block bootstrap (block 24, 2,000
+  resamples, seed 42). KEEP when the lower bound is above 0.
+- **When:** each cell is scored once, at N = 1,500 rows or on 2027-04-30. Fewer than 500
+  rows reads `UNDERPOWERED — NO DECISION`.
+- **Power:** from gold h1_lstm's own test-block edge over h1_garch_hod (0.0113 pp, CI-implied
+  SE 0.00111 at n = 12,780). The SE at N = 1,500 is about 0.0032 pp, so about 0.011 pp is
+  detected with 80 % power. An edge as small as h1_lstm's would be borderline. N arrives
+  in roughly 14 weeks.
+- **Phase:** rows are `dry_run` until `PRE_REGISTRATION.md` and `.json` are committed
+  unmodified (`forecast_eval.prereg.committed_and_clean`).
+- **Direction:** P(up) is logged and shown but never registered. The prior is weak (Kronos,
+  the literature), and registering it would spend α on a known-hard target.
+
+**Forward logger** (`forward_logger.py`; task `EURUSDProphet-ExternalLogger`, hourly at
+:01, before the gold pass at :03):
+- **Bars:** gold is read through `src.gold.data.fetch_live` and its clock check; EUR/USD
+  through `forecast_eval.mt5_reader` and the M15 clock check on H1 weekly opens. The
+  pass polls up to 60 s for the hour.
+- **Forecasts:** the newest closed bar, one worker call per model. Missed bars are gaps,
+  never late forecasts.
+- **Settlement:** with each instrument's own targets (`gold.targets`,
+  `forecast_eval.targets`) and the market-break rule. It copies in the baseline and the
+  in-house forecast (`h1_lstm` / `h1_gbm`).
+- **Health:** one row per pass.
+
+**Where it shows:**
+- `/second-opinion` and `GET /api/second-opinion` (`view.py`): current forecasts in Sofia
+  time with % and $, agreement by fixed rules, and the descriptive forward record ("too few
+  to say" below 30 rows; a verdict only as written).
+- A card on `/gold`.
+- One line in the MT5 gold panel (`mt5_export.second_opinion`, indicator 2.10).
+
+Every text carries "external model, zero-shot — research, no proven edge".
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics
@@ -2095,15 +2203,16 @@ This comes from openspec change `app-shell-and-gold-history`, capability `app-sh
 
 Every page route in `src/app_shell.PAGE_PATHS` carries the same shell:
 - a fixed top bar that marks the current page with `aria-current="page"`;
-- a "More" menu for H1 direction and Kronos volatility. The retired
-  `/kronos-direction` is never listed;
+- a "More" menu for H1 direction, Kronos volatility and Second opinion (openspec
+  change `tsfm-second-opinion`). The retired `/kronos-direction` is never listed;
 - one BG/EN switch, remembered as `prophet.lang`. The home page's older
   `eurusd.home.lang` is honoured once;
 - one System/Light/Dark switch, remembered as `prophet.theme` and applied before
   first paint.
 
 The routes are `/`, `/gold`, `/advanced`, `/history`, `/paper-trading`, `/forecasts`,
-`/h1-direction`, `/kronos-volatility` and `/kronos-direction`.
+`/h1-direction`, `/kronos-volatility`, `/kronos-direction` and `/second-opinion`
+(`static/second_opinion.html`, rendering the read-only `GET /api/second-opinion`).
 
 **How the shell reaches pages that may not change.** Several pages come from sources
 that must not change:

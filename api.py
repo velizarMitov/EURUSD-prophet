@@ -744,6 +744,35 @@ def gold_page():
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/second-opinion")
+def second_opinion_endpoint():
+    """
+    Two external foundation models (Chronos-2, TimesFM 2.5) beside the in-house
+    models, for gold and EUR/USD (openspec change tsfm-second-opinion, spec
+    external-forecasts/second-opinion): each model's current size forecast, its
+    agreement with h1_lstm / h1_gbm / the frozen GARCH baseline, and the forward
+    record so far, labelled descriptive until the registered score exists.
+
+    READ-ONLY: src.external.tsfm.view reads recorded CSVs and runs no model,
+    fetches no market data, writes nothing and imports no model library -- the
+    models live in their own environment. Gross of cost.
+    """
+    try:
+        from src.external.tsfm.view import build
+        return build()
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"second opinion unavailable: {type(e).__name__}: {e}")
+
+
+@app.get("/second-opinion")
+def second_opinion_page():
+    """Static page rendering /api/second-opinion, bilingual through the app shell."""
+    path = os.path.join(static_dir, "second_opinion.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="static/second_opinion.html is missing")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/advanced")
 def advanced_dashboard():
     """The research console that used to live at /: both model variants side by

@@ -157,6 +157,24 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
        `python -m src.gold.versions promote` changes the registered models, and it
        refuses while a forward window is open.
 
+8. **External foundation models are a second opinion, `external_tsfm` (`src/external/tsfm/`,
+   openspec change `tsfm-second-opinion`, `ARCHITECTURE_DOCS.md §3.13`).**
+   - Chronos-2 and TimesFM 2.5 forecast the next-hour **size** for gold and EUR/USD.
+     They are never an input, ensemble member or feature of the in-house models.
+   - They run only in `worker.py` inside `.venv-tsfm` (`requirements-tsfm.txt`). **Never
+     install their packages into `.venv`.** `api.py` imports only the read-only `view`.
+   - Weights and LoRA adapters are pinned by digest in
+     `results/external_tsfm/artifact_manifest.csv` and live in gitignored
+     `research_models/external_tsfm/`.
+   - `CLEAN_START = 2025-11-01`: nothing earlier is scored. The fine-tuning uses only the
+     frozen history before it.
+   - Its own family: 4 cells at `alpha = 0.05/4`, scored once at N = 1,500 or 2027-04-30
+     against the frozen GARCH baselines. P(up) is shown but never registered. It never
+     touches the `0.05/9` bar or the gold registries.
+   - Rows are `dry_run` until `results/external_tsfm/PRE_REGISTRATION.md` and `.json` are
+     committed. The forward logger is the task `EURUSDProphet-ExternalLogger` at :01,
+     before the gold pass. Runbook: `results/external_tsfm/RUNBOOK.md`.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

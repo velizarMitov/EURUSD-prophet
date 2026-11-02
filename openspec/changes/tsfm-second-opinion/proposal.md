@@ -37,11 +37,13 @@ The owner chose:
     change.
 - **Fine-tuning on the full history** (owner's request, 2026-11-02).
   - Each model is also fine-tuned (LoRA) on all of each instrument's history before
-    2025-11-01: about 16 years of gold H1 and about 10 years of EUR/USD H1.
+    2025-11-01: about 11 years of gold H1 (64,295 bars from 2015-01) and about 15 years
+    of EUR/USD H1 (93,763 bars from 2010-10, the deepest MT5 read).
   - The number of steps is chosen on the last pre-window year. The model is then refit on
     the whole pre-window history with that step count, and frozen.
-  - Long context is offered too: up to 8,192 bars for Chronos-2 and 16,384 for TimesFM
-    (about 1.5 to 2.7 years of hours).
+  - Long context is offered too: up to 8,192 bars for Chronos-2 and 16,256 for TimesFM
+    (its 16,384 limit includes the 128-step output patch), about 1.5 to 2.7 years of
+    hours.
 - **A clean-window replay.**
   - Both models were released in autumn 2025, so bars from 2025-11-01 on cannot be in
     their pretraining or in the fine-tuning.
@@ -70,7 +72,7 @@ The owner chose:
     far, labelled descriptive.
   - `/gold` gains a "second opinion" card.
   - The MT5 gold panel gains one line, e.g. "Второ мнение: Chronos ±0,18 %, TimesFM
-    ±0,16 % · съгласни с h1_lstm".
+    ±0,15 % · размер: Chronos не е съгласен, TimesFM е съгласен с h1_lstm".
 
 ## Capabilities
 

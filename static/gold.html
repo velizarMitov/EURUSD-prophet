@@ -119,6 +119,7 @@ td.mdl{font-weight:700}
   <section id="panel-now" role="tabpanel" aria-labelledby="tab-now">
     <div id="gvz"></div>
     <div id="body"><p class="meta" data-i18n="loading">Зареждане…</p></div>
+    <div id="second"></div>
   </section>
 
   <section id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
@@ -294,6 +295,16 @@ const I18N = {
   stall_never: {bg: 'Няма успешен запис.', en: 'No successful pass yet.'},
   stall_missed: {bg: 'Пропуснати пазарни часове за последните 24 ч:', en: 'Market hours missed in the last 24 h:'},
   stall_fix: {bg: 'Проверете дали компютърът е буден и MT5 е отворен.', en: 'Check that the PC is awake and MT5 is open.'},
+  so_title: {bg: 'Второ мнение', en: 'Second opinion'},
+  so_lead: {bg: 'Два външни модела за размера на следващия час, до h1_lstm.',
+            en: 'Two external models on the size of the next hour, beside h1_lstm.'},
+  so_size: {bg: 'размер', en: 'size'}, so_dir: {bg: 'посока', en: 'direction'},
+  so_agree: {bg: 'съгласен', en: 'agrees'}, so_disagree: {bg: 'не е съгласен', en: 'disagrees'},
+  so_nothing: {bg: 'няма с какво да се сравни', en: 'nothing to compare'},
+  so_none: {bg: 'Няма текуща прогноза от външните модели.', en: 'No current external forecast.'},
+  so_link: {bg: 'Цялото второ мнение', en: 'The full second opinion'},
+  so_label: {bg: 'Външен модел, zero-shot — изследване, без доказано предимство. Съгласието е описателно.',
+             en: 'External model, zero-shot — research, no proven edge. Agreement is descriptive.'},
   gvz_title: {bg: 'Сутрешна проверка · GVZ', en: 'Morning check · GVZ'},
   gvz_expects: {bg: 'Пазарът на опции очаква движение около', en: 'The options market expects a move of about'},
   gvz_day: {bg: 'за един цял ден (едно стандартно отклонение)', en: 'over one full day (one standard deviation)'},
@@ -917,6 +928,34 @@ async function loadHealth() {
   renderHealth();
 }
 document.addEventListener('ps:lang', renderHealth);
+
+// ── Second opinion (change tsfm-second-opinion): reads /api/second-opinion, so
+// /api/gold stays as it is. Size first; agreement is descriptive, never a signal.
+let second = null;
+function renderSecond() {
+  const el = $('second');
+  const g = second && second.instruments && second.instruments.gold;
+  if (!g) { el.innerHTML = ''; return; }
+  const cur = g.models.filter((m) => m.current);
+  const rows = cur.map((m) => `<dt>${esc(m.name)}</dt><dd>±${num(m.current.size_pct, 2)} %
+    · ${esc(t('so_size'))}: ${esc(t('so_' + m.agreement.size))} · ${esc(t('so_dir'))}: ${esc(t('so_' + m.agreement.direction))}</dd>`).join('');
+  el.innerHTML = `<div class="group"><h2>${esc(t('so_title'))}</h2></div>
+    <div class="ps-card tile vol"><div class="meta">${esc(t('so_lead'))}</div>
+    ${cur.length ? `<dl class="facts">${rows}</dl>` : `<p class="meta">${esc(t('so_none'))}</p>`}
+    <a href="/second-opinion">${esc(t('so_link'))} →</a>
+    <p class="meta" style="margin:0">${esc(t('so_label'))}</p></div>`;
+}
+async function loadSecond() {
+  try {
+    const r = await fetch('/api/second-opinion', {cache: 'no-store'});
+    second = r.ok ? await r.json() : null;
+  } catch (e) { second = null; }
+  renderSecond();
+}
+document.addEventListener('ps:lang', renderSecond);
+loadSecond();
+setInterval(loadSecond, 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadSecond(); });
 
 applyStatic();
 load();

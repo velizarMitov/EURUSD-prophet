@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second opinion</title>
+<!-- Read-only second-opinion view (openspec change tsfm-second-opinion, spec
+     external-forecasts/second-opinion). Renders GET /api/second-opinion, which
+     runs no model, fetches no market data and writes nothing. Two external
+     foundation models (Chronos-2, TimesFM 2.5) beside the in-house models:
+     size of the next hour, descriptive agreement, forward record. Every text
+     comes from the payload's BG/EN dictionary and carries the honesty label.
+     The top bar, tokens and BG/EN switch come from the app shell (api.py
+     injects it). No external scripts or fonts: it must work offline. -->
+<style>
+.group{display:flex;align-items:baseline;gap:10px;margin:22px 0 10px}
+.group h2{margin:0;font-size:13px;letter-spacing:.07em;text-transform:uppercase;color:var(--ps-mut)}
+.tile{display:flex;flex-direction:column;gap:8px;border-top:3px solid var(--ps-gold)}
+.tile-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tile-top h3{margin:0;font-size:15px}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0;font-size:14px}
+.facts dt{color:var(--ps-mut)} .facts dd{margin:0;text-align:right;font-weight:650;font-variant-numeric:tabular-nums}
+.meta{font-size:12.5px;color:var(--ps-mut)}
+.ps-big{font-variant-numeric:tabular-nums}
+.ps-big span{font-size:15px;font-weight:650;color:var(--ps-mut)}
+.agree{font-weight:700;color:var(--ps-up)} .disagree{font-weight:700;color:var(--ps-dn)} .nothing{color:var(--ps-mut)}
+.rec{border-top:1px solid var(--ps-line);padding-top:8px;display:flex;flex-direction:column;gap:4px}
+.verdict{font-size:13px;font-weight:700;padding:4px 8px;border-radius:6px;background:var(--ps-accent-bg);color:var(--ps-accent)}
+.empty{padding:22px;text-align:center;color:var(--ps-mut)}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<main class="ps-page">
+  <div class="ps-head">
+    <div>
+      <h1 class="ps-title" id="title">Второ мнение</h1>
+      <p class="ps-sub" id="subtitle"></p>
+    </div>
+    <span class="ps-pill gold" id="pill"></span>
+  </div>
+  <div class="ps-notice" id="label"></div>
+  <div id="body"><p class="meta" id="loading">Зареждане…</p></div>
+</main>
+<script>
+let lang = 'bg', payload = null;
+try {
+  const s = localStorage.getItem('prophet.lang');
+  if (s === 'en' || s === 'bg') lang = s;
+} catch (e) {}
+const LOCAL = {loading: {bg: 'Зареждане…', en: 'Loading…'}, error: {bg: 'Изгледът не е достъпен:', en: 'The view is unavailable:'},
+               gross: {bg: 'Брутно, без разходи', en: 'Gross, no costs'}};
+const t = (k) => (payload && payload.texts[k] && payload.texts[k][lang]) || (LOCAL[k] && LOCAL[k][lang]) || k;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const loc = () => (lang === 'bg' ? 'bg-BG' : 'en-GB');
+const num = (x, d) => x === null || x === undefined ? '—' : x.toLocaleString(loc(), {minimumFractionDigits: d, maximumFractionDigits: d});
+const $ = (id) => document.getElementById(id);
+const logged = (iso) => !iso ? '—' : new Date(iso).toLocaleString(loc(), {timeZone: 'Europe/Sofia', dateStyle: 'short', timeStyle: 'short'});
+
+// Only agree / disagree are coloured: above or below the baseline is a position, not agreement.
+function agreeCell(word) {
+  const cls = word === 'agree' ? 'agree' : (word === 'disagree' ? 'disagree' : 'nothing');
+  return `<span class="${cls}">${esc(t(word))}</span>`;
+}
+
+function record(r, inst) {
+  if (r.verdict) {
+    const v = r.verdict;
+    return `<div class="rec"><div class="ps-kicker">${esc(t('verdict'))}</div>
+      <div class="verdict">${esc(v.verdict)} · n = ${v.n}${v.ci_low === null || v.ci_low === undefined ? '' :
+        ` · [${num(v.ci_low, 4)}, ${num(v.ci_high, 4)}] · α = ${num(v.alpha, 4)}`}</div></div>`;
+  }
+  if (r.state === 'too_few') {
+    return `<div class="rec"><div class="ps-kicker">${esc(t('record'))}</div>
+      <div class="meta">${r.n} — ${esc(t('too_few'))}</div></div>`;
+  }
+  let rows = `<dt>${esc(t('settled'))}</dt><dd>${r.n}</dd><dt>${esc(t('mae'))}</dt><dd>${num(r.mae, 4)} %</dd>`;
+  if (r.vs_baseline) rows += `<dt>${esc(t('vs_baseline'))}</dt><dd>${num(r.vs_baseline.difference, 4)} pp</dd>`;
+  if (r.vs_inhouse && inst === 'gold') rows += `<dt>${esc(t('vs_inhouse'))}</dt><dd>${num(r.vs_inhouse.difference, 4)} pp</dd>`;
+  return `<div class="rec"><div class="ps-kicker">${esc(t('record'))}</div><dl class="facts">${rows}</dl>
+    <div class="meta">${esc(t('descriptive'))}</div></div>`;
+}
+
+function card(m, inst) {
+  const c = m.current;
+  let body;
+  if (c) {
+    const usd = c.size_usd === null ? '' : ` <span>(≈ ±${num(c.size_usd, 2)} $)</span>`;
+    body = `<div class="meta">${esc(t('size'))}</div><div class="ps-big">±${num(c.size_pct, 2)} %${usd}</div>
+      <dl class="facts"><dt>${esc(t('hour'))}</dt><dd>${esc(c.hour_sofia)}</dd>
+      <dt>${esc(t('p_up'))}</dt><dd>${num(c.p_up * 100, 0)} %</dd></dl>
+      <div class="meta">${esc(t('p_up'))}: ${esc(t('not_registered'))}</div>
+      <div class="ps-kicker">${esc(t('agreement'))}</div>
+      <dl class="facts"><dt>${esc(t('agree_size'))}</dt><dd>${agreeCell(m.agreement.size)}</dd>
+      <dt>${esc(t('agree_dir'))}</dt><dd>${agreeCell(m.agreement.direction)}</dd></dl>`;
+    if (c.inhouse && c.inhouse.size_pct !== null) {
+      body += `<div class="meta">${esc(c.inhouse.name)}: ±${num(c.inhouse.size_pct, 2)} % · ${esc(t('threshold'))} ${num(payload.threshold_pct, 3)} %</div>`;
+    } else if (inst === 'eurusd' && c.baseline_size_pct !== null) {
+      body += `<div class="meta">${esc(t('baseline'))}: ±${num(c.baseline_size_pct, 3)} %</div>`;
+    }
+  } else {
+    body = `<div class="meta">${esc(t('no_current'))}</div>`;
+  }
+  body += `<div class="meta">${esc(t('last_forecast'))}: ${esc(logged(m.last_logged_at))}${m.config_id ? ' · ' + esc(m.config_id) : ''}</div>`;
+  return `<div class="ps-card tile"><div class="tile-top"><h3>${esc(m.name)}</h3></div>${body}${record(m.record, inst)}</div>`;
+}
+
+function render() {
+  document.documentElement.lang = lang;
+  $('loading') && ($('loading').textContent = t('loading'));
+  if (!payload) return;
+  $('title').textContent = t('title');
+  document.title = t('title');
+  $('subtitle').textContent = t('subtitle');
+  $('pill').textContent = t('gross');
+  $('label').textContent = t('label');
+  if (!payload.last_forecast_at) { $('body').innerHTML = `<p class="empty">${esc(t('never'))}</p>`; return; }
+  let html = '';
+  for (const inst of ['gold', 'eurusd']) {
+    const b = payload.instruments[inst];
+    html += `<div class="group"><h2>${esc(t(inst))}</h2></div><div class="ps-grid">` +
+      b.models.map((m) => card(m, inst)).join('') + '</div>';
+  }
+  $('body').innerHTML = html;
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/second-opinion', {cache: 'no-store'});
+    if (!r.ok) throw new Error((await r.json()).detail || r.status);
+    payload = await r.json();
+  } catch (e) {
+    $('body').innerHTML = `<p class="meta">${esc(t('error'))} ${esc(String(e.message || e))}</p>`;
+    return;
+  }
+  render();
+}
+
+document.addEventListener('ps:lang', (e) => { lang = e.detail; render(); });
+render();
+load();
+setInterval(load, 60e3);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+</script>
+</body>
+</html>

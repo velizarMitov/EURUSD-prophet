@@ -9,8 +9,8 @@ when no external forecast is current. It SHALL carry no trade words, and its hov
 SHALL carry "external model, zero-shot — research, no proven edge".
 
 #### Scenario: Both models current
-- **WHEN** Chronos-2 expects 0.18 %, TimesFM 0.16 %, h1_lstm 0.14 %, and the alert threshold is 0.151 %
-- **THEN** the panel shows "Второ мнение: Chronos ±0,18 %, TimesFM ±0,16 % · размер: Chronos не е съгласен, TimesFM е съгласен с h1_lstm"
+- **WHEN** Chronos-2 expects 0.18 %, TimesFM 0.15 %, h1_lstm 0.14 %, and the alert threshold is 0.151 %
+- **THEN** the panel shows "Второ мнение: Chronos ±0,18 %, TimesFM ±0,15 % · размер: Chronos не е съгласен, TimesFM е съгласен с h1_lstm"
 
 #### Scenario: Nothing current
 - **WHEN** the external logger has not forecast the current hour

@@ -202,6 +202,20 @@ The count is descriptive, not a verdict. Every description carries "research —
 edge, gross of cost". The indicator only reads a file, draws, and remembers each chart's
 filter in a terminal global variable. It has no trading, network or DLL call.
 
+**Second opinion** (change `tsfm-second-opinion`, indicator 2.10). On H1 and lower the panel
+adds one line after any open alert, e.g. "Второ мнение: Chronos ±0,18 %, TimesFM ±0,15 % ·
+размер: Chronos не е съгласен, TimesFM е съгласен с h1_lstm":
+- each external model's current gold size, and whether it is on the same side of the
+  large-move threshold as h1_lstm;
+- hovering the line shows "external model, zero-shot — research, no proven edge; agreement
+  is descriptive";
+- the line is absent while no external forecast is current. The external logger runs at
+  :01, so the :03 export carries the hour's line. See `results/external_tsfm/RUNBOOK.md`.
+
+The export reads those forecasts through `src/external/tsfm/view.py`, which only reads. If it
+cannot, the line is empty and the chart is otherwise unchanged. The file format stays
+version 2; an older indicator ignores the new `second_*` keys.
+
 **Where the data comes from.** Each logger pass runs `forward_logger.log_chart` after the
 alerts. It rebuilds `%APPDATA%\MetaQuotes\Terminal\Common\Files\EURUSDProphet\gold_signals.tsv`
 from `predictions.csv`, `settlements.csv`, `alerts.csv` and `alert_settlements.csv`
@@ -229,7 +243,7 @@ Take it off open charts before uninstalling: a chart keeps a loaded indicator un
 removed.
 
 **Check.**
-- The first line of the file shows `version=1` and the data time:
+- The first line of the file shows `version=2` and the data time:
   `Get-Content "$env:APPDATA\MetaQuotes\Terminal\Common\Files\EURUSDProphet\gold_signals.tsv" -Encoding utf8 -TotalCount 1`.
 - `Select-String results\gold\forward\failures.csv -Pattern '^chart,'` finds no row.
 - On the chart, a new arrow appears within a minute of each :03 pass. The indicator

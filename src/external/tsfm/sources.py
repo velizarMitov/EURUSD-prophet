@@ -16,9 +16,12 @@ import os
 from . import REPO, repo_path
 
 GOLD_H1_CACHE = 'results/gold/gold_h1.csv'
+GOLD_TEST_PREDICTIONS = 'results/gold/test_predictions_h1.csv'
 GOLD_PREDICTIONS = 'results/gold/forward/predictions.csv'
 GOLD_SETTLEMENTS = 'results/gold/forward/settlements.csv'
 GOLD_CONFIG_V2 = 'src/gold/gold_config_v2.json'
+GOLD_MANIFEST = 'results/gold/artifact_manifest.csv'
+GOLD_TEST_REPORT = 'results/gold/test_report.json'
 EURUSD_PREDICTIONS = 'results/forward_eval/predictions.csv'
 
 
@@ -56,3 +59,35 @@ def gold_alert_threshold(repo: str = REPO) -> float | None:
 
 def gold_h1_cache_path(repo: str = REPO) -> str:
     return repo_path(GOLD_H1_CACHE, repo)
+
+
+def gold_cell_files(cell: str, repo: str = REPO) -> list[tuple[str, str]]:
+    """[(path, sha256)] of a frozen gold cell in the gold artifact manifest."""
+    return [(r['path'], r['sha256']) for r in read_csv_rows(GOLD_MANIFEST, repo) if r.get('cell') == cell]
+
+
+def gold_h1_lstm_volatility_result(repo: str = REPO) -> dict | None:
+    """The gold test report's h1_lstm vs h1_garch_hod volatility row (the power reference)."""
+    try:
+        with open(repo_path(GOLD_TEST_REPORT, repo), encoding='utf-8') as fh:
+            rows = json.load(fh)['results']
+    except (OSError, KeyError, ValueError):
+        return None
+    for r in rows:
+        if r.get('cell') == 'h1_lstm' and r.get('family') == 'volatility':
+            return r
+    return None
+
+
+def gold_study_h1(repo: str = REPO) -> dict:
+    """{as_of_bar: (h1_lstm vol_pct, h1_garch_hod vol_pct)} from the gold study's
+    saved test-block predictions -- for the replay's descriptive comparison."""
+    out = {}
+    for r in read_csv_rows(GOLD_TEST_PREDICTIONS, repo):
+        def f(k):
+            try:
+                return float(r[k])
+            except (KeyError, TypeError, ValueError):
+                return float('nan')
+        out[r['time']] = (f('h1_lstm__vol_pct'), f('h1_garch_hod__vol_pct'))
+    return out

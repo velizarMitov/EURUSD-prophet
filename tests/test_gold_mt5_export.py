@@ -381,6 +381,63 @@ def test_the_indicator_reads_the_file_the_export_writes():
             assert key + lang in meta, key + lang
 
 
+# ── the second-opinion line (change tsfm-second-opinion, task 8.1) ─────────
+
+SECOND_BG = ('Второ мнение: Chronos ±0,18 %, TimesFM ±0,15 % · размер: '
+             'Chronos не е съгласен, TimesFM е съгласен с h1_lstm')
+
+
+def test_the_second_opinion_line_comes_from_the_external_view(cfg, monkeypatch):
+    import src.external.tsfm.view as VW
+    seen = []
+
+    def line(lang, repo=None, now=None):
+        seen.append((lang, now))
+        return SECOND_BG if lang == 'bg' else 'Second opinion: Chronos ±0.18 %, TimesFM ±0.15 % · size: ...'
+    monkeypatch.setattr(VW, 'gold_line', line)
+    meta = X.build(cfg, NOW)['meta']
+    assert meta['second_bg'] == SECOND_BG
+    assert meta['second_tip_en'].startswith('external model, zero-shot — research, no proven edge')
+    assert {lang for lang, _ in seen} == {'bg', 'en'}
+    # the view is asked on the label clock: Berlin wall time, stamped UTC
+    assert seen[0][1] == pd.Timestamp(NOW.astimezone(X.LABEL_TZ).replace(tzinfo=None), tz='UTC')
+
+
+def test_the_second_opinion_line_is_empty_when_nothing_is_current(cfg, monkeypatch):
+    import src.external.tsfm.view as VW
+    monkeypatch.setattr(VW, 'gold_line', lambda lang, repo=None, now=None: '')
+    assert X.build(cfg, NOW)['meta']['second_bg'] == ''
+
+
+def test_a_broken_external_view_costs_the_chart_nothing(cfg, monkeypatch):
+    import src.external.tsfm.view as VW
+
+    def boom(*a, **k):
+        raise RuntimeError('external files unreadable')
+    monkeypatch.setattr(VW, 'gold_line', boom)
+    data = X.build(cfg, NOW)
+    assert data['meta']['second_en'] == '' and 'written_en' in data['meta']
+
+
+def test_second_opinion_texts_carry_no_trade_words():
+    for lang in X.LANGS:
+        for s in (SECOND_BG, X.TEXT['second_tip'][lang]):
+            assert not TRADE_EN.search(s) and not TRADE_BG.search(s), s
+
+
+def test_the_export_reads_the_external_files_only_through_the_view():
+    src = open(os.path.join(REPO, 'src', 'gold', 'mt5_export.py'), encoding='utf-8').read()
+    assert 'from src.external.tsfm.view import gold_line' in src
+    code = re.sub(r'(\'\'\'|""").*?\1', '', src, flags=re.S)
+    assert 'external_tsfm' not in code.replace('src.external.tsfm.view', '')   # no path of its own to those files
+
+
+def test_the_indicator_shows_the_line_with_its_label_as_tooltip():
+    src = _mq5()
+    assert 'k == "second_" + g_lang' in src and 'k == "second_tip_" + g_lang' in src
+    assert 'ObjectSetString(0, name, OBJPROP_TOOLTIP, g_second_tip)' in src
+
+
 # ── 1.5 the command ─────────────────────────────────────────────────────────
 
 def test_the_command_rebuilds_the_file(cfg, tmp_path, monkeypatch, capsys):

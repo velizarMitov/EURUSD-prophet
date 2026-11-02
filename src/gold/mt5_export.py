@@ -16,7 +16,9 @@ probability filter the owner picked, so it fills in the numbers (design D12).
 It is the one gold write outside results/gold/ and research_models/gold/, and
 nothing in the repo reads it back. It reads only the forward logs: no model,
 no market data. h1_gbm, the GARCH baselines and predictions_v2.csv are never
-read -- the owner chose h1_lstm for H1 and d1_lstm + d1_gbm for D1.
+read -- the owner chose h1_lstm for H1 and d1_lstm + d1_gbm for D1. The one
+extra line, the external models' second opinion (change tsfm-second-opinion),
+comes from the read-only src.external.tsfm.view over results/external_tsfm/.
 
     python -m src.gold.mt5_export     rebuild the file now
 """
@@ -90,7 +92,23 @@ TEXT = {
                        'gbm {r_d1_gbm} of {t_d1_gbm} (descriptive, not a test)'},
     'filter': {'bg': 'Филтър ≥{min} %: избор за показване, не е тестван праг',
                'en': 'Filter ≥{min} %: a display choice, not a tested rule'},
+    'second_tip': {'bg': 'външен модел, zero-shot — изследване, без доказано предимство; съгласието е описателно',
+                   'en': 'external model, zero-shot — research, no proven edge; agreement is descriptive'},
 }
+
+
+def second_opinion(now: datetime, lang: str) -> str:
+    """The external models' panel line (change tsfm-second-opinion, design D9):
+    each model's current gold size and its agreement with h1_lstm, read from
+    results/external_tsfm/forward/ by the read-only second-opinion view. ''
+    when no external forecast is current or the view cannot be read: the chart
+    then simply shows no line."""
+    try:
+        from src.external.tsfm.view import gold_line
+        wall = now.astimezone(LABEL_TZ).replace(tzinfo=None)
+        return gold_line(lang, now=pd.Timestamp(wall, tz='UTC'))
+    except Exception:                                    # noqa: BLE001 -- the chart never depends on it
+        return ''
 
 
 def _rows(path):
@@ -289,6 +307,8 @@ def build(cfg: dict | None = None, now: datetime | None = None) -> dict:
         meta[f'count_d1_{lang}'] = TEXT['count_d1'][lang].replace('{n}', str(len(d1_days)))
         meta[f'filter_{lang}'] = TEXT['filter'][lang]
         meta[f'research_{lang}'] = TEXT['research'][lang]
+        meta[f'second_{lang}'] = second_opinion(now, lang)
+        meta[f'second_tip_{lang}'] = TEXT['second_tip'][lang]
     return {'meta': meta, 'rows': rows, 'days': days, 'd1_days': d1_days,
             'right': sum(r['outcome'] == 'right' for r in hourly), 'wrong': sum(r['outcome'] == 'wrong' for r in hourly)}
 

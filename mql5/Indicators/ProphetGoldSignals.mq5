@@ -17,7 +17,7 @@
 //| chart's filter choice, nothing else.                             |
 //+------------------------------------------------------------------+
 #property copyright   "EUR/USD Prophet"
-#property version     "2.00"
+#property version     "2.10"
 #property description "Gold research signals: h1_lstm, d1_lstm and d1_gbm direction, large-move alerts."
 #property description "Research - no proven edge, gross of cost."
 #property indicator_chart_window
@@ -87,6 +87,7 @@ datetime g_file_mod = 0;
 datetime g_generated = 0;           // UTC
 int      g_label_offset_min = 0;
 string   g_written = "", g_count_h1 = "", g_count_d1 = "", g_filter = "", g_research = "";
+string   g_second = "", g_second_tip = "";   // external models' line, empty when none is current
 string   g_lang = "bg";
 datetime g_last_bar = 0;
 int      g_min = 50;
@@ -225,6 +226,10 @@ bool ReadFile()
             g_filter = v;
          else if(k == "research_" + g_lang)
             g_research = v;
+         else if(k == "second_" + g_lang)
+            g_second = v;
+         else if(k == "second_tip_" + g_lang)
+            g_second_tip = v;
         }
      }
    string head[];
@@ -592,6 +597,7 @@ void DrawPanel()
    int mode = ChartMode();
    string lines[];
    color colors[];
+   int second_at = -1;
    AddLine(lines, colors, T("title"), fg);
    if(!IsGoldSymbol())
       AddLine(lines, colors, T("not_gold"), fg);
@@ -616,6 +622,11 @@ void DrawPanel()
                   alert = i;
             if(alert >= 0)
                AddLine(lines, colors, g_marks[alert].panel, InpAlertColor);
+            if(StringLen(g_second) > 0)
+              {
+               second_at = ArraySize(lines);
+               AddLine(lines, colors, g_second, fg);
+              }
            }
          if(g_min > 50)
            {
@@ -653,6 +664,8 @@ void DrawPanel()
       ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 10);
       ObjectSetInteger(0, name, OBJPROP_YDISTANCE, top + (lower ? n - 1 - i : i) * step);
       ObjectSetString(0, name, OBJPROP_TEXT, lines[i]);
+      if(i == second_at)
+         ObjectSetString(0, name, OBJPROP_TOOLTIP, g_second_tip);
       ObjectSetString(0, name, OBJPROP_FONT, PGS_FONT);
       ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
       ObjectSetInteger(0, name, OBJPROP_COLOR, colors[i]);

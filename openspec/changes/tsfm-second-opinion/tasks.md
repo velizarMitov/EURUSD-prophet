@@ -61,7 +61,8 @@
   Verify:
   - a test that an injected 2025-11-01 bar makes the freeze refuse;
   - the files exist and report their first and last bars and row counts (gold about
-    16 years, EUR/USD about 10).
+    11 years, EUR/USD about 15; corrected at implementation from the planning estimates
+    of 16 and 10).
 - [ ] 3.2 Add `finetune.py --train`, run in `.venv-tsfm` on the GPU: LoRA per model and
   instrument.
   - **Stage 1:** train on bars before 2024-11-01 and score the holdout year every 100
@@ -81,14 +82,14 @@
 
 ## 4. Clean-window replay and baselines
 
-- [ ] 4.1 Freeze the replay data (design D4):
+- [x] 4.1 Freeze the replay data (design D4):
   - gold from `results/gold/gold_h1.csv`, and EUR/USD from a fresh MT5 read through
     `src/forecast_eval/mt5_reader`;
   - the window `results/external_tsfm/replay/<instrument>_h1_window.csv` with digests;
   - any request before 2025-11-01 is refused.
 
   Verify: a test of the refusal message, and that both files exist with recorded digests.
-- [ ] 4.2 Fit the frozen EUR/USD GARCH(1,1) × hour-of-day baseline on bars from
+- [x] 4.2 Fit the frozen EUR/USD GARCH(1,1) × hour-of-day baseline on bars from
   2020-11-01 to 2025-10-31, with gold's `h1_garch_hod` estimator imported read-only.
   Save it under `research_models/external_tsfm/baseline_eurusd/` with its digest (design
   D5). Verify with a test that the fit sees no bar on or after 2025-11-01, and that a
@@ -107,7 +108,7 @@
 
 ## 5. Forward logger
 
-- [ ] 5.1 Create `src/external/tsfm/forward_logger.py` (design D6):
+- [x] 5.1 Create `src/external/tsfm/forward_logger.py` (design D6):
   - its own lock;
   - gold via `src/gold/data.fetch_live` plus its clock check, and EUR/USD via
     `src/forecast_eval/mt5_reader` plus its clock check;
@@ -126,7 +127,7 @@
   - one model failing leaves the other model's rows;
   - no file outside `results/external_tsfm/` and `research_models/external_tsfm/`
     changes.
-- [ ] 5.2 Add settlement:
+- [x] 5.2 Add settlement:
   - gold targets and eligibility from `src/gold/targets`, and EUR/USD from
     `src/forecast_eval/targets`;
   - copy `baseline_size_pct`, plus `inhouse_size_pct` from gold's h1_lstm row, into each
@@ -149,7 +150,7 @@
 
 ## 6. Registration and scoring
 
-- [ ] 6.1 Create `src/external/tsfm/prereg.py --write`. It writes
+- [x] 6.1 Create `src/external/tsfm/prereg.py --write`. It writes
   `results/external_tsfm/PRE_REGISTRATION.md` and `.json`, fixing the items of design D7:
   - the cells and the frozen configurations;
   - the baseline digests;
@@ -160,7 +161,7 @@
   Also add the phase rule (`FP.committed_and_clean`). Verify with tests that rows are
   `dry_run` while the file is uncommitted or modified, and `registered` after a commit, in
   a temp git repo.
-- [ ] 6.2 Create `src/external/tsfm/forward_report.py --score`:
+- [x] 6.2 Create `src/external/tsfm/forward_report.py --score`:
   - it refuses before registration;
   - it scores each cell once, at N or the cap, with the block bootstrap from
     `src/forecast_eval/stats` (block 24, 2,000 resamples, seed 42) on paired rows;
@@ -169,7 +170,7 @@
 
   Verify with tests on synthetic settlements: a clear edge gives KEEP, no edge gives DROP,
   430 rows at the cap give UNDERPOWERED, and a second run never re-scores a cell.
-- [ ] 6.3 Document the family:
+- [x] 6.3 Document the family:
   - an `external_tsfm` section in `ARCHITECTURE_DOCS.md`: models, the full-history
     fine-tuning and its boundary, clean window, replay, cells, α, baselines, power, and
     why direction is not registered;
@@ -183,7 +184,7 @@
 
 ## 7. Second-opinion view
 
-- [ ] 7.1 Create `src/external/tsfm/view.py` (design D8):
+- [x] 7.1 Create `src/external/tsfm/view.py` (design D8):
   - a read-only payload per instrument: current forecasts, Sofia hour, % and $ size,
     P(up) marked "not registered", and the last-forecast time;
   - the agreement rules: gold size against the alert threshold and h1_lstm, gold
@@ -199,7 +200,7 @@
     unchanged; ±0.18 % ≈ 7.02 $ at 3897.67;
   - the trade-word scan;
   - no model library imported.
-- [ ] 7.2 Add `GET /api/second-opinion` and `/second-opinion` (`static/second_opinion.html`)
+- [x] 7.2 Add `GET /api/second-opinion` and `/second-opinion` (`static/second_opinion.html`)
   to `api.py`. Add the page to `PAGE_PATHS` and to `NAV` under "More" in
   `src/app_shell.py`. Extend `tests/test_gold_isolation.py`'s api import rule to allow only
   `src.external.tsfm.view`.
@@ -211,20 +212,20 @@
   - no file changes during a request.
 
   Note the page in `ARCHITECTURE_DOCS.md` §5.4.1's page list.
-- [ ] 7.3 Add the second-opinion card to `static/gold.html`. It fetches
+- [x] 7.3 Add the second-opinion card to `static/gold.html`. It fetches
   `/api/second-opinion`, shows both models' sizes and their agreement with h1_lstm, and
   links to the page, in BG and EN. Verify with tests that the card's dictionary keys exist
   in both languages and that the `/api/gold` payload keys are unchanged.
 
 ## 8. MT5 panel line
 
-- [ ] 8.1 Add the `second_bg` / `second_en` meta line to `src/gold/mt5_export.py`, built from
+- [x] 8.1 Add the `second_bg` / `second_en` meta line to `src/gold/mt5_export.py`, built from
   external rows whose hour is current, and empty when none is. Make the indicator show it
   in the hourly panel, with the honesty label as its tooltip (design D9). Recompile and
   reinstall with `scripts/gold/install_mt5_indicator.ps1`.
 
   Verify with tests:
-  - the spec scenario text (Chronos 0,18 % disagrees, TimesFM 0,16 % agrees, threshold
+  - the spec scenario text (Chronos 0,18 % disagrees, TimesFM 0,15 % agrees, threshold
     0,151 %);
   - an empty line when nothing is current;
   - the trade-word scan;

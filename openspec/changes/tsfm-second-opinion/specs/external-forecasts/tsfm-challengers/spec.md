@@ -71,8 +71,8 @@ Before the forward registration, a replay on the clean window SHALL choose one
 configuration per model and instrument from a grid declared in advance:
 - weights: zero-shot or fine-tuned;
 - input: hourly log returns or closes;
-- context: 2,048 bars, or the model's long context (8,192 for Chronos-2, 16,384 for
-  TimesFM).
+- context: 2,048 bars, or the model's long context (8,192 for Chronos-2, 16,256 for
+  TimesFM, whose 16,384 limit includes the 128-step output patch).
 
 The rule SHALL be the lowest mean absolute error of the size forecast on the first half of
 the window. The second half SHALL be reported as a descriptive check. The replay SHALL be
