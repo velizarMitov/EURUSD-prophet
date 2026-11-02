@@ -5,17 +5,20 @@
 //|                                                                  |
 //| Reads Common\Files\EURUSDProphet\gold_signals.tsv, which the     |
 //| gold logger rebuilds every hour (src/gold/mt5_export.py), and    |
-//| draws on a GOLD / XAUUSD chart at H1 or lower:                   |
-//|   - an up/down arrow on each hour the h1_lstm forecast;          |
-//|   - a two-headed marker on each hour a large-move alert covers;  |
-//|   - a short text and a hover description beside each mark;       |
-//|   - a corner panel with the current state.                       |
+//| draws on a GOLD / XAUUSD chart:                                  |
+//|   H1 and lower - an up/down arrow on each hour h1_lstm forecast, |
+//|                  a two-headed marker on each alerted hour;       |
+//|   D1           - a d1_lstm (solid) and a d1_gbm (hollow) arrow   |
+//|                  on each forecast day;                           |
+//| each with a short text and a hover description, plus a corner    |
+//| panel and buttons that hide arrows below a chosen probability.   |
 //| Every word comes from the file except the status lines in T().   |
-//| An indicator: it reads one file and draws, nothing else.         |
+//| An indicator: it reads one file, draws, and remembers the        |
+//| chart's filter choice, nothing else.                             |
 //+------------------------------------------------------------------+
 #property copyright   "EUR/USD Prophet"
-#property version     "1.00"
-#property description "Gold research signals: h1_lstm direction and large-move alerts."
+#property version     "2.00"
+#property description "Gold research signals: h1_lstm, d1_lstm and d1_gbm direction, large-move alerts."
 #property description "Research - no proven edge, gross of cost."
 #property indicator_chart_window
 #property indicator_buffers 0
@@ -27,31 +30,48 @@ enum ENUM_PGS_LANG
    PGS_EN = 1  // English
   };
 
-input ENUM_PGS_LANG    InpLanguage   = PGS_BG;             // Език / Language
-input color            InpUpColor    = clrDodgerBlue;      // Up arrow colour
-input color            InpDownColor  = clrOrangeRed;       // Down arrow colour
-input color            InpAlertColor = clrGold;            // Large-move marker colour
-input ENUM_BASE_CORNER InpCorner     = CORNER_RIGHT_UPPER; // Panel corner
-input int              InpFontSize   = 8;                  // Font size
+input ENUM_PGS_LANG    InpLanguage       = PGS_BG;             // Език / Language
+input int              InpMinProbability = 50;                 // Arrows from probability, % (50 = all)
+input color            InpUpColor        = clrDodgerBlue;      // Up arrow colour (h1_lstm, d1_lstm)
+input color            InpDownColor      = clrOrangeRed;       // Down arrow colour (h1_lstm, d1_lstm)
+input color            InpGbmColor       = clrMediumOrchid;    // d1_gbm arrow colour
+input color            InpAlertColor     = clrGold;            // Large-move marker colour
+input ENUM_BASE_CORNER InpCorner         = CORNER_RIGHT_UPPER; // Panel corner
+input int              InpFontSize       = 8;                  // Font size
 
 #define PGS_PREFIX     "PGS_"
 #define PGS_FILE       "EURUSDProphet\\gold_signals.tsv"
-#define PGS_VERSION    "1"
+#define PGS_VERSION    "2"
 #define PGS_CODE_UP    233
 #define PGS_CODE_DOWN  234
+#define PGS_CODE_UP2   241
+#define PGS_CODE_DOWN2 242
 #define PGS_CODE_ALERT 244
 #define PGS_STALE_S    7200
 #define PGS_TRADING_S  600
 #define PGS_STEP_PX    18
+#define PGS_BTN_W      46
+#define PGS_BTN_H      18
 #define PGS_FONT       "Segoe UI"
+
+#define PGS_MODE_NONE  0
+#define PGS_MODE_H1    1
+#define PGS_MODE_D1    2
+
+int    g_filters[4] = {50, 52, 54, 56};
+string g_h1_cells[1] = {"h1_lstm"};
+string g_d1_cells[2] = {"d1_lstm", "d1_gbm"};
 
 struct PgsMark
   {
    string            kind;
    string            key;
+   string            cell;
+   string            cadence;
    datetime          hour;       // bar-label clock (the logger's Europe/Berlin)
    datetime          hour_end;
    string            direction;
+   int               prob;
    string            outcome;
    double            close;
    string            text;
@@ -66,9 +86,10 @@ int      g_state = 1;               // 0 ok, 1 missing or unreadable, 2 unknown 
 datetime g_file_mod = 0;
 datetime g_generated = 0;           // UTC
 int      g_label_offset_min = 0;
-string   g_written = "", g_count = "", g_research = "";
+string   g_written = "", g_count_h1 = "", g_count_d1 = "", g_filter = "", g_research = "";
 string   g_lang = "bg";
 datetime g_last_bar = 0;
+int      g_min = 50;
 
 //+------------------------------------------------------------------+
 //| The status lines the file cannot carry, BG and EN.               |
@@ -77,11 +98,11 @@ string T(const string id)
   {
    bool bg = (InpLanguage == PGS_BG);
    if(id == "title")
-      return bg ? "Злато · h1_lstm" : "Gold · h1_lstm";
+      return bg ? "Злато · h1_lstm, d1_lstm, d1_gbm" : "Gold · h1_lstm, d1_lstm, d1_gbm";
    if(id == "not_gold")
       return bg ? "Това не е графика на злато — няма сигнали" : "This chart is not gold — no signals";
    if(id == "timeframe")
-      return bg ? "Сигналите се показват на H1 или по-малък таймфрейм" : "Signals show on H1 or a lower timeframe";
+      return bg ? "Сигналите се показват на H1 или по-малък таймфрейм и на D1" : "Signals show on H1 or lower, and on D1";
    if(id == "missing")
       return bg ? "Няма данни за златото. Изпълни: python -m src.gold.mt5_export" : "No gold data found. Run: python -m src.gold.mt5_export";
    if(id == "unknown")
@@ -105,9 +126,15 @@ bool IsGoldSymbol()
    return StringFind(s, "XAUUSD") == 0 || StringFind(s, "GOLD") == 0;
   }
 
-bool ChartIsUsable()
+int ChartMode()
   {
-   return IsGoldSymbol() && PeriodSeconds(PERIOD_CURRENT) <= 3600;
+   if(!IsGoldSymbol())
+      return PGS_MODE_NONE;
+   if(PeriodSeconds(PERIOD_CURRENT) <= 3600)
+      return PGS_MODE_H1;
+   if(_Period == PERIOD_D1)
+      return PGS_MODE_D1;
+   return PGS_MODE_NONE;
   }
 
 int Col(const string &head[], const int n, const string name)
@@ -116,6 +143,31 @@ int Col(const string &head[], const int n, const string name)
       if(head[i] == name)
          return i;
    return -1;
+  }
+
+//+------------------------------------------------------------------+
+//| The filter, kept per chart across timeframe changes (which       |
+//| reinitialise the indicator). A changed input setting wins.       |
+//+------------------------------------------------------------------+
+string GvName(const string what)
+  {
+   return PGS_PREFIX + what + "_" + IntegerToString(ChartID());
+  }
+
+void LoadFilter()
+  {
+   string inp = GvName("inp"), cur = GvName("min");
+   g_min = InpMinProbability;
+   if(GlobalVariableCheck(cur) && GlobalVariableCheck(inp) && (int)GlobalVariableGet(inp) == InpMinProbability)
+      g_min = (int)GlobalVariableGet(cur);
+   GlobalVariableSet(inp, InpMinProbability);
+   GlobalVariableSet(cur, g_min);
+  }
+
+void SetFilter(const int value)
+  {
+   g_min = value;
+   GlobalVariableSet(GvName("min"), g_min);
   }
 
 //+------------------------------------------------------------------+
@@ -165,20 +217,25 @@ bool ReadFile()
             g_label_offset_min = (int)StringToInteger(v);
          else if(k == "written_" + g_lang)
             g_written = v;
-         else if(k == "count_" + g_lang)
-            g_count = v;
+         else if(k == "count_h1_" + g_lang)
+            g_count_h1 = v;
+         else if(k == "count_d1_" + g_lang)
+            g_count_d1 = v;
+         else if(k == "filter_" + g_lang)
+            g_filter = v;
          else if(k == "research_" + g_lang)
             g_research = v;
         }
      }
    string head[];
    int nh = (nl >= 2) ? StringSplit(lines[1], '\t', head) : 0;
-   int c_kind = Col(head, nh, "kind"), c_key = Col(head, nh, "key"), c_hour = Col(head, nh, "hour_label");
-   int c_end = Col(head, nh, "hour_end_label"), c_dir = Col(head, nh, "direction"), c_out = Col(head, nh, "outcome");
+   int c_kind = Col(head, nh, "kind"), c_key = Col(head, nh, "key"), c_cell = Col(head, nh, "cell");
+   int c_cad = Col(head, nh, "cadence"), c_hour = Col(head, nh, "hour_label"), c_end = Col(head, nh, "hour_end_label");
+   int c_dir = Col(head, nh, "direction"), c_prob = Col(head, nh, "prob_pct"), c_out = Col(head, nh, "outcome");
    int c_close = Col(head, nh, "close"), c_text = Col(head, nh, "text_" + g_lang), c_tip = Col(head, nh, "tip_" + g_lang);
    int c_panel = Col(head, nh, "panel_" + g_lang), c_sofia = Col(head, nh, "hour_sofia_" + g_lang);
-   if(version != PGS_VERSION || c_kind < 0 || c_key < 0 || c_hour < 0 || c_end < 0 || c_dir < 0 || c_out < 0
-      || c_close < 0 || c_text < 0 || c_tip < 0 || c_panel < 0 || c_sofia < 0)
+   if(version != PGS_VERSION || c_kind < 0 || c_key < 0 || c_cell < 0 || c_cad < 0 || c_hour < 0 || c_end < 0
+      || c_dir < 0 || c_prob < 0 || c_out < 0 || c_close < 0 || c_text < 0 || c_tip < 0 || c_panel < 0 || c_sofia < 0)
      {
       g_state = 2;
       ArrayResize(g_marks, 0);
@@ -196,9 +253,12 @@ bool ReadFile()
       PgsMark m;
       m.kind = f[c_kind];
       m.key = f[c_key];
+      m.cell = f[c_cell];
+      m.cadence = f[c_cad];
       m.hour = StringToTime(f[c_hour]);
       m.hour_end = StringToTime(f[c_end]);
       m.direction = f[c_dir];
+      m.prob = (int)StringToInteger(f[c_prob]);
       m.outcome = f[c_out];
       m.close = StringToDouble(f[c_close]);
       m.text = f[c_text];
@@ -236,14 +296,13 @@ double PricePerPixel()
    return (top - bottom) / (double)px;
   }
 
-void HourRange(const datetime t, const double fallback, double &lo, double &hi)
+void BarRange(const ENUM_TIMEFRAMES tf, const int b, const double fallback, double &lo, double &hi)
   {
    lo = fallback;
    hi = fallback;
-   int b = iBarShift(_Symbol, PERIOD_H1, t, true);
    if(b < 0)
       return;
-   double l = iLow(_Symbol, PERIOD_H1, b), h = iHigh(_Symbol, PERIOD_H1, b);
+   double l = iLow(_Symbol, tf, b), h = iHigh(_Symbol, tf, b);
    if(l > 0 && h >= l)
      {
       lo = l;
@@ -251,10 +310,19 @@ void HourRange(const datetime t, const double fallback, double &lo, double &hi)
      }
   }
 
-string ForecastDirection(const string key)
+// A direction arrow the chart shows: its cadence, at or above the filter.
+bool Shown(const int i, const int mode)
+  {
+   if(g_marks[i].kind != "forecast" || (g_marks[i].direction != "up" && g_marks[i].direction != "down"))
+      return false;
+   string cad = (mode == PGS_MODE_D1) ? "D1" : "H1";
+   return mode != PGS_MODE_NONE && g_marks[i].cadence == cad && g_marks[i].prob >= g_min;
+  }
+
+string ShownDirection(const string key, const int mode)
   {
    for(int i = ArraySize(g_marks) - 1; i >= 0; i--)
-      if(g_marks[i].kind == "forecast" && g_marks[i].key == key)
+      if(g_marks[i].key == key && Shown(i, mode))
          return g_marks[i].direction;
    return "";
   }
@@ -268,6 +336,21 @@ color OutcomeColor(const string outcome, const color base)
    if(outcome == "void")
       return clrGray;
    return base;
+  }
+
+color ArrowColor(const int i)
+  {
+   if(g_marks[i].cell == "d1_gbm")
+      return InpGbmColor;
+   return g_marks[i].direction == "up" ? InpUpColor : InpDownColor;
+  }
+
+int ArrowCode(const int i)
+  {
+   bool up = (g_marks[i].direction == "up");
+   if(g_marks[i].cell == "d1_gbm")
+      return up ? PGS_CODE_UP2 : PGS_CODE_DOWN2;
+   return up ? PGS_CODE_UP : PGS_CODE_DOWN;
   }
 
 void Arrow(const string name, const datetime t, const double price, const int code, const color clr,
@@ -284,7 +367,7 @@ void Arrow(const string name, const datetime t, const double price, const int co
   }
 
 // Vertical text, reading upwards: away from the candle on either side, so the
-// texts of neighbouring hours never overlap.
+// texts of neighbouring bars never overlap.
 void Text(const string name, const datetime t, const double price, const string text, const color clr,
           const bool below, const string tip)
   {
@@ -301,46 +384,100 @@ void Text(const string name, const datetime t, const double price, const string 
   }
 
 //+------------------------------------------------------------------+
-//| Arrows under (up) or over (down) the hour's candle; an alert on  |
-//| the side its hour's arrow leaves free.                           |
+//| H1 and lower: an arrow under (up) or over (down) the hour's      |
+//| candle; an alert on the side its hour's arrow leaves free.       |
 //+------------------------------------------------------------------+
-void DrawMarks()
+void DrawHourly(const double ppp)
   {
-   ObjectsDeleteAll(0, PGS_PREFIX + "M");
-   if(!ChartIsUsable() || g_state == 2)
-      return;
    int shift = ShiftSeconds();
-   double ppp = PricePerPixel();
-   int n = ArraySize(g_marks);
-   for(int i = 0; i < n; i++)
+   for(int i = 0; i < ArraySize(g_marks); i++)
      {
+      bool alert = (g_marks[i].kind == "alert" && g_marks[i].cadence == "H1");
+      if(!alert && !Shown(i, PGS_MODE_H1))
+         continue;
       datetime t = g_marks[i].hour + shift;
       double lo, hi;
-      HourRange(t, g_marks[i].close, lo, hi);
+      BarRange(PERIOD_H1, iBarShift(_Symbol, PERIOD_H1, t, true), g_marks[i].close, lo, hi);
       double gap = MathMax((hi - lo) * 0.15, 10 * _Point);
+      bool below = alert ? (ShownDirection(g_marks[i].key, PGS_MODE_H1) == "down") : (g_marks[i].direction == "up");
+      color clr = alert ? InpAlertColor : ArrowColor(i);
+      int code = alert ? PGS_CODE_ALERT : ArrowCode(i);
       string id = PGS_PREFIX + "M" + IntegerToString(i);
-      bool below;
-      color clr;
-      int code;
-      if(g_marks[i].kind == "forecast")
-        {
-         if(g_marks[i].direction != "up" && g_marks[i].direction != "down")
-            continue;
-         below = (g_marks[i].direction == "up");
-         clr = below ? InpUpColor : InpDownColor;
-         code = below ? PGS_CODE_UP : PGS_CODE_DOWN;
-        }
-      else
-        {
-         below = (ForecastDirection(g_marks[i].key) == "down");
-         clr = InpAlertColor;
-         code = PGS_CODE_ALERT;
-        }
       double p = below ? lo - gap : hi + gap;
       Arrow(id + "a", t, p, code, clr, below ? ANCHOR_TOP : ANCHOR_BOTTOM, g_marks[i].tip);
       double tp = below ? p - PGS_STEP_PX * ppp : p + PGS_STEP_PX * ppp;
       Text(id + "t", t, tp, g_marks[i].text, OutcomeColor(g_marks[i].outcome, clr), below, g_marks[i].tip);
      }
+  }
+
+//+------------------------------------------------------------------+
+//| D1: per day and side, the shown cells' arrows stack next to the  |
+//| candle and one text joins their short texts.                     |
+//+------------------------------------------------------------------+
+void DrawDaily(const double ppp)
+  {
+   int n = ArraySize(g_marks);
+   int done[];
+   ArrayResize(done, n);
+   ArrayInitialize(done, 0);
+   for(int i = 0; i < n; i++)
+     {
+      if(done[i] != 0 || !Shown(i, PGS_MODE_D1))
+         continue;
+      bool below = (g_marks[i].direction == "up");
+      int group[];
+      for(int c = 0; c < ArraySize(g_d1_cells); c++)
+         for(int j = i; j < n; j++)
+            if(done[j] == 0 && Shown(j, PGS_MODE_D1) && g_marks[j].hour == g_marks[i].hour
+               && (g_marks[j].direction == "up") == below && g_marks[j].cell == g_d1_cells[c])
+              {
+               done[j] = 1;
+               int k = ArraySize(group);
+               ArrayResize(group, k + 1);
+               group[k] = j;
+              }
+      if(ArraySize(group) == 0)
+         continue;
+      // The chart's own candle for that calendar day; a clock a few hours off Berlin stays on the day.
+      int b = iBarShift(_Symbol, PERIOD_D1, g_marks[i].hour + 12 * 3600, false);
+      datetime t = g_marks[i].hour;
+      if(b >= 0 && MathAbs((double)(iTime(_Symbol, PERIOD_D1, b) - g_marks[i].hour)) <= 6 * 3600)
+         t = iTime(_Symbol, PERIOD_D1, b);
+      else
+         b = -1;
+      double lo, hi;
+      BarRange(PERIOD_D1, b, g_marks[group[0]].close, lo, hi);
+      double gap = MathMax((hi - lo) * 0.05, 10 * _Point);
+      double p = below ? lo - gap : hi + gap;
+      string text = "", tip = "";
+      for(int k = 0; k < ArraySize(group); k++)
+        {
+         int j = group[k];
+         double pk = below ? p - k * PGS_STEP_PX * ppp : p + k * PGS_STEP_PX * ppp;
+         Arrow(PGS_PREFIX + "M" + IntegerToString(j) + "a", t, pk, ArrowCode(j), ArrowColor(j),
+               below ? ANCHOR_TOP : ANCHOR_BOTTOM, g_marks[j].tip);
+         text += (k > 0 ? "  |  " : "") + g_marks[j].text;
+         tip += (k > 0 ? "\n\n" : "") + g_marks[j].tip;
+        }
+      int last = ArraySize(group);
+      double tp = below ? p - last * PGS_STEP_PX * ppp : p + last * PGS_STEP_PX * ppp;
+      color fg = (color)ChartGetInteger(0, CHART_COLOR_FOREGROUND);
+      color clr = (last == 1) ? OutcomeColor(g_marks[group[0]].outcome, ArrowColor(group[0])) : fg;
+      Text(PGS_PREFIX + "M" + IntegerToString(group[0]) + "t", t, tp, text, clr, below, tip);
+     }
+  }
+
+void DrawMarks()
+  {
+   ObjectsDeleteAll(0, PGS_PREFIX + "M");
+   if(g_state == 2)
+      return;
+   int mode = ChartMode();
+   double ppp = PricePerPixel();
+   if(mode == PGS_MODE_H1)
+      DrawHourly(ppp);
+   else if(mode == PGS_MODE_D1)
+      DrawDaily(ppp);
   }
 
 bool IsStale()
@@ -357,6 +494,29 @@ string ShiftText(const int shift)
    return StringFormat(T("shift"), (shift > 0 ? "+" : "−") + s);
   }
 
+// The Python count template, filled for the arrows this chart shows.
+string CountLine(const int mode)
+  {
+   string s = (mode == PGS_MODE_D1) ? g_count_d1 : g_count_h1;
+   StringReplace(s, "{min}", IntegerToString(g_min));
+   int nc = (mode == PGS_MODE_D1) ? ArraySize(g_d1_cells) : ArraySize(g_h1_cells);
+   for(int c = 0; c < nc; c++)
+     {
+      string cell = (mode == PGS_MODE_D1) ? g_d1_cells[c] : g_h1_cells[c];
+      int right = 0, settled = 0;
+      for(int i = 0; i < ArraySize(g_marks); i++)
+         if(g_marks[i].cell == cell && Shown(i, mode) && (g_marks[i].outcome == "right" || g_marks[i].outcome == "wrong"))
+           {
+            settled++;
+            if(g_marks[i].outcome == "right")
+               right++;
+           }
+      StringReplace(s, "{r_" + cell + "}", IntegerToString(right));
+      StringReplace(s, "{t_" + cell + "}", IntegerToString(settled));
+     }
+   return s;
+  }
+
 void AddLine(string &lines[], color &colors[], const string text, const color clr)
   {
    if(StringLen(text) == 0)
@@ -368,17 +528,74 @@ void AddLine(string &lines[], color &colors[], const string text, const color cl
    colors[k] = clr;
   }
 
+// Current-forecast lines: the newest open forecast per cell of the chart's cadence, unfiltered.
+void CurrentLines(string &lines[], color &colors[], const int mode, const color fg)
+  {
+   int shift = ShiftSeconds();
+   datetime now = TimeTradeServer();
+   int nc = (mode == PGS_MODE_D1) ? ArraySize(g_d1_cells) : ArraySize(g_h1_cells);
+   string cad = (mode == PGS_MODE_D1) ? "D1" : "H1";
+   int last = -1, shown = 0;
+   for(int c = 0; c < nc; c++)
+     {
+      string cell = (mode == PGS_MODE_D1) ? g_d1_cells[c] : g_h1_cells[c];
+      int cur = -1;
+      for(int i = 0; i < ArraySize(g_marks); i++)
+        {
+         if(g_marks[i].kind != "forecast" || g_marks[i].cadence != cad || g_marks[i].cell != cell)
+            continue;
+         if(last < 0 || g_marks[i].hour > g_marks[last].hour)
+            last = i;
+         if(g_marks[i].hour_end + shift > now && (cur < 0 || g_marks[i].hour > g_marks[cur].hour))
+            cur = i;
+        }
+      if(cur >= 0)
+        {
+         AddLine(lines, colors, g_marks[cur].panel, ArrowColor(cur));
+         shown++;
+        }
+     }
+   if(shown == 0 && last >= 0)
+      AddLine(lines, colors, StringFormat(T("no_current"), g_marks[last].hour_sofia), fg);
+   else if(shown == 0)
+      AddLine(lines, colors, T("none"), fg);
+  }
+
+void DrawButtons(const bool right, const bool lower)
+  {
+   ObjectsDeleteAll(0, PGS_PREFIX + "B");
+   for(int i = 0; i < ArraySize(g_filters); i++)
+     {
+      string name = PGS_PREFIX + "B" + IntegerToString(g_filters[i]);
+      int x = right ? 10 + PGS_BTN_W + (ArraySize(g_filters) - 1 - i) * (PGS_BTN_W + 4) : 10 + i * (PGS_BTN_W + 4);
+      ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
+      ObjectSetInteger(0, name, OBJPROP_CORNER, InpCorner);
+      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, lower ? 20 + PGS_BTN_H : 20);
+      ObjectSetInteger(0, name, OBJPROP_XSIZE, PGS_BTN_W);
+      ObjectSetInteger(0, name, OBJPROP_YSIZE, PGS_BTN_H);
+      ObjectSetString(0, name, OBJPROP_TEXT, "≥" + IntegerToString(g_filters[i]) + " %");
+      ObjectSetString(0, name, OBJPROP_FONT, PGS_FONT);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
+      ObjectSetInteger(0, name, OBJPROP_STATE, g_filters[i] == g_min);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+     }
+  }
+
 //+------------------------------------------------------------------+
 void DrawPanel()
   {
    ObjectsDeleteAll(0, PGS_PREFIX + "P");
+   ObjectsDeleteAll(0, PGS_PREFIX + "B");
    color fg = (color)ChartGetInteger(0, CHART_COLOR_FOREGROUND);
+   int mode = ChartMode();
    string lines[];
    color colors[];
    AddLine(lines, colors, T("title"), fg);
    if(!IsGoldSymbol())
       AddLine(lines, colors, T("not_gold"), fg);
-   else if(PeriodSeconds(PERIOD_CURRENT) > 3600)
+   else if(mode == PGS_MODE_NONE)
       AddLine(lines, colors, T("timeframe"), fg);
    else if(g_state == 2)
       AddLine(lines, colors, T("unknown"), clrOrangeRed);
@@ -388,46 +605,45 @@ void DrawPanel()
          AddLine(lines, colors, T("missing"), clrOrangeRed);
       if(g_loaded)
         {
-         int shift = ShiftSeconds();
-         datetime now = TimeTradeServer();
-         int cur = -1, last = -1, alert = -1;
-         for(int i = 0; i < ArraySize(g_marks); i++)
+         CurrentLines(lines, colors, mode, fg);
+         if(mode == PGS_MODE_H1)
            {
-            bool open = (g_marks[i].hour_end + shift > now);
-            if(g_marks[i].kind == "forecast")
-              {
-               if(last < 0 || g_marks[i].hour > g_marks[last].hour)
-                  last = i;
-               if(open && (cur < 0 || g_marks[i].hour > g_marks[cur].hour))
-                  cur = i;
-              }
-            else if(open && (alert < 0 || g_marks[i].hour > g_marks[alert].hour))
-               alert = i;
+            int shift = ShiftSeconds(), alert = -1;
+            datetime now = TimeTradeServer();
+            for(int i = 0; i < ArraySize(g_marks); i++)
+               if(g_marks[i].kind == "alert" && g_marks[i].hour_end + shift > now
+                  && (alert < 0 || g_marks[i].hour > g_marks[alert].hour))
+                  alert = i;
+            if(alert >= 0)
+               AddLine(lines, colors, g_marks[alert].panel, InpAlertColor);
            }
-         if(cur >= 0)
-            AddLine(lines, colors, g_marks[cur].panel, g_marks[cur].direction == "up" ? InpUpColor : InpDownColor);
-         else if(last >= 0)
-            AddLine(lines, colors, StringFormat(T("no_current"), g_marks[last].hour_sofia), fg);
-         else
-            AddLine(lines, colors, T("none"), fg);
-         if(alert >= 0)
-            AddLine(lines, colors, g_marks[alert].panel, InpAlertColor);
-         AddLine(lines, colors, g_count, fg);
+         if(g_min > 50)
+           {
+            string f = g_filter;
+            StringReplace(f, "{min}", IntegerToString(g_min));
+            AddLine(lines, colors, f, fg);
+           }
+         AddLine(lines, colors, CountLine(mode), fg);
          if(IsStale())
             AddLine(lines, colors, StringFormat(T("stale"), g_written), clrOrangeRed);
          else
             AddLine(lines, colors, g_written, fg);
-         if(shift != 0)
+         int shift = ShiftSeconds();
+         if(mode == PGS_MODE_H1 && shift != 0)
             AddLine(lines, colors, ShiftText(shift), fg);
          AddLine(lines, colors, g_research, fg);
         }
      }
    bool right = (InpCorner == CORNER_RIGHT_UPPER || InpCorner == CORNER_RIGHT_LOWER);
    bool lower = (InpCorner == CORNER_LEFT_LOWER || InpCorner == CORNER_RIGHT_LOWER);
+   bool buttons = (mode != PGS_MODE_NONE);
+   if(buttons)
+      DrawButtons(right, lower);
    ENUM_ANCHOR_POINT anchor = lower ? (right ? ANCHOR_RIGHT_LOWER : ANCHOR_LEFT_LOWER)
                                     : (right ? ANCHOR_RIGHT_UPPER : ANCHOR_LEFT_UPPER);
    int n = ArraySize(lines);
    int step = InpFontSize * 2 + 2;
+   int top = 20 + (buttons ? PGS_BTN_H + 6 : 0);
    for(int i = 0; i < n; i++)
      {
       string name = PGS_PREFIX + "P" + IntegerToString(i);
@@ -435,7 +651,7 @@ void DrawPanel()
       ObjectSetInteger(0, name, OBJPROP_CORNER, InpCorner);
       ObjectSetInteger(0, name, OBJPROP_ANCHOR, anchor);
       ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 10);
-      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, 20 + (lower ? n - 1 - i : i) * step);
+      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, top + (lower ? n - 1 - i : i) * step);
       ObjectSetString(0, name, OBJPROP_TEXT, lines[i]);
       ObjectSetString(0, name, OBJPROP_FONT, PGS_FONT);
       ObjectSetInteger(0, name, OBJPROP_FONTSIZE, InpFontSize);
@@ -457,6 +673,7 @@ int OnInit()
   {
    g_lang = (InpLanguage == PGS_BG) ? "bg" : "en";
    IndicatorSetString(INDICATOR_SHORTNAME, "ProphetGoldSignals");
+   LoadFilter();
    ReadFile();
    Redraw();
    EventSetTimer(30);
@@ -467,12 +684,17 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    ObjectsDeleteAll(0, PGS_PREFIX);
+   if(reason == REASON_REMOVE)
+     {
+      GlobalVariableDel(GvName("min"));
+      GlobalVariableDel(GvName("inp"));
+     }
    ChartRedraw();
   }
 
 // Every 30 s: pick up a rewritten file, and redraw anyway -- the current
-// forecast, an open alert, staleness and the live hour's candle all move with
-// the clock, not with the file.
+// forecast, an open alert, staleness and the live candle all move with the
+// clock, not with the file.
 void OnTimer()
   {
    ReadFile();
@@ -494,5 +716,10 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
   {
    if(id == CHARTEVENT_CHART_CHANGE)
       Redraw();
+   else if(id == CHARTEVENT_OBJECT_CLICK && StringFind(sparam, PGS_PREFIX + "B") == 0)
+     {
+      SetFilter((int)StringToInteger(StringSubstr(sparam, StringLen(PGS_PREFIX) + 1)));
+      Redraw();
+     }
   }
 //+------------------------------------------------------------------+

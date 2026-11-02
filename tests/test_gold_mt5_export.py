@@ -34,8 +34,8 @@ def _p(as_of, p_up=0.6, vol=0.1, close=4000.0, cell='h1_lstm', cad='H1'):
             'phase': 'dry_run', 'logged_at': 'x'}
 
 
-def _s(as_of, realised_dir, ret, eligible=True, cell='h1_lstm'):
-    return {'key': f'{cell}|H1|{as_of}', 'cell': cell, 'cadence': 'H1', 'as_of_bar': as_of, 'exit_bar': '',
+def _s(as_of, realised_dir, ret, eligible=True, cell='h1_lstm', cad='H1', exit_bar=''):
+    return {'key': f'{cell}|{cad}|{as_of}', 'cell': cell, 'cadence': cad, 'as_of_bar': as_of, 'exit_bar': exit_bar,
             'exit_close': '', 'realised_dir': realised_dir, 'realised_ret_pct': ret, 'realised_vol_pct': abs(ret),
             'eligible': eligible, 'phase': 'dry_run', 'settled_at': 'x'}
 
@@ -71,13 +71,16 @@ def _by_key(data, kind='forecast'):
 
 # ── 1.1 selection and scoring ───────────────────────────────────────────────
 
-def test_only_h1_lstm_forecasts_are_drawn(cfg):
-    bar = _bar('2026-11-02', 9)
+def test_only_the_chosen_cells_are_drawn(cfg):
+    bar, day = _bar('2026-11-02', 9), '2026-10-30 00:00:00+00:00'
     v2 = dict(_p(bar), key=f'h1_lstm|H1|{bar}|20261023', version='20261023', shadow=1)
     _write(cfg, preds=[_p(bar, cell='h1_gbm'), _p(bar), _p(bar, cell='h1_garch_hod'),
-                       _p('2026-10-30 00:00:00+00:00', cell='d1_lstm', cad='D1')], v2=[v2])
+                       _p(day, cell='d1_lstm', cad='D1'), _p(day, cell='d1_gbm', cad='D1'),
+                       _p(day, cell='d1_garch', cad='D1')], v2=[v2])
     data = X.build(cfg, NOW)
-    assert [r['key'] for r in data['rows']] == [f'h1_lstm|H1|{bar}']
+    assert sorted(r['key'] for r in data['rows']) == [f'd1_gbm|D1|{day}', f'd1_lstm|D1|{day}', f'h1_lstm|H1|{bar}']
+    assert {(r['cell'], r['cadence']) for r in data['rows']} == {('h1_lstm', 'H1'), ('d1_lstm', 'D1'),
+                                                                 ('d1_gbm', 'D1')}
 
 
 def test_the_window_is_the_last_five_trading_days_by_sofia_date(cfg):
@@ -107,7 +110,8 @@ def test_outcomes_and_the_count(cfg):
     got = [r['outcome'] for r in data['rows']]
     assert got == ['right', 'wrong', 'right', 'void', 'open']
     assert (data['right'], data['wrong']) == (2, 1)
-    assert data['meta']['count_en'] == '1 days: right 2 of 3 (descriptive, not a test)'
+    assert data['meta']['count_h1_en'] == ('1 days, arrows ≥{min} %: right {r_h1_lstm} of {t_h1_lstm} '
+                                           '(descriptive, not a test)')
 
 
 def test_an_empty_realised_direction_is_not_counted(cfg):
@@ -121,6 +125,65 @@ def test_an_alert_without_its_prediction_row_is_shown_in_percent_only(cfg):
     _write(cfg, preds=[_p(_bar('2026-11-02', 8))], alerts=[_a(_bar('2026-11-02', 9), 0.1954)])
     alert = _by_key(X.build(cfg, NOW), 'alert')[f"h1_lstm|H1|{_bar('2026-11-02', 9)}"]
     assert alert['text_en'] == '±0.20 %' and '$' not in alert['tip_en']
+
+
+# ── 5.1 daily cells ─────────────────────────────────────────────────────────
+
+def _day(d):
+    return f'{d} 00:00:00+00:00'
+
+
+def test_spec_daily_scenario(cfg):
+    as_of = _day('2026-10-29')
+    _write(cfg, preds=[_p(as_of, 0.4777, 0.517, 4023.57, cell='d1_lstm', cad='D1'),
+                       _p(as_of, 0.7782, '', 4023.57, cell='d1_gbm', cad='D1')])
+    rows = _by_key(X.build(cfg, NOW))
+    lstm, gbm = rows[f'd1_lstm|D1|{as_of}'], rows[f'd1_gbm|D1|{as_of}']
+    assert (lstm['direction'], lstm['prob_pct'], lstm['text_en'], lstm['text_bg']) == ('down', 52, 'lstm 52 %', 'lstm 52 %')
+    assert (gbm['direction'], gbm['prob_pct'], gbm['text_en']) == ('up', 78, 'gbm 78 %')
+    assert lstm['hour_label'] == gbm['hour_label'] == '2026.10.30 00:00' and lstm['hour_end_label'] == '2026.10.31 00:00'
+    assert lstm['tip_en'].split('\n')[0] == 'Gold · d1_lstm · day Oct 30' and lstm['hour_sofia_bg'] == '30.10'
+    assert 'Expected move: about ±0.52 % (~±20.80 $ at 4023.57)' in lstm['tip_en']
+    assert 'Expected move' not in gbm['tip_en'] and 'Очаквано' not in gbm['tip_bg']
+    assert lstm['panel_en'] == 'd1_lstm · Oct 30: down 52 %, expected ±0.52 %'
+    assert gbm['panel_bg'] == 'd1_gbm · 30.10: нагоре 78 %'
+    assert 'денят е отворен' in lstm['tip_bg']
+
+
+def test_the_settled_exit_bar_dates_a_daily_mark(cfg):
+    fri, thu = _day('2026-10-30'), _day('2026-10-29')
+    _write(cfg, preds=[_p(fri, 0.6, cell='d1_lstm', cad='D1'), _p(thu, 0.6, cell='d1_lstm', cad='D1')],
+           setts=[_s(thu, 0, -0.45, cell='d1_lstm', cad='D1', exit_bar=_day('2026-11-01'))])
+    rows = _by_key(X.build(cfg, NOW))
+    assert rows[f'd1_lstm|D1|{thu}']['hour_label'] == '2026.11.01 00:00'           # where it was scored
+    assert rows[f'd1_lstm|D1|{thu}']['text_en'] == 'lstm 60 % · wrong −0.45 %'
+    assert rows[f'd1_lstm|D1|{fri}']['hour_label'] == '2026.11.02 00:00'           # next business day
+
+
+def test_the_daily_window_is_the_last_twenty_forecast_days(cfg):
+    days = pd.bdate_range('2026-09-25', periods=26)
+    _write(cfg, preds=[_p(_day(f'{d:%Y-%m-%d}'), cell=c, cad='D1') for d in days for c in ('d1_lstm', 'd1_gbm')])
+    data = X.build(cfg, NOW)
+    marks = sorted({r['hour_label'] for r in data['rows']})
+    assert len(data['d1_days']) == 20 and len(marks) == 20 and len(data['rows']) == 40
+    assert marks[-1] == f"{days[-1] + pd.offsets.BDay(1):%Y.%m.%d} 00:00"
+    assert data['meta']['count_d1_en'].startswith('20 days, arrows ≥{min} %: lstm right {r_d1_lstm} of {t_d1_lstm}')
+
+
+@pytest.mark.parametrize('p_up', [0.4777, 0.7782, 0.5, 0.5001])
+def test_daily_direction_matches_the_gold_page(cfg, p_up):
+    as_of = _day('2026-10-29')
+    pred = _p(as_of, p_up, cell='d1_gbm', cad='D1')
+    _write(cfg, preds=[pred])
+    [row] = X.build(cfg, NOW)['rows']
+    cur, _ = S.current_forecast({k: str(v) for k, v in pred.items()}, 'D1', pd.Timestamp(as_of))
+    assert row['direction'] == cur['direction'] and row['prob_pct'] == round(cur['probability'] * 100)
+
+
+def test_the_filter_line_says_it_is_a_display_choice(cfg):
+    meta = X.build(cfg, NOW)['meta']
+    assert meta['filter_en'] == 'Filter ≥{min} %: a display choice, not a tested rule'
+    assert meta['filter_bg'] == 'Филтър ≥{min} %: избор за показване, не е тестван праг'
 
 
 # ── 1.2 texts ───────────────────────────────────────────────────────────────
@@ -226,11 +289,11 @@ def test_the_file_round_trips(cfg, tmp_path):
     path = str(tmp_path / 'common' / X.SUBDIR / X.FILE_NAME)
     status = X.export(cfg, NOW, path=path)
     tag, meta, rows = _parse(path)
-    assert tag == '#meta' and meta['version'] == '1' and meta['label_tz'] == 'Europe/Berlin'
+    assert tag == '#meta' and meta['version'] == '2' and meta['label_tz'] == 'Europe/Berlin'
     assert meta['generated_utc'] == '2026.11.02 09:21:00' and meta['label_utc_offset_min'] == '60'
     assert [r['kind'] for r in rows] == ['forecast', 'alert'] and len(rows[0]) == len(X.ROW_FIELDS)
     assert rows[0]['tip_en'].split('\\n')[0] == 'Gold · h1_lstm · Nov 02, 11:00–12:00 (Sofia time)'
-    assert status == '2 mark(s), 1 day(s) 2026-11-02..2026-11-02'
+    assert status == '2 mark(s), 1 day(s) 2026-11-02..2026-11-02, 0 daily day(s)'
     assert not os.path.exists(path + '.tmp')
 
 
@@ -308,7 +371,7 @@ def test_the_indicator_reads_the_file_the_export_writes():
     src = _mq5()
     assert f'"{X.SUBDIR}\\\\{X.FILE_NAME}"' in src and f'#define PGS_VERSION    "{X.VERSION}"' in src
     read = re.findall(r'Col\(head, nh, "(\w+)"( \+ g_lang)?\)', src)
-    assert len(read) == 11
+    assert len(read) == 14
     for name, per_lang in read:
         for lang in (X.LANGS if per_lang else ('',)):
             assert name + lang in X.ROW_FIELDS, name + lang
@@ -326,5 +389,5 @@ def test_the_command_rebuilds_the_file(cfg, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(X, 'load_config', lambda: cfg)
     X.main([])
     out = capsys.readouterr().out
-    assert out.startswith('1 mark(s), 1 day(s) 2026-11-02..2026-11-02 -> ')
+    assert out.startswith('1 mark(s), 1 day(s) 2026-11-02..2026-11-02, 0 daily day(s) -> ')
     assert os.path.exists(tmp_path / 'common' / 'EURUSDProphet' / 'gold_signals.tsv')

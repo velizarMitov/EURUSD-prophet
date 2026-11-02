@@ -7,14 +7,16 @@ reads from the MT5 terminals' shared folder:
     %APPDATA%\\MetaQuotes\\Terminal\\Common\\Files\\EURUSDProphet\\gold_signals.tsv
 
 It holds the h1_lstm forecasts and the large-move alerts of the last 5 trading
-days, each with its outcome once settled, and every text the chart shows, in BG
-and EN. Python writes all the words so the wording rules are tested here; the
-indicator only places them (design D2).
+days and the d1_lstm / d1_gbm forecasts of the last 20, each with its outcome
+once settled, and every text the chart shows, in BG and EN. Python writes all
+the words so the wording rules are tested here; the indicator only places them
+(design D2). The right/wrong count is a template: only the indicator knows the
+probability filter the owner picked, so it fills in the numbers (design D12).
 
 It is the one gold write outside results/gold/ and research_models/gold/, and
 nothing in the repo reads it back. It reads only the forward logs: no model,
-no market data. h1_gbm, the D1 cells, the baselines and predictions_v2.csv are
-never read -- the owner chose h1_lstm only.
+no market data. h1_gbm, the GARCH baselines and predictions_v2.csv are never
+read -- the owner chose h1_lstm for H1 and d1_lstm + d1_gbm for D1.
 
     python -m src.gold.mt5_export     rebuild the file now
 """
@@ -25,7 +27,7 @@ import argparse
 import csv
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -33,8 +35,10 @@ import pandas as pd
 from . import load_config, repo_path
 
 CELL = 'h1_lstm'
+DRAWN = {'H1': ('h1_lstm',), 'D1': ('d1_lstm', 'd1_gbm')}
 DAYS = 5
-VERSION = 1
+DAYS_D1 = 20
+VERSION = 2
 COMMON_ENV = 'MT5_COMMON_FILES'
 SUBDIR = 'EURUSDProphet'
 FILE_NAME = 'gold_signals.tsv'
@@ -46,8 +50,8 @@ MQL_TIME = '%Y.%m.%d %H:%M'
 LANGS = ('bg', 'en')
 MONTHS_EN = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
 
-ROW_FIELDS = ['kind', 'key', 'hour_label', 'hour_end_label', 'direction', 'prob_pct', 'vol_pct', 'close',
-              'outcome', 'text_bg', 'text_en', 'tip_bg', 'tip_en', 'panel_bg', 'panel_en',
+ROW_FIELDS = ['kind', 'key', 'cell', 'cadence', 'hour_label', 'hour_end_label', 'direction', 'prob_pct', 'vol_pct',
+              'close', 'outcome', 'text_bg', 'text_en', 'tip_bg', 'tip_en', 'panel_bg', 'panel_en',
               'hour_sofia_bg', 'hour_sofia_en']
 
 # Size and direction only: never buy, sell, long, short, entry, stop, target or take-profit.
@@ -58,8 +62,10 @@ TEXT = {
     'wrong': {'bg': 'сбърка', 'en': 'wrong'},
     'void': {'bg': 'не се брои', 'en': 'not counted'},
     'open': {'bg': 'часът е отворен', 'en': 'hour still open'},
+    'open_day': {'bg': 'денят е отворен', 'en': 'day still open'},
     'actual': {'bg': 'реално {v} %', 'en': 'actual {v} %'},
     'title_forecast': {'bg': 'Злато · h1_lstm · {h} (София)', 'en': 'Gold · h1_lstm · {h} (Sofia time)'},
+    'title_day': {'bg': 'Злато · {c} · ден {d}', 'en': 'Gold · {c} · day {d}'},
     'title_alert': {'bg': 'Злато: очаква се голямо движение · {h} (София)',
                     'en': 'Gold: a large move is expected · {h} (Sofia time)'},
     'direction': {'bg': 'Посока: {d}, {p} %', 'en': 'Direction: {d}, {p} %'},
@@ -70,12 +76,20 @@ TEXT = {
     'unknown': {'bg': 'Посоката е неизвестна.', 'en': 'Direction unknown.'},
     'research': {'bg': 'Изследване — без доказан edge, без разходи', 'en': 'research — no proven edge, gross of cost'},
     'panel_forecast': {'bg': '{h} София: {d} {p} %, очаквано ±{v} %', 'en': '{h} Sofia: {d} {p} %, expected ±{v} %'},
+    'panel_day': {'bg': '{c} · {d}: {dir} {p} %', 'en': '{c} · {d}: {dir} {p} %'},
+    'panel_move': {'bg': ', очаквано ±{v} %', 'en': ', expected ±{v} %'},
     'panel_alert': {'bg': '⚠ Голямо движение ±{v} %{usd} · посоката е неизвестна',
                     'en': '⚠ Large move ±{v} %{usd} · direction unknown'},
     'written': {'bg': 'данни от {t} (София)', 'en': 'data from {t} Sofia time'},
-    'count': {'bg': '{n} дни: позна {r} от {t} (описателно, не е тест)',
-              'en': '{n} days: right {r} of {t} (descriptive, not a test)'},
-    'count_none': {'bg': '{n} дни: още няма приключили часове', 'en': '{n} days: no settled hours yet'},
+    # {n} is filled here; {min}, {r_<cell>} and {t_<cell>} by the indicator for the arrows it shows.
+    'count_h1': {'bg': '{n} дни, стрелки ≥{min} %: позна {r_h1_lstm} от {t_h1_lstm} (описателно, не е тест)',
+                 'en': '{n} days, arrows ≥{min} %: right {r_h1_lstm} of {t_h1_lstm} (descriptive, not a test)'},
+    'count_d1': {'bg': '{n} дни, стрелки ≥{min} %: lstm позна {r_d1_lstm} от {t_d1_lstm}, '
+                       'gbm {r_d1_gbm} от {t_d1_gbm} (описателно, не е тест)',
+                 'en': '{n} days, arrows ≥{min} %: lstm right {r_d1_lstm} of {t_d1_lstm}, '
+                       'gbm {r_d1_gbm} of {t_d1_gbm} (descriptive, not a test)'},
+    'filter': {'bg': 'Филтър ≥{min} %: избор за показване, не е тестван праг',
+               'en': 'Filter ≥{min} %: a display choice, not a tested rule'},
 }
 
 
@@ -114,14 +128,17 @@ def fmt(v: float, nd: int, lang: str, signed: bool = False) -> str:
     return ('+' + s) if signed and r > 0 else s
 
 
+def day_text(d: date, lang: str) -> str:
+    return f'{d:%d.%m}' if lang == 'bg' else f'{MONTHS_EN[d.month - 1]} {d:%d}'
+
+
 def hour_span(start: datetime) -> str:
     return f'{start:%H:%M}–{start + timedelta(hours=1):%H:%M}'
 
 
 def hour_sofia(wall_hour: datetime, lang: str) -> str:
     s = _sofia(wall_hour)
-    day = f'{s:%d.%m}' if lang == 'bg' else f'{MONTHS_EN[s.month - 1]} {s:%d}'
-    return f'{day}, {hour_span(s)}'
+    return f'{day_text(s, lang)}, {hour_span(s)}'
 
 
 def direction_of(p_up: float) -> tuple[str, float]:
@@ -140,6 +157,13 @@ def _outcome(direction: str, sett: dict | None) -> tuple[str, float | None]:
     return ('right' if hit else 'wrong'), ret
 
 
+def _outcome_text(outcome: str, ret: float | None, lang: str, daily: bool = False) -> str:
+    if outcome == 'open':
+        return TEXT['open_day' if daily else 'open'][lang]
+    o = TEXT[outcome][lang]
+    return o + (f' {fmt(ret, 2, lang, True)} %' if outcome in ('right', 'wrong') and ret is not None else '')
+
+
 def _usd(vol, close, lang, at=False):
     if vol is None or close is None:
         return ''
@@ -147,30 +171,61 @@ def _usd(vol, close, lang, at=False):
     return TEXT['usd_at'][lang].format(u=u, c=fmt(close, 2, lang)) if at else TEXT['usd'][lang].format(u=u)
 
 
-def _forecast_row(p: dict, sett: dict | None) -> dict:
-    wall = _wall(p['as_of_bar']) + timedelta(hours=1)
-    p_up, vol, close = _float(p.get('p_up')), _float(p.get('vol_pct')), _float(p.get('as_of_close'))
-    d, prob = direction_of(p_up)
+def _base(p: dict, sett: dict | None, wall: datetime, cadence: str) -> tuple[dict, float | None, float | None, int]:
+    vol, close = _float(p.get('vol_pct')), _float(p.get('as_of_close'))
+    d, prob = direction_of(_float(p.get('p_up')))
     pct = int(round(prob * 100))
-    outcome, ret = _outcome(d, sett)
-    row = {'kind': 'forecast', 'key': p['key'], 'hour_label': wall.strftime(MQL_TIME),
-           'hour_end_label': (wall + timedelta(hours=1)).strftime(MQL_TIME), 'direction': d,
+    outcome, _ = _outcome(d, sett)
+    end = wall + (timedelta(days=1) if cadence == 'D1' else timedelta(hours=1))
+    row = {'kind': 'forecast', 'key': p['key'], 'cell': p['cell'], 'cadence': cadence,
+           'hour_label': wall.strftime(MQL_TIME), 'hour_end_label': end.strftime(MQL_TIME), 'direction': d,
            'prob_pct': pct, 'vol_pct': '' if vol is None else round(vol, 6),
            'close': '' if close is None else close, 'outcome': outcome}
+    return row, vol, close, pct
+
+
+def _forecast_row(p: dict, sett: dict | None) -> dict:
+    wall = _wall(p['as_of_bar']) + timedelta(hours=1)
+    row, vol, close, pct = _base(p, sett, wall, 'H1')
+    d, ret = row['direction'], _outcome(row['direction'], sett)[1]
     for lang in LANGS:
-        o = TEXT[outcome][lang]
-        if outcome in ('right', 'wrong') and ret is not None:
-            o += f' {fmt(ret, 2, lang, True)} %'
-        short = f'{pct} %' if outcome == 'open' else f'{pct} % · {o}'
+        o = _outcome_text(row['outcome'], ret, lang)
         move = (TEXT['move'][lang].format(v=fmt(vol, 2, lang)) + _usd(vol, close, lang, at=True)) if vol is not None else ''
         tip = [TEXT['title_forecast'][lang].format(h=hour_sofia(wall, lang)),
                TEXT['direction'][lang].format(d=TEXT[d][lang], p=pct), move,
                TEXT['outcome'][lang].format(o=o), TEXT['research'][lang]]
-        row[f'text_{lang}'] = short
+        row[f'text_{lang}'] = f'{pct} %' if row['outcome'] == 'open' else f'{pct} % · {o}'
         row[f'tip_{lang}'] = '\n'.join(t for t in tip if t)
         row[f'panel_{lang}'] = TEXT['panel_forecast'][lang].format(
             h=hour_span(_sofia(wall)), d=TEXT[d][lang], p=pct, v=fmt(vol, 2, lang) if vol is not None else '?')
         row[f'hour_sofia_{lang}'] = hour_sofia(wall, lang)
+    return row
+
+
+def mark_day(p: dict, sett: dict | None) -> date:
+    """The day a daily forecast is for: the settled exit bar once known, before
+    that the next business day, as /gold dates it (summary.target_window_end)."""
+    if sett and sett.get('exit_bar'):
+        return _wall(sett['exit_bar']).date()
+    return (pd.Timestamp(_wall(p['as_of_bar'])) + pd.offsets.BDay(1)).date()
+
+
+def _daily_row(p: dict, sett: dict | None, day: date) -> dict:
+    wall = datetime(day.year, day.month, day.day)
+    row, vol, close, pct = _base(p, sett, wall, 'D1')
+    d, ret, cell = row['direction'], _outcome(row['direction'], sett)[1], p['cell']
+    tag = cell.split('_', 1)[1]
+    for lang in LANGS:
+        o = _outcome_text(row['outcome'], ret, lang, daily=True)
+        move = (TEXT['move'][lang].format(v=fmt(vol, 2, lang)) + _usd(vol, close, lang, at=True)) if vol is not None else ''
+        tip = [TEXT['title_day'][lang].format(c=cell, d=day_text(day, lang)),
+               TEXT['direction'][lang].format(d=TEXT[d][lang], p=pct), move,
+               TEXT['outcome'][lang].format(o=o), TEXT['research'][lang]]
+        row[f'text_{lang}'] = f'{tag} {pct} %' if row['outcome'] == 'open' else f'{tag} {pct} % · {o}'
+        row[f'tip_{lang}'] = '\n'.join(t for t in tip if t)
+        row[f'panel_{lang}'] = (TEXT['panel_day'][lang].format(c=cell, d=day_text(day, lang), dir=TEXT[d][lang], p=pct)
+                                + (TEXT['panel_move'][lang].format(v=fmt(vol, 2, lang)) if vol is not None else ''))
+        row[f'hour_sofia_{lang}'] = day_text(day, lang)
     return row
 
 
@@ -179,7 +234,7 @@ def _alert_row(a: dict, pred: dict | None, sett: dict | None) -> dict:
     vol = _float(a.get('vol_pct'))
     close = _float(pred.get('as_of_close')) if pred else None
     real = _float(sett.get('realised_vol_pct')) if sett else None
-    row = {'kind': 'alert', 'key': a['key'], 'hour_label': wall.strftime(MQL_TIME),
+    row = {'kind': 'alert', 'key': a['key'], 'cell': CELL, 'cadence': 'H1', 'hour_label': wall.strftime(MQL_TIME),
            'hour_end_label': (wall + timedelta(hours=1)).strftime(MQL_TIME), 'direction': '',
            'prob_pct': '', 'vol_pct': round(vol, 6), 'close': '' if close is None else close,
            'outcome': 'open' if sett is None else 'sized'}
@@ -198,40 +253,44 @@ def _alert_row(a: dict, pred: dict | None, sett: dict | None) -> dict:
 
 
 def build(cfg: dict | None = None, now: datetime | None = None) -> dict:
-    """{'meta', 'rows', 'days', 'right', 'wrong'} for the last DAYS trading days:
-    the Sofia dates of the forecast hours, so the Sunday 23:00 weekly-open bar
-    makes no phantom Sunday."""
+    """{'meta', 'rows', 'days', 'd1_days', 'right', 'wrong'}. Hourly marks keep the
+    last DAYS trading days -- the Sofia dates of the forecast hours, so the
+    Sunday 23:00 weekly-open bar makes no phantom Sunday; daily marks the last
+    DAYS_D1 forecast days. right/wrong count the hourly arrows, unfiltered."""
     cfg = cfg or load_config()
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     fwd = repo_path(cfg['paths']['forward'])
     preds = {}
     for r in _rows(os.path.join(fwd, 'predictions.csv')):
-        if r.get('cell') == CELL and r.get('cadence') == 'H1' and _float(r.get('p_up')) is not None:
+        if r.get('cell') in DRAWN.get(r.get('cadence'), ()) and _float(r.get('p_up')) is not None:
             preds[r['key']] = r
-    day = lambda as_of: _sofia(_wall(as_of) + timedelta(hours=1)).date()  # noqa: E731
-    days = sorted({day(p['as_of_bar']) for p in preds.values()})[-DAYS:]
-    first = days[0] if days else None
     setts = {r['key']: r for r in _rows(os.path.join(fwd, 'settlements.csv'))}
-    rows = [_forecast_row(p, setts.get(k)) for k, p in preds.items() if day(p['as_of_bar']) >= first]
+    h1 = {k: p for k, p in preds.items() if p['cadence'] == 'H1'}
+    day = lambda as_of: _sofia(_wall(as_of) + timedelta(hours=1)).date()  # noqa: E731
+    days = sorted({day(p['as_of_bar']) for p in h1.values()})[-DAYS:]
+    rows = [_forecast_row(p, setts.get(k)) for k, p in h1.items() if day(p['as_of_bar']) >= days[0]]
+    d1 = {k: (p, mark_day(p, setts.get(k))) for k, p in preds.items() if p['cadence'] == 'D1'}
+    d1_days = sorted({m for _, m in d1.values()})[-DAYS_D1:]
+    rows += [_daily_row(p, setts.get(k), m) for k, (p, m) in d1.items() if m >= d1_days[0]]
     a_setts = {r['key']: r for r in _rows(os.path.join(fwd, 'alert_settlements.csv'))}
     alerts = {}
     for a in _rows(os.path.join(fwd, 'alerts.csv')):
-        if a.get('cell') == CELL and first is not None and day(a['as_of_bar']) >= first:
+        if a.get('cell') == CELL and days and day(a['as_of_bar']) >= days[0]:
             alerts[a['key']] = a
-    rows += [_alert_row(a, preds.get(k), a_setts.get(k)) for k, a in alerts.items()]
-    rows.sort(key=lambda r: (r['hour_label'], r['kind'] != 'forecast'))
-    right = sum(r['outcome'] == 'right' for r in rows)
-    wrong = sum(r['outcome'] == 'wrong' for r in rows)
+    rows += [_alert_row(a, h1.get(k), a_setts.get(k)) for k, a in alerts.items()]
+    rows.sort(key=lambda r: (r['hour_label'], r['kind'] != 'forecast', r['cell']))
+    hourly = [r for r in rows if r['kind'] == 'forecast' and r['cadence'] == 'H1']
     sofia_now = now.astimezone(SOFIA)
     meta = {'version': VERSION, 'generated_utc': now.strftime('%Y.%m.%d %H:%M:%S'), 'label_tz': 'Europe/Berlin',
             'label_utc_offset_min': int(now.astimezone(LABEL_TZ).utcoffset().total_seconds() // 60)}
     for lang in LANGS:
-        day_s = f'{sofia_now:%d.%m}' if lang == 'bg' else f'{MONTHS_EN[sofia_now.month - 1]} {sofia_now:%d}'
-        meta[f'written_{lang}'] = TEXT['written'][lang].format(t=f'{day_s} {sofia_now:%H:%M}')
-        meta[f'count_{lang}'] = (TEXT['count'][lang].format(n=len(days), r=right, t=right + wrong) if right + wrong
-                                 else TEXT['count_none'][lang].format(n=len(days)))
+        meta[f'written_{lang}'] = TEXT['written'][lang].format(t=f'{day_text(sofia_now, lang)} {sofia_now:%H:%M}')
+        meta[f'count_h1_{lang}'] = TEXT['count_h1'][lang].replace('{n}', str(len(days)))
+        meta[f'count_d1_{lang}'] = TEXT['count_d1'][lang].replace('{n}', str(len(d1_days)))
+        meta[f'filter_{lang}'] = TEXT['filter'][lang]
         meta[f'research_{lang}'] = TEXT['research'][lang]
-    return {'meta': meta, 'rows': rows, 'days': days, 'right': right, 'wrong': wrong}
+    return {'meta': meta, 'rows': rows, 'days': days, 'd1_days': d1_days,
+            'right': sum(r['outcome'] == 'right' for r in hourly), 'wrong': sum(r['outcome'] == 'wrong' for r in hourly)}
 
 
 # ── the file ────────────────────────────────────────────────────────────────
@@ -283,7 +342,7 @@ def export(cfg: dict | None = None, now: datetime | None = None, path: str | Non
     path = path or export_path()
     write_atomic(path, render(data), **write_kw)
     span = f"{data['days'][0]}..{data['days'][-1]}" if data['days'] else 'no forecasts'
-    return f"{len(data['rows'])} mark(s), {len(data['days'])} day(s) {span}"
+    return f"{len(data['rows'])} mark(s), {len(data['days'])} day(s) {span}, {len(data['d1_days'])} daily day(s)"
 
 
 def main(argv=None):

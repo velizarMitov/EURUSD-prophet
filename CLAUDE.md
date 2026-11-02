@@ -136,7 +136,9 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
    - **MT5 chart signals** (change `gold-mt5-chart-signals`, `src/gold/mt5_export.py`):
      - Each logger pass rebuilds `Common\Files\EURUSDProphet\gold_signals.tsv`.
      - The read-only indicator `mql5/Indicators/ProphetGoldSignals.mq5` reads it and
-       draws h1_lstm arrows and alert markers for the last 5 trading days.
+       draws h1_lstm arrows and alert markers at H1 and below for the last 5 trading days.
+       On D1 it draws d1_lstm and d1_gbm arrows for the last 20.
+     - Its probability-filter buttons are a display choice, never a registered rule.
      - That file is the only gold write outside the repo, and nothing reads it back.
      - Python builds all chart wording, and it must never name a trade.
      - Install with `scripts/gold/install_mt5_indicator.ps1`.

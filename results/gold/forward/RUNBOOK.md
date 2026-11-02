@@ -172,19 +172,35 @@ All round-two output goes to its own files. Round one's `predictions.csv`,
 
 ## Gold signals on the MT5 chart (change `gold-mt5-chart-signals`)
 
-The indicator `ProphetGoldSignals` draws the h1_lstm forecasts and the large-move alerts
-of the last 5 trading days on an XAUUSD / GOLD chart at H1 or lower:
-- an up or down arrow on each forecast hour, with the probability beside it;
-- a two-headed marker on each alerted hour, with the expected size in % and $;
-- the outcome beside each mark once its hour has settled: right or wrong with the
-  realised move, the realised size for an alert, or "not counted";
-- a full description on hover, in Sofia time;
-- a corner panel with the current forecast, any open alert, the 5-day count and the data
-  time.
+The indicator `ProphetGoldSignals` draws on an XAUUSD / GOLD chart:
+- **H1 and lower:** the h1_lstm forecasts and the large-move alerts of the last 5 trading
+  days:
+  - an up or down arrow on each forecast hour, with the probability beside it;
+  - a two-headed marker on each alerted hour, with the expected size in % and $.
+- **D1:** the d1_lstm and d1_gbm forecasts of the last 20 forecast days:
+  - d1_lstm is a solid arrow in the up/down colours, and d1_gbm a hollow arrow in its
+    own colour;
+  - when both cells point the same way, their arrows stack and one text joins them.
+
+On both:
+- the outcome sits beside each mark once its hour or day has settled: right or wrong with
+  the realised move, the realised size for an alert, or "not counted";
+- hovering shows a full description, in Sofia time;
+- a corner panel shows the current forecast, any open alert, the count of right and
+  wrong arrows, and the data time.
+
+**Filter.** The buttons ≥50 · ≥52 · ≥54 · ≥56 % at the top of the panel hide the direction
+arrows below that probability. 50 shows all.
+- Alert markers always stay.
+- The chart keeps its choice when you change the timeframe.
+- The starting value is the setting "Arrows from probability".
+- While the filter is above 50, the panel says it is a display choice, not a tested rule,
+  and the count covers only the arrows shown. Round two's `h1_selective`, which abstains
+  when unsure, was DROP on validation.
 
 The count is descriptive, not a verdict. Every description carries "research — no proven
-edge, gross of cost". The indicator only reads a file and draws: it has no trading,
-network or DLL call.
+edge, gross of cost". The indicator only reads a file, draws, and remembers each chart's
+filter in a terminal global variable. It has no trading, network or DLL call.
 
 **Where the data comes from.** Each logger pass runs `forward_logger.log_chart` after the
 alerts. It rebuilds `%APPDATA%\MetaQuotes\Terminal\Common\Files\EURUSDProphet\gold_signals.tsv`
@@ -229,8 +245,10 @@ removed.
   - In the March and late-October weeks when US and EU summer time disagree, marks from
     before the switch can sit an hour off.
   - Each description names the Sofia hour, which is always right.
-- **"This chart is not gold"** or **"Signals show on H1 or a lower timeframe"**: no marks
-  are drawn on other symbols, or above H1.
+- **"This chart is not gold"** or **"Signals show on H1 or lower, and on D1"**: no marks
+  are drawn on other symbols, or on H2–H12, W1 or MN.
+- **"Unknown data format — reinstall the indicator"**: the terminal runs an older build
+  of the indicator than the file. Run the installer again.
 - **Prices and $ sizes** come from the logger's broker. Another broker's chart can differ
   by cents to a dollar. The marks sit on that chart's own candles.
 - **Portable-mode terminal** (started with `/portable`): it has no

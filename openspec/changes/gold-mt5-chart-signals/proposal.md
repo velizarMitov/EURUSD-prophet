@@ -7,6 +7,10 @@ browser: the h1_lstm direction and expected move, and the large-move alert. Swit
 between the two windows means a signal is read late or not at all. The owner asked on
 2026-11-02 to see the gold signals on the MT5 chart itself, as arrows with a description.
 
+After seeing the first version on 2026-11-02, the owner asked for two additions:
+- a filter that shows only the arrows at or above a chosen probability, e.g. 54 %;
+- the D1 signals, from both d1_lstm and d1_gbm, on the D1 chart.
+
 This puts research output on the screen where real-money trades are placed. Each mark must
 carry the same honesty as `/gold`:
 - h1_lstm direction cleared the one-shot test gross of cost (51.3 % vs 48.5 %), but its
@@ -28,8 +32,18 @@ carry the same honesty as `/gold`:
     label;
   - a corner panel with the current forecast, any open alert, the 5-day count of right
     and wrong arrows (descriptive, never a test), and the freshness of the data.
-- **History:** the forecasts and alerts of the last 5 trading days, each with its result.
-  Older marks are removed.
+- **Daily arrows on a D1 chart**, from d1_lstm and d1_gbm, one arrow each per forecast
+  day. d1_lstm is drawn solid and d1_gbm hollow, each in its own colours.
+- **A probability filter.** Buttons on the chart (≥50 · 52 · 54 · 56 %) hide the
+  direction arrows below the chosen probability. 50 shows all. The starting value is an
+  indicator setting, and a chart keeps its choice when the timeframe changes.
+  - The filter is for display only, not a tested rule. Round two's
+    "abstain when unsure" cell, `h1_selective`, was DROP on validation.
+  - The panel names the active filter, and its right/wrong count covers only the arrows
+    shown, so the filtered view can be watched on new data.
+  - Alert markers are never filtered.
+- **History:** H1 forecasts and alerts from the last 5 trading days, and D1 forecasts
+  from the last 20, each with its result. Older marks are removed.
 - **A signal export.** Each gold logger pass rebuilds one file in the MT5 shared
   `Common\Files` folder from the forward logs it has just written. A failed export is
   recorded and never costs the pass. A CLI rebuilds the file on demand.
@@ -38,16 +52,16 @@ carry the same honesty as `/gold`:
 - **Unchanged:**
   - the forward logs, the alert threshold, the alert text rules, and `/gold`;
   - the registries and every verdict;
-  - h1_gbm, the D1 cells and the round-two/shadow rows. These are not drawn: the owner
-    chose h1_lstm only.
+  - h1_gbm, the GARCH baselines and the round-two/shadow rows. These are not drawn: the
+    owner chose h1_lstm for H1, and d1_lstm and d1_gbm for D1.
 
 ## Capabilities
 
 ### New Capabilities
 
 - `gold-forecasting/mt5-chart-signals`: the gold signals on the MT5 chart. It covers which
-  signals are drawn and how (arrows, alert marker, descriptions, panel), the 5-day history
-  with outcomes, the export file and its freshness, placement on the chart's own clock,
+  signals are drawn and how (H1 and D1 arrows, alert marker, descriptions, panel), the
+  probability filter, the history with outcomes, the export file and its freshness, placement on the chart's own clock,
   installation, and the guarantee that the chart shows signals and never trades.
 
 ### Modified Capabilities

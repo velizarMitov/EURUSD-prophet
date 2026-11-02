@@ -34,8 +34,8 @@
 **Non-Goals:**
 - No expert advisor, trading call, order, alert-to-trade bridge, sound or push
   notification from MT5. The Windows toast already exists.
-- No confidence filter or threshold on the arrows. That would be a new, unregistered
-  knob tuned by eye.
+- No tested threshold. The probability filter (D12) is a display choice the owner sets.
+  It is never registered, scored or reported as a rule.
 - No support for portable-mode terminals in the installer. Those are installed by hand,
   as the RUNBOOK will describe.
 - No change to what the logger forecasts, settles or alerts.
@@ -76,20 +76,27 @@ timeframe too high, no current forecast, clock shift and unknown format.
 This keeps the wording rules ("no trade words", "direction unknown", the research label)
 testable in pytest. A pytest scan covers the few MQL5 string literals.
 
-### D3. File format, version 1
+### D3. File format, version 2
+Version 1 had only h1_lstm and a precomputed count. Version 2 adds the daily cells and
+the count templates the filter needs. An indicator built for version 1 shows "unknown
+format, reinstall" instead of misreading the file.
+
 The file is UTF-8, tab-separated and LF-terminated:
 - **Line 1** is `#meta`, followed by `key=value` fields:
-  - `version=1`;
+  - `version=2`;
   - `generated_utc`;
   - `label_tz=Europe/Berlin`;
   - `label_utc_offset_min`, the Berlin offset at export time;
   - `written_bg` and `written_en`;
-  - `count_bg` and `count_en`;
+  - `count_h1_*` and `count_d1_*`: count templates in BG and EN. The indicator fills
+    `{min}`, `{r_<cell>}` and `{t_<cell>}` for the arrows it shows (D12);
+  - `filter_*`: the "display choice, not a tested rule" line, with `{min}`;
   - `research_bg` and `research_en`.
 - **Line 2** is the header.
 - **Each row** has these fields:
-  - `kind` (`forecast` or `alert`) and `key`;
-  - `hour_label`, the bar the mark sits on, on the label clock;
+  - `kind` (`forecast` or `alert`), `key`, `cell` and `cadence` (`H1` or `D1`);
+  - `hour_label`, the bar the mark sits on, on the label clock. A daily row gives the
+    forecast day at 00:00;
   - `hour_end_label`;
   - `direction` (`up`, `down` or empty), `prob_pct`, `vol_pct` and `close`;
   - `outcome` (`open`, `right`, `wrong`, `void` or `sized`);
@@ -147,8 +154,18 @@ and the passage of time still change what the chart shows.
   missing, the alert is shown in percent only. A settled alert shows its realised
   absolute move.
 - **Dollar size:** `vol_pct / 100 × close`, the same formula as the `/gold` banner.
-- **Count:** right versus wrong over the window. `void` and `open` are excluded. The
-  count is labelled descriptive and not a test.
+- **Daily rows:** `predictions.csv` rows of `d1_lstm` and `d1_gbm` with cadence `D1`.
+  - The mark day is the settlement's `exit_bar` once settled, otherwise
+    `as_of + BDay(1)`, as `/gold` dates a daily forecast.
+  - The window is the last 20 distinct mark days.
+  - The short text carries the cell tag (`lstm 53 %`, `gbm 78 % · wrong −0.45 %`),
+    because a day has two arrows.
+  - The hover description names the day, and the expected move where the cell has one.
+    d1_gbm has none.
+- **Count:** right versus wrong, per cell, over the arrows the chart shows. `void` and
+  `open` are excluded. The count is labelled descriptive and not a test. Python writes
+  the templates, and the indicator fills in the numbers because only it knows the
+  filter (D12).
 
 ### D7. Placing marks on the chart's clock
 - The rows carry label-clock times, and `#meta` carries Berlin's UTC offset at export.
@@ -192,7 +209,7 @@ includes the logger's own terminal.
 - **Panel:** `OBJ_LABEL` lines in a corner chosen by an input. The default is the upper
   right, so the one-click trading panel is not covered.
 - **Inputs:** `Language` (BG/EN, default BG), the colours, the panel corner and the
-  font size.
+  font size. Also the starting probability filter (default 50) and the d1_gbm colour.
 
 ### D9. Refresh and time-based state
 `EventSetTimer(30)`. Each timer tick:
@@ -235,7 +252,43 @@ pytest export tests use.
 each terminal and `Common\Files\EURUSDProphet\`. The scripts follow the style of
 `scripts/gold/install_task.ps1`.
 
+### D12. The probability filter
+- **Buttons.** Four `OBJ_BUTTON`s show ≥50, ≥52, ≥54 and ≥56 % as the panel's first row.
+  The active one is pressed. A click sets the filter and redraws.
+- **Persistence.** The choice is kept in a terminal global variable named after the chart
+  ID, so a timeframe change, which reinitialises the indicator, keeps it. A changed
+  `InpMinProbability` setting wins over the stored choice.
+- **What it hides.** Direction arrows, H1 and D1, whose `prob_pct` is below the filter.
+  Alerts have no probability and always stay. The panel's current-forecast lines stay
+  unfiltered, because they are the status.
+- **Count.** The indicator fills the Python template from the rows it shows.
+- **Not a tested rule.** A selective rule like this was registered once, as round two's
+  `h1_selective`, and was DROP on validation. The panel says "display choice, not a
+  tested rule" whenever the filter is above 50.
+
+Alternative considered: only an indicator setting. Changing it means opening
+Properties → Inputs each time, and the owner asked for a quick switch.
+
+### D13. Daily marks
+- **Where.** They are drawn on D1 only. Hourly marks and alerts are drawn at H1 and below.
+  H2–H12, W1 and MN draw nothing and say so.
+- **Placement.** A daily row is placed with
+  `iBarShift(PERIOD_D1, day 00:00 + 12 h, exact=false)`, which gives the chart's candle
+  for that calendar day. A broker clock a few hours off Berlin still lands on the same
+  day, so no clock shift is applied.
+- **Glyphs.** d1_lstm uses the solid arrows (233/234) in the up/down colours. d1_gbm uses
+  the hollow arrows (241/242) in its own colour (default MediumOrchid).
+- **Same side.** When both cells sit on the same side of a candle, their arrows stack
+  next to each other. One vertical text then joins the shown cells' texts with " | ",
+  and its hover joins both descriptions. Separate texts would put the second arrow
+  about 120 px from the candle.
+
 ## Risks / Trade-offs
+
+- **The owner reads the filter as an edge.** The ≥54 % arrows looked strong in the first
+  ten dry-run days (20 right of 27), but that threshold was chosen after looking at
+  those days. → The panel names the filter as a display choice and counts only the arrows
+  shown, so the claim can be watched on new data. No threshold enters a registry.
 
 - **Arrows on a live trading chart invite trading on a direction with no trading edge.**
   → Every hover description and the panel carry "research — no proven edge, gross of

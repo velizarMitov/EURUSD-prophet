@@ -134,9 +134,56 @@
 
   Verify that each documented command runs as written.
 
-## 5. Integration check
+## 5. Daily signals and the probability filter (owner's request, 2026-11-02)
 
-- [ ] 5.1 Let one scheduled `EURUSDProphet-GoldLogger` pass run with an XAUUSD H1 chart
+- [x] 5.1 Extend the export for the daily cells and the filter (design D3, D6):
+  - d1_lstm and d1_gbm rows, with the mark day taken from `exit_bar` once settled and
+    from `as_of + BDay(1)` before that;
+  - the 20-day daily window;
+  - texts carrying the cell tag, with day descriptions;
+  - `cell` and `cadence` fields and `version=2`;
+  - the `count_h1_*`, `count_d1_*` and `filter_*` templates.
+
+  Verify with tests:
+  - the spec's daily scenario (as-of 2026-10-29: d1_lstm down 52 % and d1_gbm up 78 % on
+    2026-10-30);
+  - `exit_bar` wins once settled;
+  - the 20-day window;
+  - d1_gbm has no move line;
+  - direction parity with `summary.current_forecast` for D1;
+  - every template is free of trade words.
+- [ ] 5.2 Draw the daily marks (design D13):
+  - D1-only placement;
+  - solid d1_lstm and hollow d1_gbm arrows, with the d1_gbm colour input;
+  - same-side stacking with one joined text;
+  - the panel's current daily forecast per cell;
+  - the "H1 or lower, and D1" message on other timeframes.
+
+  Verify that it compiles with 0 errors. Then verify on a live XAUUSD D1 chart:
+  - two arrows per day;
+  - stacked arrows when both cells point the same way;
+  - H4 draws nothing and says why.
+- [ ] 5.3 Add the probability filter (design D12):
+  - ≥50/52/54/56 % buttons in the panel;
+  - the choice kept per chart in a terminal global variable, with a changed input
+    winning;
+  - direction arrows below the filter hidden, alerts kept;
+  - the filter line;
+  - the count filled from the arrows shown.
+
+  Verify that it compiles with 0 errors and the source scan passes. Then verify on a
+  live chart:
+  - clicking 54 leaves only arrows ≥54 % and every alert marker;
+  - the count changes;
+  - H1 → D1 → H1 keeps 54.
+- [x] 5.4 Update the RUNBOOK chart section, `ARCHITECTURE_DOCS.md` §3.12 and the
+  `CLAUDE.md` gold bullet for the daily marks and the filter. Reinstall with
+  `scripts/gold/install_mt5_indicator.ps1`. Verify that the documented commands run and
+  all three terminals compile.
+
+## 6. Integration check
+
+- [ ] 6.1 Let one scheduled `EURUSDProphet-GoldLogger` pass run with an XAUUSD H1 chart
   open and the indicator attached. Verify:
   - the new h1_lstm arrow appears within a minute of the pass, without reattaching;
   - the health row's note carries `chart: …`;

@@ -1335,10 +1335,16 @@ without retraining. Corrections go to `results/gold/RESULTS.md`.
     - `src/gold/mt5_export.py` rebuilds one file, `Common\Files\EURUSDProphet\gold_signals.tsv`
       in the MT5 shared folder. It is the only gold write outside the repo, and nothing
       reads it back;
-    - the read-only indicator `mql5/Indicators/ProphetGoldSignals.mq5` draws an up/down
-      arrow per h1_lstm forecast hour and a two-headed marker per alert, for the last
-      5 trading days, each with its outcome. It also shows a hover description in Sofia
-      time and a panel;
+    - the read-only indicator `mql5/Indicators/ProphetGoldSignals.mq5` draws, each mark
+      with its outcome:
+      - at H1 and below, an up/down arrow per h1_lstm forecast hour and a two-headed
+        marker per alert, for the last 5 trading days;
+      - on D1, a solid d1_lstm arrow and a hollow d1_gbm arrow per forecast day, for
+        the last 20;
+    - it also shows a hover description in Sofia time and a panel;
+    - its ≥50/52/54/56 % buttons hide arrows below a probability. This is a display
+      choice, not a tested rule (round two's `h1_selective` was DROP). The panel's count
+      covers only the arrows shown;
     - Python writes every word, so the no-trade-words rule is tested in pytest;
     - the marks follow the chart broker's clock;
     - `scripts/gold/install_mt5_indicator.ps1` compiles the indicator into every terminal;
