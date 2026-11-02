@@ -1,0 +1,7 @@
+artifact,path,sha256,bytes,source,recorded_at
+chronos2,research_models/external_tsfm/chronos2/config.json,ef1143bfdc9c0376d9a056eefca46cb4b1ec3d0ffacd541ff56feb40fb708031,1067,amazon/chronos-2@95a9710e2596287d08352589f42634fa5abdf0a7,2026-11-02T12:05:20+00:00
+chronos2,research_models/external_tsfm/chronos2/model.safetensors,ddcda3c7508bf2528087723e98a20707cc04b7f370ae275a9fd88078ddba4f42,477930472,amazon/chronos-2@95a9710e2596287d08352589f42634fa5abdf0a7,2026-11-02T12:05:20+00:00
+timesfm25,research_models/external_tsfm/timesfm25/config.json,cd3315b760d5cc7e278d7afdf41b897031ced888fc6c115bd9b3ac0ea2c47408,475,google/timesfm-2.5-200m-pytorch@d418f3e8a8fa79d655b391c158f0ee8d68fe68c9,2026-11-02T12:05:21+00:00
+timesfm25,research_models/external_tsfm/timesfm25/model.safetensors,2f776efe6245e42b24bc4153ffdf61810140210e4bd3b01fb21f7aa779ab6ce8,925181104,google/timesfm-2.5-200m-pytorch@d418f3e8a8fa79d655b391c158f0ee8d68fe68c9,2026-11-02T12:05:21+00:00
+history_gold,results/external_tsfm/finetune/gold_h1_history.csv,18c9dd99f5e21dfdbed44291e50d4fa554932e3fbbd18574df566ac4395e2450,3768275,results/gold/gold_h1.csv (append-only cache),2026-11-02T12:08:51+00:00
+history_eurusd,results/external_tsfm/finetune/eurusd_h1_history.csv,24377238242642c2a728ff507491e54e3b870d240a06c81b725fe90d07b73fce,5768444,"MT5 EURUSD H1, deepest read the terminal serves (99970 bars)",2026-11-02T12:08:52+00:00

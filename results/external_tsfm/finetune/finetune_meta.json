@@ -1,0 +1,23 @@
+{
+ "history": {
+  "clean_start": "2025-11-01",
+  "eurusd": {
+   "first": "2010-10-04 02:00:00+00:00",
+   "last": "2025-10-31 21:00:00+00:00",
+   "path": "results/external_tsfm/finetune/eurusd_h1_history.csv",
+   "rows": 93763,
+   "source": "MT5 EURUSD H1, deepest read the terminal serves (99970 bars)",
+   "years": 15.1
+  },
+  "frozen_at": "2026-11-02T12:08:52+00:00",
+  "gold": {
+   "first": "2015-01-02 04:00:00+00:00",
+   "last": "2025-10-31 21:00:00+00:00",
+   "path": "results/external_tsfm/finetune/gold_h1_history.csv",
+   "rows": 64295,
+   "source": "results/gold/gold_h1.csv (append-only cache)",
+   "years": 10.8
+  }
+ },
+ "pairs": {}
+}

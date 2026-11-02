@@ -1,0 +1,31 @@
+# SIDE environment for the external time-series foundation models
+# (openspec change tsfm-second-opinion, design D1). NEVER install into .venv.
+#
+# The real-money app's .venv and requirements.txt do not change. These packages
+# live in .venv-tsfm, created by scripts/external_tsfm/install.ps1, and only the
+# worker subprocess (src/external/tsfm/worker.py) imports them.
+#
+#   powershell -ExecutionPolicy Bypass -File scripts\external_tsfm\install.ps1
+#
+# Pins (chosen 2026-11-02):
+#   * timesfm 2.0.2 is the newest release that ships ONLY TimesFM 2.5. From 3.0.0
+#     (2026-08-28) the package also carries `timesfm3`, whose weights
+#     (google/timesfm-3.0-pytorch, 2026-08-24) may have seen the clean window.
+#   * torch is the same CUDA 12.8 build as the main .venv (fine-tuning and the
+#     long-context replay run on the GPU; the hourly worker falls back to CPU).
+#   * The resolved environment is frozen to results/external_tsfm/env_freeze.txt
+#     by the install script.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+torch==2.11.0+cu128
+chronos-forecasting==2.3.2
+timesfm[torch]==2.0.2
+peft==0.21.2
+transformers==5.18.0
+accelerate==1.15.0
+huggingface_hub==2.1.1
+safetensors==0.8.0
+einops==0.8.1
+numpy==2.2.6
+pandas==2.3.3

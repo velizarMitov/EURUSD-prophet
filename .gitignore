@@ -36,6 +36,11 @@ results/retrain_state.json
 # Commit-pinned external Kronos checkout (see requirements-kronos.txt); not vendored.
 src/external/kronos/upstream/
 
+# Side environment for the external foundation models (requirements-tsfm.txt,
+# openspec change tsfm-second-opinion). Their weights and adapters live under
+# research_models/external_tsfm/, which the research_models/ rule below covers.
+.venv-tsfm/
+
 # Local working notes and task briefs — not part of the deliverable
 .dev/
 results/curl/raw/

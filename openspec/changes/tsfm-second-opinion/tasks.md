@@ -2,12 +2,12 @@
 
 ## 1. Isolated runtime and pinned weights
 
-- [ ] 1.1 Create `requirements-tsfm.txt` (exact pins: `chronos-forecasting`, `timesfm[torch]`,
+- [x] 1.1 Create `requirements-tsfm.txt` (exact pins: `chronos-forecasting`, `timesfm[torch]`,
   `peft`, CUDA 12.8 `torch`) and `scripts/external_tsfm/install.ps1`, which creates
   `.venv-tsfm`, installs it and reports whether the GPU is visible (design D1). Add `.venv-tsfm/` and `research_models/external_tsfm/` to
   `.gitignore`. Verify: the script runs, `git diff requirements.txt` is empty and the main
   `.venv` `pip freeze` is unchanged.
-- [ ] 1.2 Create `src/external/tsfm/vendor.py` (design D2):
+- [x] 1.2 Create `src/external/tsfm/vendor.py` (design D2):
   - per-model repo id, revision and package version;
   - `--fetch` into `research_models/external_tsfm/<model>/`;
   - the SHA-256 manifest `results/external_tsfm/artifact_manifest.csv`;
@@ -15,7 +15,7 @@
 
   Verify with `tests/test_external_tsfm_vendor.py`: an altered file and a missing file are
   refused, and an unchanged file passes.
-- [ ] 1.3 Create `src/external/tsfm/worker.py`. It reads JSON on stdin and writes JSON
+- [x] 1.3 Create `src/external/tsfm/worker.py`. It reads JSON on stdin and writes JSON
   deciles on stdout, for both models, both input modes, zero-shot or a verified
   fine-tuned adapter, contexts up to the model's maximum, batched windows,
   `HF_HUB_OFFLINE=1`, GPU when free and CPU otherwise, and imports nothing from the repo. Add the caller
@@ -27,7 +27,7 @@
     from each model;
   - a test with a fake runner covers a timeout and a crash, each yielding a failure, not
     an exception.
-- [ ] 1.4 Add the isolation tests (`tests/test_external_tsfm_isolation.py`):
+- [x] 1.4 Add the isolation tests (`tests/test_external_tsfm_isolation.py`):
   - the production modules never import `src.external.tsfm`;
   - `worker.py` imports no repo module;
   - the package names no write target under `models/`, `results/gold/`,
@@ -37,7 +37,7 @@
 
 ## 2. Quantiles to size and P(up)
 
-- [ ] 2.1 Create `src/external/tsfm/forecast.py` (design D3):
+- [x] 2.1 Create `src/external/tsfm/forecast.py` (design D3):
   - the piecewise-linear CDF through the deciles, with linear extension and a [0, 1]
     clip;
   - the size as median |R| by bisection;
@@ -53,7 +53,7 @@
 
 ## 3. Fine-tuning on the full history (owner's request, 2026-11-02)
 
-- [ ] 3.1 Create `src/external/tsfm/finetune.py --freeze` (design D10). It writes each
+- [x] 3.1 Create `src/external/tsfm/finetune.py --freeze` (design D10). It writes each
   instrument's entire H1 history before 2025-11-01 (gold from `gold_h1.csv`, EUR/USD from
   the deepest MT5 read) to `results/external_tsfm/finetune/<instrument>_h1_history.csv`,
   with digests, and refuses any bar on or after 2025-11-01.
