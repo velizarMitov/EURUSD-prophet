@@ -1,0 +1,3 @@
+instrument,as_of_bar,reason,logged_at
+gold,2026-11-03 08:00:00+00:00,bar closed while the logger was not running,2026-11-03T09:01:02+00:00
+eurusd,2026-11-03 08:00:00+00:00,bar closed while the logger was not running,2026-11-03T09:01:02+00:00

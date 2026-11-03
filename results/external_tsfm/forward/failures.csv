@@ -1,0 +1,3 @@
+model,instrument,as_of_bar,error,logged_at
+*,gold,,MT5 unreachable: nothing forecast,2026-11-03T08:01:02+00:00
+*,eurusd,,MT5 unreachable: nothing forecast,2026-11-03T08:01:02+00:00

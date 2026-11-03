@@ -178,7 +178,7 @@
     and gold families.
 
   Verify that every path and command named there exists.
-- [ ] 6.4 Run the fine-tuning (3.2), the replay (4.3) and `prereg --write` on this PC and show the owner
+- [x] 6.4 Run the fine-tuning (3.2), the replay (4.3) and `prereg --write` on this PC and show the owner
   `REPLAY.md` and `PRE_REGISTRATION.md`. Commit them only after the owner approves.
   Verify: the commit exists and the next pass logs `registered` rows.
 
