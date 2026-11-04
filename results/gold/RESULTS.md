@@ -125,3 +125,40 @@ What this says, descriptively:
 Owner decision, 2026-10-23: the four dropped round-two cells (`d1_lstm_macro`, `d1_gbm_macro`, `h1_selective`,
 `h1_barrier`) are logged live for observation on the leaderboard (`predictions_v2.csv`, version `v2`). This changes
 none of the verdicts above: forward data can confirm a cleared cell, never revive a dropped one.
+
+## 2026-11-04 — strategy backtests after cost, descriptive only (no registry, no verdict)
+
+Owner-requested simulated backtests, run from throwaway scripts outside the repo. They wrote
+nothing here, and no registry, registration, config or artifact changed. Unlike the family's
+verdicts, these figures are **net of cost**:
+
+- Spread is MT5's per-bar spread or a fixed $0.25 / $0.49 (the window median and the
+  2026-11-04 value).
+- Overnight swap is the broker's terms on 2026-11-04 (points mode, long −66.88 and short
+  +23.84 per lot per night, Wednesday triple, about −6.1 % a year for a long). Where noted,
+  the swap was rescaled to the effective fed funds rate.
+
+Several of these ideas were looked at on the same years, and the validation and test blocks
+were already seen. **Nothing here is evidence of an edge, and nothing may be revived as a
+hypothesis on these spans.**
+
+| idea | span | result |
+|---|---|---|
+| External TSFM P(up) > 0.5, hold one H1 bar, as-of labels 14–20 Mon–Fri | clean replay year, 1,785 h | Chronos-2 52.0 %, +$222/oz gross, −$225 / −$653 net; TimesFM 51.4 %, +$96 gross, −$350 / −$778 net; mean gain per trade below the spread; gross CI includes 0 |
+| D1 trend, 14 rules (20/60/120/250-day sign, SMA 50/100/200; long/short and long/flat) | chosen on 2014-08 .. 2022-10-29 | none positive with swap; best, 120-day long/short, had Sharpe 0.05 |
+| The chosen 120-day rule | 2022-10-30 .. 2026-11-03, once | +77 % vs buy-and-hold +89 %; daily difference CI [−0.074, +0.055] % |
+| d1_lstm long/flat at the D1 close, honest validation + test predictions | 1,039 days | +97 % vs buy-and-hold +83 %; max drawdown −17 % vs −30 %; difference CI [−0.037, +0.046] %; hit 55.1 % against 54.0 % up-days; 5.1 % of time-shift placebos as good |
+| The same signal acted on inside the owner's window (16:00 Sofia, label 14 close) | 994 days | to 23:00 the same day: +0.2 % vs always-long −10.7 %. Held to the next 16:00, with rate-linked swap: +60 % vs +90 %. 23–35 % of placebos as good |
+| Short 16:00 → 23:00 Sofia every weekday, fixed before looking, on data unseen for it | 2015-01-02 .. 2022-10-28, 1,964 days | +4.5 % gross over 8 years, −7.5 % to −21 % net; daily CI includes 0; 49 % winning days; the yearly sign flips |
+
+What this says:
+
+- **No tested direction strategy beats buy-and-hold after cost.** The d1_lstm timing gain
+  sits in the hours before the owner's window and vanishes when the call is acted on at
+  16:00 Sofia.
+- **The in-window fall of 2022–2026 was that span's, not a rule.** It did not replicate
+  on 2015–2022.
+- MT5 reports a 0.00 spread for 2015–2017 H1 bars, so the "MT5 spread" net figure for
+  those years is optimistic.
+- The MT5 chart's D1 arrows come from the final models, which were fit on all history. They
+  have no honest past, so they were not backtested.
