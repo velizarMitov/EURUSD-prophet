@@ -1,0 +1,34 @@
+{
+  "family": "gold-acceleration-direction (descriptive)",
+  "label": "descriptive: every year has been seen; not evidence",
+  "features": {
+    "h1": ["accel_1h", "activity_rel", "accel_expected_next"],
+    "m15": ["accel_m15"],
+    "profile_days": 60,
+    "calendar": ["hour_sin", "hour_cos", "dow_sin", "dow_cos"]
+  },
+  "models": {
+    "h1_gbm": {"base": "h1_gbm", "columns": "base", "first_year": 2018, "pair": null},
+    "h1_gbm_accel": {"base": "h1_gbm", "columns": "base+h1", "first_year": 2018, "pair": "h1_gbm"},
+    "h1_lstm": {"base": "h1_lstm", "columns": "base", "first_year": 2018, "pair": null},
+    "h1_lstm_accel": {"base": "h1_lstm", "columns": "base+h1", "first_year": 2018, "pair": "h1_lstm"},
+    "h1_accel": {"base": "h1_gbm", "columns": "h1+calendar", "first_year": 2018, "pair": "h1_gbm"},
+    "h1_gbm_accel_m15": {"base": "h1_gbm", "columns": "base+h1+m15", "first_year": 2024, "pair": "h1_gbm"},
+    "h1_accel_m15": {"base": "h1_gbm", "columns": "h1+m15+calendar", "first_year": 2024, "pair": "h1_gbm"}
+  },
+  "run_order": ["h1_gbm", "h1_gbm_accel", "h1_accel", "h1_gbm_accel_m15", "h1_accel_m15", "h1_lstm_accel", "h1_lstm"],
+  "walkforward": {"warmup_years": 3, "m15_warmup_years": 1},
+  "window": {"as_of_labels": [14, 15, 16, 17, 18, 19, 20]},
+  "stats": {"ci": 0.95, "block_rows": 120, "block_days": 20, "n_boot": 2000, "seed": 42},
+  "costs": {"floor_round_trip_pct": 0.0062, "stress_round_trip_pct": 0.0122},
+  "paths": {
+    "h1": "results/gold/gold_h1.csv",
+    "m15": "research_models/gold/analytics/bars_M15.csv.gz",
+    "h1_spread": "research_models/gold/window/mt5/h1_spread.csv.gz",
+    "models_dir": "research_models/gold/accel",
+    "inputs_dir": "research_models/gold/accel/inputs",
+    "results": "results/gold/accel",
+    "backtest": "results/gold/accel/backtest.md",
+    "artifact_manifest": "results/gold/accel/artifact_manifest.csv"
+  }
+}

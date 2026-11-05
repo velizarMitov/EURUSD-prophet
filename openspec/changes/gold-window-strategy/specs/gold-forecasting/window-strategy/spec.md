@@ -2,17 +2,17 @@
 
 ## Purpose
 
-Tests, once and net of cost, whether a few fixed, model-gated rules make money on gold
-inside the owner's trading window (15:30–23:00 Sofia). The test runs on years nobody has
-looked at, and the result is reported in a way that never reads as a trade instruction.
+Shows, descriptively and net of cost, how a few fixed, model-gated rules would have done
+on gold inside the owner's trading window (15:30–23:00 Sofia), with the models refit on the
+past only, and never presents the result as a proven edge or a trade instruction.
 
 ## ADDED Requirements
 
 ### Requirement: A reproducible descriptive report on the seen history
 The system SHALL generate `results/gold/window/DESCRIPTIVE.md` from the MT5 caches:
-- log return and mean |move| by Sofia hour, session, weekday and month, per span;
+- log return and mean absolute move by Sofia hour, session, weekday and month, per span;
 - the share of the total return from the best days;
-- next-day |move| by quintile of today's.
+- next-day absolute move by quintile of today's.
 
 Every section SHALL be labelled descriptive, never evidence, and SHALL name the bid-price
 limitation around the daily break.
@@ -21,34 +21,36 @@ limitation around the daily break.
 - **WHEN** the report command runs twice on the same caches
 - **THEN** both reports are byte-identical apart from the generation timestamp
 
-### Requirement: Exactly four cells at a Bonferroni bar
-The family `gold_window` SHALL have exactly four cells, `h1_gated_direction`,
-`continuation`, `us_open_breakout` and `d1_gated_direction`, at
-alpha = 0.05 / 4 = 0.0125. Its rows SHALL go to its own registry. It SHALL never change
-another gold registry, registration or config, or the EUR/USD 0.05/9 bar.
+### Requirement: Exactly four fixed rules
+The family SHALL have exactly four rules: `h1_gated_direction`, `continuation`,
+`us_open_breakout` and `d1_gated_direction`. Their parameters SHALL be read from the
+family's config and SHALL never be searched or tuned. No other variant SHALL be added to
+the backtest report.
 
-#### Scenario: Other registries untouched
-- **WHEN** the family is registered and scored
-- **THEN** every other gold registry, registration and `gold_config.json` is byte-identical to before
+#### Scenario: Parameters fixed
+- **WHEN** the backtest runs
+- **THEN** it uses exactly the config's rule parameters, and the report lists them
 
 ### Requirement: Every trade opens and closes inside the owner's window
 A trade SHALL be entered no earlier than 15:30 Sofia and exited no later than 23:00 Sofia
 on the same weekday. That is the label window 14:30–22:00 Berlin, because Sofia is
-Berlin + 1 h all year. No position SHALL be held across a rollover. A day missing any M15
-bar inside the window SHALL be excluded and counted.
+Berlin + 1 h all year. No position SHALL be held across a rollover. A day missing any
+window bar the rule needs SHALL be excluded and counted:
+- the M15 bars labelled 14:30–21:45 where M15 is used;
+- otherwise, the H1 bars labelled 14:00–21:00.
 
 #### Scenario: Exit time
-- **WHEN** a cell is in a position at 23:00 Sofia
+- **WHEN** a rule is in a position at 23:00 Sofia
 - **THEN** it is closed at that bar's close, and no swap is charged
 
 #### Scenario: Gap in the window
-- **WHEN** a weekday lacks the M15 bar labelled 18:00 Berlin
-- **THEN** that day has no trade for any cell and is listed as excluded
+- **WHEN** a weekday lacks the H1 bar labelled 18:00 Berlin
+- **THEN** that day has no trade for the H1 rules and is listed as excluded
 
 ### Requirement: The h1_gated_direction rule
-The cell SHALL act at the close of each H1 bar labelled 14:00–20:00 Berlin. It SHALL take
+The rule SHALL act at the close of each H1 bar labelled 14:00–20:00 Berlin. It SHALL take
 the `h1_lstm` call (up when P(up) > 0.5) for exactly one hour, only when that bar's
-`h1_lstm` size forecast is at or above the 80th percentile of the cell's own in-window
+`h1_lstm` size forecast is at or above the 80th percentile of the rule's own in-window
 forecasts over the previous 250 trading days.
 
 #### Scenario: Gate closed
@@ -60,21 +62,21 @@ forecasts over the previous 250 trading days.
 - **THEN** a one-hour short is simulated from that bar's close
 
 ### Requirement: The continuation rule
-The cell SHALL take the sign of the mid move from the close of the bar labelled 21:00
-Berlin on the previous trading day to the close of the bar labelled 14:00 Berlin today.
-It SHALL hold that sign from 16:00 to 23:00 Sofia, only when the D1 GARCH forecast for
-today is at or above its median over the previous 250 trading days. A zero move SHALL
-mean no trade.
+The rule SHALL take the sign of the move from the close of the bar labelled 21:00 Berlin
+on the previous trading day to the close of the bar labelled 14:00 Berlin today. It SHALL
+hold that sign from 16:00 to 23:00 Sofia, only when the D1 GARCH forecast for today is at
+or above its median over the previous 250 trading days. A zero move SHALL mean no trade.
 
 #### Scenario: Up into the window
-- **WHEN** the mid rose from 23:00 yesterday to 16:00 Sofia today and the GARCH gate is open
+- **WHEN** the price rose from 23:00 yesterday to 16:00 Sofia today and the GARCH gate is open
 - **THEN** a long is simulated from 16:00 to 23:00 Sofia
 
 ### Requirement: The us_open_breakout rule
-The cell SHALL take the high and low of M15 mid bars from 15:30 to 16:30 Sofia. It SHALL
+The rule SHALL take the high and low of the M15 bars from 15:30 to 16:30 Sofia. It SHALL
 enter in the direction of the first M15 close beyond that range from 16:45 to 20:00 Sofia,
 at most once a day, and exit at 23:00 Sofia. It SHALL trade only when the same GARCH gate
-as `continuation` is open.
+as `continuation` is open. It SHALL run only on days with MT5 M15 bars, and the report
+SHALL state that span.
 
 #### Scenario: No break
 - **WHEN** no M15 close from 16:45 to 20:00 Sofia lies outside the range
@@ -85,106 +87,85 @@ as `continuation` is open.
 - **THEN** a short is simulated from that close to 23:00 Sofia, and later breaks that day are ignored
 
 ### Requirement: The d1_gated_direction rule
-The cell SHALL use the `d1_lstm` call from the last D1 bar that closed before the trading
+The rule SHALL use the `d1_lstm` call from the last D1 bar that closed before the trading
 day. It SHALL hold that call from 16:00 to 23:00 Sofia, only when that bar's `d1_lstm` size
 forecast is at or above its median over the previous 250 trading days.
 
 #### Scenario: Monday
 - **WHEN** the trading day is a Monday
-- **THEN** the call comes from the D1 bar of the previous Friday or a later weekend bar, whichever closed last
+- **THEN** the call comes from the last D1 bar labelled before Monday
 
 ### Requirement: Model predictions are walk-forward and complete
-On the archive, `h1_lstm`, `d1_lstm` and the D1 GARCH SHALL predict a calendar year only
-from fits on data that ended before that year:
-- each fit is refit once a year on an expanding window;
-- the first three calendar years are fit-only;
+`h1_lstm`, `d1_lstm` and the D1 GARCH SHALL predict a calendar year only from fits on data
+that ended before that year:
+- each is refit once a year on an expanding window;
+- the first three calendar years of each cache are fit-only;
 - the frozen gold settings are used unchanged.
 
 A neural prediction SHALL exist only when all five seed models of that year are present.
 
 #### Scenario: Year boundary
-- **WHEN** predictions for 2010 are produced
-- **THEN** every model used was fit only on bars labelled before 2010-01-01
+- **WHEN** predictions for 2020 are produced
+- **THEN** every model used was fit only on bars labelled before 2020-01-01
 
 #### Scenario: Missing seed
 - **WHEN** one of the five seed models of a year is missing
-- **THEN** that year has no neural predictions, and its cells trade nothing that year
+- **THEN** that year has no neural predictions, and its rules trade nothing that year
 
 ### Requirement: Gates use only the past
-Every gate threshold SHALL be computed from forecasts dated strictly before the
-trading day. A gate SHALL stay closed until 250 prior trading days of forecasts exist.
+Every gate threshold SHALL be computed from forecasts dated strictly before the trading
+day. A gate SHALL stay closed until 250 prior trading days of forecasts exist.
 
 #### Scenario: Warm-up
-- **WHEN** fewer than 250 prior trading days of a cell's forecasts exist
+- **WHEN** fewer than 250 prior trading days of a rule's forecasts exist
 - **THEN** the gate is closed and no trade is taken
 
 ### Requirement: Results are net of cost
-Each simulated trade SHALL fill at the ask when buying and the bid when selling. Its cost
-SHALL be the larger of:
-- the realised bid–ask cost from the archive;
-- 0.0062 % of the price per round trip, the broker's window median on 2026-11-04.
+Prices SHALL be MT5 bid closes. A buy SHALL fill at the bid plus that bar's MT5 spread,
+and a sell at the bid. Each round trip SHALL be charged at least 0.0062 % of the entry
+price, the broker's window median on 2026-11-04. A stress result SHALL also be reported
+at 0.0122 %. Spread and volume SHALL never be a model or gate input.
 
-A stress result SHALL also be reported at 0.0122 %. Spread and volume SHALL never be a
-model or gate input.
+#### Scenario: Missing spread
+- **WHEN** a bar's MT5 spread is 0 (as for 2015–2017)
+- **THEN** the trade is charged the 0.0062 % floor
 
-#### Scenario: Archive tighter than the broker
-- **WHEN** the archive's round-trip cost on a trade is 0.004 % of price
-- **THEN** 0.0062 % is charged
+### Requirement: The backtest report is descriptive
+The system SHALL write `results/gold/window/backtest.md`. For each rule it SHALL give, net
+and at the stress cost:
+- the trade count and the span;
+- the mean daily return and a 95 % block-bootstrap interval (block 20, 2,000 resamples,
+  seed 42);
+- the total, maximum drawdown and hit rate;
+- a per-year table;
+- the same rule with its gate removed;
+- an always-long-in-the-window baseline;
+- the share of time-shifted gates doing at least as well.
 
-### Requirement: The registration is committed before any archive price is read
-The registration SHALL be written as `results/gold/window/PRE_REGISTRATION.md` and
-`.json`. It SHALL record:
-- the four rules with their parameters, the alpha, the cost rule and the trade minimum;
-- the confirmation span and the archive digests;
-- the frozen model settings;
-- a power statement computed from the seen MT5 span only.
+Every section SHALL be labelled "descriptive: rules chosen after seeing these years,
+simulated, net of the stated costs". The report SHALL never use the words CLEARED or DROP,
+and SHALL write no registry row.
 
-It SHALL refuse to write if archive verification failed. Walk-forward fitting and scoring
-SHALL refuse until the registration is committed and clean.
-
-#### Scenario: Fit before commit
-- **WHEN** walk-forward fitting starts while the registration is uncommitted
-- **THEN** it refuses and reads no archive price
-
-#### Scenario: Write after commit
-- **WHEN** the registration writer runs after the files are committed
-- **THEN** it refuses and leaves them unchanged
-
-### Requirement: Each cell is scored once on the confirmation span
-The confirmation span SHALL run from the first walk-forward year through 2013-07-31.
-For each cell:
-- the statistic is the mean daily net return over eligible weekdays, with zero on days
-  without a trade;
-- the interval is two-sided (1 − 0.0125), a moving-block bootstrap with block 20,
-  2,000 resamples and seed 42.
-
-A cell SHALL be CLEARED only if the lower bound is above 0. Below 300 trades it SHALL
-read "UNDERPOWERED — NO DECISION". Otherwise it SHALL be a DROP. Verdicts SHALL be
-appended once and never re-scored.
-
-#### Scenario: Positive but uncertain
-- **WHEN** a cell's mean is positive and its interval includes 0
-- **THEN** the cell is a DROP
-
-#### Scenario: Second run
-- **WHEN** scoring runs again after verdicts exist
-- **THEN** nothing is appended and the existing verdicts are reported
-
-### Requirement: The seen-span replay is descriptive and comes after registration
-After the registration is committed, the same four rules SHALL be replayed on November
-2022 to 2026 with the existing honest gold predictions and MT5 prices. The replay SHALL be
-written to `results/gold/window/replay_seen.md`, labelled "already seen, never evidence".
-It SHALL never change a verdict.
-
-#### Scenario: Replay before registration
-- **WHEN** the replay is requested while the registration is uncommitted
-- **THEN** it refuses
+#### Scenario: Labels
+- **WHEN** the report is rendered
+- **THEN** every section carries the descriptive label, and the text contains no verdict word
 
 ### Requirement: Simulated only, never an instruction
 The family SHALL contain no order, broker, position-sizing or stop-loss code. Its reports
-and any view SHALL describe results as simulated history. They SHALL never say to buy or
-sell, and SHALL never name a trade for the current day.
+SHALL describe results as simulated history. They SHALL never say to buy or sell, and
+SHALL never name a trade for the current day.
 
 #### Scenario: Report wording
-- **WHEN** a confirmation report is rendered
-- **THEN** it states "simulated, net of the stated costs" and contains no instruction to buy or sell
+- **WHEN** a backtest report is rendered
+- **THEN** it contains no instruction to buy or sell
+
+### Requirement: Other gold files stay untouched
+Running the family SHALL leave byte-identical:
+- every gold registry and registration;
+- `gold_config.json`;
+- the gold research models under `research_models/gold/` outside `window/`;
+- everything under `models/`.
+
+#### Scenario: After a full run
+- **WHEN** the walk-forward and the backtest have run
+- **THEN** `git status` shows no change to those files

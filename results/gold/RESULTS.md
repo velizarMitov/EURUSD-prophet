@@ -162,3 +162,82 @@ What this says:
   those years is optimistic.
 - The MT5 chart's D1 arrows come from the final models, which were fit on all history. They
   have no honest past, so they were not backtested.
+
+## 2026-11-04 — window strategy backtest, descriptive only (no registry, no verdict)
+
+This entry comes from openspec change `gold-window-strategy`, package `src/gold_window/`;
+the full report is `results/gold/window/backtest.md`.
+
+The backtest covers four fixed rules that open and close inside 15:30–23:00 Sofia:
+- the models are refit each calendar year on the past only (h1_lstm from 2018;
+  d1_lstm and the D1 GARCH from 2016);
+- prices are MT5 bid closes plus the bar's spread, with a 0.0062 % per round-trip floor;
+- nothing is held overnight, so no swap applies.
+
+The rules were chosen after the 2015–2026 descriptive statistics were seen, and the owner
+declined an independent history (Dukascopy blocks direct download). **These figures are not
+evidence and must not be revived as a hypothesis on these years.**
+
+| rule | span | trades | mean net %/day, 95 % interval | total net | gate always open | always long 16–23 | placebo share |
+|---|---|---|---|---|---|---|---|
+| `h1_gated_direction` | 2019-01 .. 2026-11 | 3,349 | −0.043 [−0.071, −0.019] | −58 % | −89 % | −24 % | 0.99 |
+| `continuation` | 2016-12 .. 2026-11 | 1,095 | +0.009 [−0.007, +0.028] | +22 % | +38 %, [−0.008, +0.039] %/day | −31 % | 0.31 |
+| `us_open_breakout` | 2022-08 .. 2026-11 | 534 | −0.006 [−0.038, +0.025] | −7 % | −1 % | −12 % | 0.75 |
+| `d1_gated_direction` | 2016-12 .. 2026-11 | 1,312 | −0.015 [−0.036, +0.005] | −34 % | −44 % | −32 % | 0.72 |
+
+What this says:
+
+- **The h1_lstm direction loses inside the window**, even before cost (−30 % gross).
+  Trading it hourly multiplies the cost. Its interval is wholly below zero.
+- **None of the size gates helps.** Each placebo share is far from 0, so shifting the gate
+  in time does as well or better. For `continuation`, the rule without its gate did better
+  (+38 %) than with it (+22 %).
+- **Continuation is the only rule above zero, and its interval includes 0 both with and
+  without the gate.** Its result depends on the years 2020, 2022–2024 and 2026. Its losing
+  years are 2017–2019, 2021 and 2025.
+- **Always long in the window loses** about 3 % a year after cost, as `DESCRIPTIVE.md`'s
+  "no drift in the window" predicts.
+
+## 2026-11-04 — acceleration and next-hour direction, descriptive only (no registry, no verdict)
+
+This entry comes from openspec change `gold-acceleration-direction`, package `src/gold_accel/`;
+the full report is `results/gold/accel/backtest.md`.
+
+The study adds four time-of-day acceleration features (`accel_1h`, `activity_rel`,
+`accel_expected_next`, `accel_m15`) to shadow copies of h1_gbm and h1_lstm, and adds a new
+GBM `h1_accel` that uses only acceleration and the calendar:
+- every model is refit each calendar year on the past only, from 2018 (the M15 variants
+  from 2024, because MT5 M15 history starts 2022-08);
+- each model with acceleration is compared with its pair without it on exactly the same rows;
+- the registered models, `gold_config.json` and the registries were not touched.
+
+The acceleration statistics were looked at before this study and every year has been seen.
+**These figures are not evidence and must not be revived as a hypothesis on these years.**
+
+| model | pair | view | rows | hit | pair hit | difference [95 %] |
+|---|---|---|---|---|---|---|
+| `h1_gbm_accel` | `h1_gbm` | all | 47,620 | 51.21 % | 51.28 % | −0.07 pp [−0.43, +0.30] |
+| `h1_gbm_accel` | `h1_gbm` | window | 15,797 | 50.81 % | 50.84 % | −0.03 pp [−0.69, +0.66] |
+| `h1_lstm_accel` | `h1_lstm` | all | 47,620 | 51.01 % | 51.10 % | −0.09 pp [−0.40, +0.24] |
+| `h1_lstm_accel` | `h1_lstm` | window | 15,797 | 50.29 % | 50.83 % | −0.54 pp [−1.01, −0.01] |
+| `h1_accel` | `h1_gbm` | all | 47,620 | 50.34 % | 51.28 % | −0.94 pp [−1.48, −0.36] |
+| `h1_accel` | `h1_gbm` | window | 15,797 | 49.45 % | 50.84 % | −1.39 pp [−2.39, −0.30] |
+| `h1_gbm_accel_m15` | `h1_gbm` | all | 15,350 | 50.40 % | 51.13 % | −0.74 pp [−1.70, +0.25] |
+| `h1_gbm_accel_m15` | `h1_gbm` | window | 5,102 | 50.53 % | 50.86 % | −0.33 pp [−1.71, +1.36] |
+| `h1_accel_m15` | `h1_gbm` | all | 15,350 | 50.03 % | 51.13 % | −1.10 pp [−2.27, −0.01] |
+| `h1_accel_m15` | `h1_gbm` | window | 5,102 | 49.49 % | 50.86 % | −1.37 pp [−2.91, +0.31] |
+
+What this says:
+
+- **Adding acceleration to h1_gbm or h1_lstm did not change how often the next-hour
+  direction was called right.** Every difference is within ±0.1 pp over all hours, and every
+  interval but one holds 0. The exception is h1_lstm inside the window: −0.54 pp.
+- **A model built only on acceleration (`h1_accel`) called direction less often right than
+  h1_gbm:** −0.94 pp over all hours and −1.39 pp inside the window. Inside the window its
+  hit rate, 49.45 %, is below a coin.
+- **The M15 acceleration did not help either.** Both M15 variants are below h1_gbm on the
+  same 2024–2026 rows.
+- **After the real spread, every model loses inside the window** when its sign is held for
+  one hour. h1_gbm averages −0.0144 % per trade [−0.0189, −0.0105] on 15,797 trades; the
+  mean cost, 0.0154 %, is fifteen times its mean gross, +0.0010 %.
+- Acceleration describes how large the next hour is likely to be, not which way it goes.

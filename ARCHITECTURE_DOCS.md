@@ -1442,6 +1442,64 @@ actual price. A volatility cell shows expected against actual move, and the GARC
 baseline appears as a dashed line. The series colours are validated with the dataviz
 palette validator in both themes. The page also offers a CSV of the rows on screen.
 
+**Window strategy backtest.** This comes from openspec change `gold-window-strategy`, spec
+`gold-forecasting/window-strategy`, package `src/gold_window/`. It is **descriptive and
+NET of cost**, and it gives no verdict.
+
+- **Why a separate package.** The `src/gold` contract uses spread nowhere, "not as
+  costs", and this backtest is net of cost by design. So it lives outside `src/gold` and
+  imports gold's challengers, features and targets read-only.
+- **What it shows.** Four fixed rules that open and close inside 15:30–23:00 Sofia
+  (labels 14:30–22:00 Berlin) and never hold overnight:
+  - `h1_gated_direction`: the `h1_lstm` call for one hour, when its size forecast is in
+    the top 20 % of its trailing 250 days;
+  - `continuation`: the sign of the 23:00 → 16:00 move, held to 23:00 on days with an
+    above-median D1 GARCH forecast;
+  - `us_open_breakout`: the first M15 break of the 15:30–16:30 range until 20:00, under the
+    same gate. It covers only the M15 history MT5 keeps, from 2022-08-12;
+  - `d1_gated_direction`: the `d1_lstm` call, held 16:00–23:00, on days with an
+    above-median `d1_lstm` size forecast.
+- **Honest inputs.** The models are refit each calendar year on the past only
+  (`walkforward.py`). H1 predicts from 2018 and D1 from 2016. Fills are MT5 bid plus the
+  bar's spread, with a floor of 0.0062 % per round trip and a stress figure at 0.0122 %.
+- **Not evidence.** Every year had been looked at, and the rules were chosen after
+  `results/gold/window/DESCRIPTIVE.md`. On 2026-11-04 the owner declined an independent
+  history (Dukascopy now blocks direct download). So `results/gold/window/backtest.md`
+  carries no verdict word and writes no registry.
+- **Where things live.** Artifacts and the MT5 fetch are in gitignored
+  `research_models/gold/window/`, with digests in `results/gold/window/artifact_manifest.csv`.
+
+**Acceleration and next-hour direction.** This comes from openspec change
+`gold-acceleration-direction`, spec `gold-forecasting/acceleration-direction`, package
+`src/gold_accel/`. It is **descriptive only**: every year has been seen, and the owner saw
+the acceleration statistics on `/gold-analytics` first.
+
+- **Features** (`features.py`), causal and scale-free with nothing to fit:
+  - `accel_1h` = |r_t| − |r_{t−1}|;
+  - `activity_rel` = |r_t| over the trailing mean |r| of the same label hour's previous
+    60 occurrences;
+  - `accel_expected_next` = that profile at the next hour minus at this one;
+  - `accel_m15` = the last M15 move of the hour minus the mean of its first three, from
+    2022-08 only.
+- **Models.** Shadow copies of the registered `h1_gbm` and `h1_lstm` configurations,
+  built through `src.gold.challengers.make` with a `columns` override and never
+  registered, versioned or promoted:
+  - `h1_gbm_accel` and `h1_lstm_accel`;
+  - a new GBM `h1_accel` on the acceleration columns plus calendar;
+  - two M15 variants that predict from 2024;
+  - the like-for-like `h1_gbm` and `h1_lstm` without acceleration. `h1_lstm` is refit
+    because the window run pinned no H1 digest.
+- **Walk-forward.** Yearly expanding refits from 2018 (`walkforward.py`), resumable per
+  year, with failures recorded. The H1 and M15 inputs are pinned under
+  `research_models/gold/accel/inputs/`.
+- **Report.** `results/gold/accel/backtest.md` gives:
+  - hit rate, AUC and Brier score against a coin and the training majority;
+  - each model with acceleration minus without, on the same rows, with a paired
+    block-bootstrap interval, for all hours, the owner's window and per year;
+  - one fixed cost check: the sign held one hour in the window, at the real spread.
+
+  It writes no verdict and no registry row.
+
 ### 3.13 External foundation models: the `external_tsfm` second opinion (openspec change `tsfm-second-opinion`; research-only, GROSS of cost)
 
 Two external, open-weight time-series foundation models forecast the **size** of the next
@@ -2211,8 +2269,9 @@ Every page route in `src/app_shell.PAGE_PATHS` carries the same shell:
   first paint.
 
 The routes are `/`, `/gold`, `/advanced`, `/history`, `/paper-trading`, `/forecasts`,
-`/h1-direction`, `/kronos-volatility`, `/kronos-direction` and `/second-opinion`
-(`static/second_opinion.html`, rendering the read-only `GET /api/second-opinion`).
+`/h1-direction`, `/kronos-volatility`, `/kronos-direction`, `/second-opinion`
+(`static/second_opinion.html`, rendering the read-only `GET /api/second-opinion`) and
+`/gold-analytics` (§5.4.2).
 
 **How the shell reaches pages that may not change.** Several pages come from sources
 that must not change:
@@ -2258,6 +2317,60 @@ Neither asset loads anything from outside the app, so it works offline on loopba
 **Known leftover.** `_H1_NAV`, the old footer of cross-links on `/history` and
 `/paper-trading`, still renders, because removing it would delete lines in `api.py`.
 A later change that lifts the additive-only rule can drop it.
+
+#### 5.4.2 Gold analytics: a descriptive market page
+
+This comes from openspec change `gold-market-analytics`, specs
+`gold-analytics/market-data` and `gold-analytics/dashboard`.
+
+- **Routes.** `GET /gold-analytics` serves `static/gold_analytics.html`, listed in the
+  main navigation right after Gold. `GET /api/gold-analytics/{section}` returns one
+  section: `overview`, `chart`, `sessions`, `intraday`, `events`, `volatility`,
+  `history` or `benchmarks`. An unknown section, parameter or value answers 400 with
+  the allowed values.
+- **Package.** `src/gold_analytics/` is deliberately outside `src/gold`. Gold's
+  isolation contract forbids spread, and `/gold` shows none, while this page shows the
+  real bid–ask spread. From `src/gold` it imports only
+  `src.gold.data.resolve_gold_symbol`. `api.py` imports only its `service.build`.
+- **What it is.** Descriptive only: it runs no model and has no forecast, signal or
+  verdict. Every section carries the label "descriptive: how gold behaved, not a
+  forecast or a recommendation" in BG and EN. No text says buy, sell, купи or продай;
+  `tests/test_gold_analytics_service.py` scans every payload, and
+  `tests/test_gold_analytics_api.py` scans the page.
+- **No volume.** MT5's gold `real_volume` is 0 and tick volume is not traded volume,
+  so the page shows no volume, VWAP, volume profile, POC/VAH/VAL, HVN/LVN or PWP.
+  `data.py` keeps only time, OHLC, bid and ask, picked field by field. The spread
+  cache's tick counts judge coverage only and are never shown as volume.
+- **Data sources**, all read-only:
+  - MT5, through `data.Source`: the live tick; M1, M15, H1 and D1 bars, chunked by
+    year; ticks in hour chunks. There is no order or position call; a static test scans
+    for them. Each call opens and closes its own MT5 session under one lock.
+  - With the terminal closed, every section falls back to its cache and is marked
+    `stale` with `as_of`.
+  - H1 and D1 come from `results/gold/gold_{h1,d1}.csv`, topped up live. M1 and M15
+    come from `research_models/gold/analytics/bars_{M1,M15}.csv.gz`.
+  - NFP (FRED release 50) and CPI (release 10) are placed at 08:30 New York, and
+    FOMC (`results/fomc_dates.csv`) at 14:00 New York. FRED is asked at most once a
+    day and cached in `events.csv`, whose age is shown when FRED fails.
+- **Clocks.** Labels are Berlin wall time, as everywhere in the repo, and are shown in
+  Sofia time. Sessions are built in their own zones: Asia 09:00–15:00 Tokyo, London
+  08:00–16:30, New York 08:20–13:30, and the London–New York overlap as their
+  intersection. So the US/EU daylight-saving mismatch weeks move New York and the
+  releases to 14:20 / 14:30 Sofia. Session statistics use the finest bars that cover
+  the period (M1, else M15, else H1), and the payload names the resolution.
+- **The spread cache.** `python -m src.gold_analytics.refresh --days 250` pulls each
+  finished trading day's ticks once and stores, per 5-minute label slot, the median and
+  90th-percentile spread with the tick count in `spread_5m.csv.gz`. It skips cached
+  days and remembers empty ones (`spread_days.json`). It also tops up the M1/M15 caches
+  and the release calendar, and writes only under `research_models/gold/analytics/`.
+  The first build takes several minutes; a page request never pulls history.
+- **Caching.** The overview and chart are cached for 5 s, and the page refreshes them
+  every 10 s while visible, or once a minute while the market is closed. Other
+  sections are cached until a cache file changes, for at most 10 minutes.
+- **MT5 "Max bars in chart".** The terminal setting (100,000 here) caps M1 at about
+  70 trading days and M15 at 2022-08 onwards. Every chart and section states its first
+  bar or the days it used. Raising Tools → Options → Charts → Max bars in chart to
+  Unlimited, then re-running `refresh`, lengthens both.
 
 ### 5.5 Containerization note
 

@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Request  # /api/gold-analytics passes its query string through
 
 warnings.filterwarnings('ignore')
 
@@ -770,6 +771,36 @@ def second_opinion_page():
     path = os.path.join(static_dir, "second_opinion.html")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="static/second_opinion.html is missing")
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/gold-analytics/{section}")
+def gold_analytics_endpoint(section: str, request: Request):
+    """
+    One section of the descriptive gold market page (openspec change
+    gold-market-analytics, spec gold-analytics/dashboard): overview, chart,
+    sessions, intraday, events, volatility, history or benchmarks.
+
+    READ-ONLY and descriptive: src.gold_analytics reads MT5 history and ticks
+    (never an order or position call) and its own caches, runs no model, shows
+    no volume and writes only its own cache. A bad section or parameter answers
+    400 with the allowed values. Imported lazily like /api/gold.
+    """
+    try:
+        from src.gold_analytics.service import build
+        return build(section, **dict(request.query_params))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001 -- a view failure must not touch serving
+        raise HTTPException(status_code=500, detail=f"gold analytics unavailable: {type(e).__name__}: {e}")
+
+
+@app.get("/gold-analytics")
+def gold_analytics_page():
+    """Static page rendering /api/gold-analytics/*, bilingual through the app shell."""
+    path = os.path.join(static_dir, "gold_analytics.html")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="static/gold_analytics.html is missing")
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 

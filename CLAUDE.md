@@ -51,6 +51,7 @@ The whole design exists to stop **research-to-production drift**. Training (note
   - `/advanced` equals `index.html` plus the shell; `app_shell.strip` proves it.
   - Add a new page to `PAGE_PATHS` and `NAV`. Never paste navigation markup into a page.
   - Details: `ARCHITECTURE_DOCS.md §5.4.1`.
+  - `/gold-analytics` (openspec change `gold-market-analytics`, `src/gold_analytics/`, outside `src/gold` because it shows the spread) is descriptive only: no model, no volume of any kind, no trade word, MT5 read only. Build its spread cache with `python -m src.gold_analytics.refresh --days 250`. Details: `ARCHITECTURE_DOCS.md §5.4.2`.
 - **Volatility family (`src/volatility.py` → `models/volatility/`):** predicts `target_volatility_pct` (|next-day log return|·100) — the ONLY neural family with a CI-confirmed edge over its honest baseline (5-seed multi-task LSTM ensemble vs train-only-fit GARCH(1,1); pre-registered gate in `results/volatility_seed_ensemble.csv`). ONE price-only model, NOT per-variant; its own hypothesis family (`results/volatility_hypothesis_log.csv`, now SPENT on the validation arbiter — new volatility claims need forward data). The validated object is the FULL 5-seed mean: `vol_ready` is all-or-nothing, never serve a partial ensemble. Details: `ARCHITECTURE_DOCS.md §3.5`.
 
 ## Invariants you must preserve (these caused real bugs when broken)
@@ -156,6 +157,16 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
      - **Refits are shadow versions** (`src/gold/versions.py`). Only
        `python -m src.gold.versions promote` changes the registered models, and it
        refuses while a forward window is open.
+   - **Window strategy backtest** (change `gold-window-strategy`, package
+     `src/gold_window/`, outside `src/gold` because it is net of cost): four fixed
+     in-window rules with walk-forward models. Its `results/gold/window/backtest.md` is
+     **descriptive only**, because the rules were chosen after the data was seen. It has
+     no registry or verdict, and must never be cited as an edge.
+   - **Acceleration direction study** (change `gold-acceleration-direction`, package
+     `src/gold_accel/`): time-of-day acceleration features added to shadow copies of
+     h1_gbm/h1_lstm plus a new `h1_accel`, walk-forward from 2018. Its
+     `results/gold/accel/backtest.md` is **descriptive only** (the acceleration was seen
+     first); it never registers, versions or promotes a model.
 
 8. **External foundation models are a second opinion, `external_tsfm` (`src/external/tsfm/`,
    openspec change `tsfm-second-opinion`, `ARCHITECTURE_DOCS.md §3.13`).**

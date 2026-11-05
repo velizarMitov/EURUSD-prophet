@@ -1,0 +1,25 @@
+{
+  "family": "gold_window",
+  "rules_order": ["h1_gated_direction", "continuation", "us_open_breakout", "d1_gated_direction"],
+  "window": {"first_m15_label": "14:30", "last_m15_label": "21:45",
+             "h1_labels": [14, 15, 16, 17, 18, 19, 20, 21], "weekdays": [0, 1, 2, 3, 4]},
+  "rules": {
+    "gate_lookback_days": 250,
+    "h1_gated_direction": {"as_of_labels": [14, 15, 16, 17, 18, 19, 20], "gate_quantile": 0.80},
+    "continuation": {"from_label": 21, "to_label": 14, "exit_label": 21, "gate_quantile": 0.50},
+    "us_open_breakout": {"range_closes": ["14:45", "15:30"], "entry_closes": ["15:45", "19:00"],
+                         "exit_label": 21, "gate_quantile": 0.50},
+    "d1_gated_direction": {"entry_label": 14, "exit_label": 21, "gate_quantile": 0.50}
+  },
+  "stats": {"ci": 0.95, "block": 20, "n_boot": 2000, "seed": 42},
+  "costs": {"floor_round_trip_pct": 0.0062, "stress_round_trip_pct": 0.0122},
+  "walkforward": {"warmup_years": 3, "models": ["h1_lstm", "d1_lstm", "d1_garch"]},
+  "paths": {
+    "models_dir": "research_models/gold/window",
+    "mt5_dir": "research_models/gold/window/mt5",
+    "results": "results/gold/window",
+    "descriptive": "results/gold/window/DESCRIPTIVE.md",
+    "backtest": "results/gold/window/backtest.md",
+    "artifact_manifest": "results/gold/window/artifact_manifest.csv"
+  }
+}

@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold analytics</title>
+<!-- Read-only, descriptive gold market page (openspec change gold-market-analytics,
+     spec gold-analytics/dashboard). Renders GET /api/gold-analytics/{section}, which
+     runs no model and writes nothing but its own cache. Every word comes from the
+     payload's BG/EN dictionary and every section carries the descriptive label. No
+     traded-size measure of any kind (spec market-data). The top bar, tokens and BG/EN switch come from the app shell
+     (api.py injects it). Charts are inline SVG; nothing loads from outside, so the
+     page works offline. Chart colours: the validated --viz pair of static/gold.html,
+     re-validated in both themes for this page. Times arrive as Sofia ISO strings
+     and are shown by their wall time, whatever the browser's own zone. -->
+<style>
+.ps-page{--viz-1:#2a78d6;--viz-2:#eb6834}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])) .ps-page{--viz-1:#3987e5;--viz-2:#d95926} }
+:root[data-theme="dark"] .ps-page{--viz-1:#3987e5;--viz-2:#d95926}
+.stack{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+.card-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px 14px;margin-bottom:10px}
+.card-head h2{margin:0;font-size:17px}
+.controls{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;font-size:13px;color:var(--ps-mut)}
+.controls label{display:inline-flex;gap:6px;align-items:center}
+.controls select,.controls input,.controls button{font:inherit;font-size:13px;color:var(--ps-ink);background:var(--ps-surface);
+  border:1px solid var(--ps-line);border-radius:var(--ps-r-sm);padding:4px 8px;min-height:30px}
+.controls button{cursor:pointer}
+.controls button[aria-pressed="true"]{background:var(--ps-accent);color:var(--ps-accent-ink);border-color:var(--ps-accent)}
+.tfs{display:inline-flex;flex-wrap:wrap;gap:4px}
+.tfs button{min-width:40px}
+:is(button,select,input,[tabindex]):focus-visible{outline:2px solid var(--ps-focus);outline-offset:2px}
+.facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,140px),1fr));gap:10px 16px;margin:0 0 12px}
+.fact{min-width:0}
+.fact dt{font-size:12.5px;color:var(--ps-mut)}
+.fact dd{margin:2px 0 0;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.fact dd small{font-size:12.5px;font-weight:500;color:var(--ps-mut)}
+.big{font-size:30px !important;font-weight:750 !important;letter-spacing:-.02em}
+.up{color:var(--ps-up)} .dn{color:var(--ps-dn)}
+.meta{font-size:12.5px;color:var(--ps-mut);margin:6px 0 0}
+.label{font-size:12.5px;color:var(--ps-note-ink);background:var(--ps-note-bg);border-left:3px solid var(--ps-note-line);
+  padding:6px 10px;border-radius:6px;margin-top:12px}
+.stale{display:inline-block;font-size:12.5px;font-weight:650;color:var(--ps-dn);background:var(--ps-dn-bg);padding:3px 8px;border-radius:6px}
+.chart{position:relative;width:100%;min-width:0;margin-top:6px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart svg:focus{outline:none}
+.chart:focus-within{outline:2px solid var(--ps-focus);outline-offset:3px;border-radius:6px}
+.chart text{font:11px var(--ps-font);fill:var(--ps-mut)}
+.tip{position:absolute;pointer-events:none;background:var(--ps-surface);color:var(--ps-ink);border:1px solid var(--ps-line);
+  box-shadow:var(--ps-shadow-lg);border-radius:8px;padding:6px 9px;font-size:12.5px;line-height:1.45;white-space:nowrap;
+  font-variant-numeric:tabular-nums;z-index:2}
+.tip b{font-weight:650}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--ps-mut);margin-top:6px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;background:var(--c)}
+.tbl-wrap{overflow-x:auto;max-width:100%}
+table{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;width:100%}
+th,td{padding:5px 8px;border-bottom:1px solid var(--ps-line-2);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;white-space:normal}
+thead th{color:var(--ps-mut);font-weight:650;font-size:12px}
+details{margin-top:8px} summary{cursor:pointer;font-size:13px;color:var(--ps-accent)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}
+.sub{font-size:14px;margin:14px 0 6px}
+[hidden]{display:none !important}
+</style>
+</head>
+<body>
+<main class="ps-page">
+  <div class="ps-head">
+    <div>
+      <h1 class="ps-title" id="title">Анализ на златото</h1>
+      <p class="ps-sub" id="subtitle"></p>
+    </div>
+  </div>
+  <div class="ps-notice" id="label"></div>
+  <div class="stack">
+
+  <section class="ps-card" id="overview" aria-labelledby="h-overview">
+    <div class="card-head"><h2 id="h-overview" data-t="overview">Обзор</h2><span id="ov-stale"></span></div>
+    <div id="ov-body"><p class="meta" data-t="loading">Зареждане…</p></div>
+    <div class="card-head" style="margin-top:14px">
+      <h3 class="sub" data-t="chart">Графика</h3>
+      <div class="controls"><div class="tfs" role="group" id="tf-group" aria-labelledby="h-overview"></div></div>
+    </div>
+    <div class="chart" id="price-chart"></div>
+    <p class="meta" id="chart-meta"></p>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="sessions" aria-labelledby="h-sessions">
+    <div class="card-head"><h2 id="h-sessions" data-t="sessions">Сесии</h2>
+      <div class="controls"><label><span data-t="period">Период</span><select id="ss-period"></select></label></div></div>
+    <div id="ss-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="intraday" aria-labelledby="h-intraday">
+    <div class="card-head"><h2 id="h-intraday" data-t="intraday">Време на деня</h2>
+      <div class="controls">
+        <label><span data-t="interval">Интервал</span><select id="id-interval"></select></label>
+        <label><span data-t="period">Период</span><select id="id-period"></select></label>
+        <label><span data-t="metric">Показател</span><select id="id-metric"></select></label>
+      </div></div>
+    <div id="id-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="events" aria-labelledby="h-events">
+    <div class="card-head"><h2 id="h-events" data-t="events">Часове с новини</h2>
+      <div class="controls">
+        <label><span data-t="event">Събитие</span><select id="ev-event"></select></label>
+        <label><span data-t="period">Период</span><select id="ev-months"></select></label>
+      </div></div>
+    <div id="ev-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="volatility" aria-labelledby="h-volatility">
+    <div class="card-head"><h2 id="h-volatility" data-t="volatility">Волатилност</h2></div>
+    <div id="vo-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="history" aria-labelledby="h-history">
+    <div class="card-head"><h2 id="h-history" data-t="history">Исторически периоди</h2>
+      <div class="controls">
+        <label><span data-t="period">Период</span><select id="hi-period"></select></label>
+        <label><span data-t="from">От</span><input type="date" id="hi-start"></label>
+        <label><span data-t="to">До</span><input type="date" id="hi-end"></label>
+        <button type="button" id="hi-apply" data-t="apply">Покажи</button>
+      </div></div>
+    <div id="hi-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  <section class="ps-card" id="benchmarks" aria-labelledby="h-benchmarks">
+    <div class="card-head"><h2 id="h-benchmarks" data-t="benchmarks">Ориентири по време</h2>
+      <div class="controls">
+        <label><span data-t="start">Начало (София)</span><input type="datetime-local" id="bm-start"></label>
+        <label><span data-t="end">Край (София)</span><input type="datetime-local" id="bm-end"></label>
+        <button type="button" id="bm-apply" data-t="apply">Покажи</button>
+      </div></div>
+    <div id="bm-body"></div>
+    <p class="label" data-label></p>
+  </section>
+
+  </div>
+</main>
+<script>
+'use strict';
+let lang = 'bg';
+try { const s = localStorage.getItem('prophet.lang'); if (s === 'en' || s === 'bg') lang = s; } catch (e) {}
+let TEXTS = null, LABEL = null, OPTS = null;
+const LOCAL = {loading: {bg: 'Зареждане…', en: 'Loading…'}, error: {bg: 'Разделът не е достъпен:', en: 'This section is unavailable:'}};
+const state = {};          // section -> last payload
+const t = (k) => (TEXTS && TEXTS[k] && TEXTS[k][lang]) || (LOCAL[k] && LOCAL[k][lang]) || k;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const $ = (id) => document.getElementById(id);
+const loc = () => (lang === 'bg' ? 'bg-BG' : 'en-GB');
+const num = (x, d = 2) => x === null || x === undefined || Number.isNaN(x) ? '—' :
+  Number(x).toLocaleString(loc(), {minimumFractionDigits: d, maximumFractionDigits: d});
+const pct = (x, d = 2) => x === null || x === undefined ? '—' : num(x, d) + ' %';
+const sgn = (x, d = 2) => x === null || x === undefined ? '—' : (x > 0 ? '+' : '') + num(x, d);
+const share = (s) => !s || s.share === null || s.share === undefined ? '—' :
+  `${num(s.share * 100, 0)} % <small>[${num(s.ci_low * 100, 0)}–${num(s.ci_high * 100, 0)}] · n ${s.n}</small>`;
+// Sofia ISO strings: show the wall time they carry.
+const hhmm = (iso) => iso ? iso.slice(11, 16) : '—';
+const day = (iso) => iso ? iso.slice(0, 10) : '—';
+const when = (iso) => iso ? `${day(iso)} ${hhmm(iso)}` : '—';
+const cls = (x) => x > 0 ? 'up' : (x < 0 ? 'dn' : '');
+const fact = (k, v, extra = '') => `<div class="fact"><dt>${esc(t(k))}</dt><dd${extra}>${v}</dd></div>`;
+const visible = () => !document.hidden;
+
+function setTexts(p) {
+  TEXTS = p.texts; LABEL = p.label; OPTS = p.options;
+}
+
+// ── generic SVG charts ─────────────────────────────────────────────────────
+const H = 240, M = {l: 8, r: 58, t: 10, b: 24};
+
+function niceTicks(lo, hi, n = 4) {
+  if (!(hi > lo)) { hi = lo + 1; }
+  const raw = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((s) => s >= raw);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function frame(el, n, xlab, opts) {
+  const W = Math.max(280, el.clientWidth || 600);
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const step = iw / Math.max(n, 1);
+  return {W, iw, ih, step, X: (i) => M.l + (i + .5) * step};
+}
+
+function hover(el, svgHtml, n, X, step, tipHtml, W) {
+  // A redraw (the 10 s refresh) keeps keyboard focus and the crosshair where they were.
+  const hadFocus = el.contains(document.activeElement);
+  const prev = el.dataset.cur === undefined ? -1 : Math.min(n - 1, +el.dataset.cur);
+  el.innerHTML = svgHtml + '<div class="tip" hidden></div>';
+  const svg = el.querySelector('svg'), tip = el.querySelector('.tip'), line = svg.querySelector('.xh');
+  let cur = -1;
+  function show(i) {
+    if (i < 0 || i >= n) { tip.hidden = true; if (line) line.setAttribute('visibility', 'hidden'); return; }
+    cur = i; el.dataset.cur = i;
+    if (line) { line.setAttribute('x1', X(i)); line.setAttribute('x2', X(i)); line.setAttribute('visibility', 'visible'); }
+    tip.innerHTML = tipHtml(i); tip.hidden = false;
+    const scale = el.clientWidth / W, x = X(i) * scale;
+    const tw = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(0, x + 12), el.clientWidth - tw) + 'px';
+    tip.style.top = '4px';
+  }
+  svg.addEventListener('mousemove', (e) => {
+    const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (W / r.width);
+    show(Math.floor((x - M.l) / step));
+  });
+  svg.addEventListener('mouseleave', () => show(-1));
+  svg.addEventListener('focus', () => show(cur >= 0 ? cur : n - 1));
+  svg.addEventListener('blur', () => show(-1));
+  svg.addEventListener('keydown', (e) => {
+    const k = {ArrowLeft: -1, ArrowRight: 1, PageUp: -10, PageDown: 10}[e.key];
+    if (k) { e.preventDefault(); show(Math.min(n - 1, Math.max(0, (cur < 0 ? n - 1 : cur) + k))); }
+    else if (e.key === 'Home') { e.preventDefault(); show(0); }
+    else if (e.key === 'End') { e.preventDefault(); show(n - 1); }
+  });
+  if (hadFocus) { cur = prev; svg.focus(); }
+}
+
+function yAxis(lo, hi, f, W, fmt) {
+  return niceTicks(lo, hi).map((v) => `<line x1="${M.l}" x2="${W - M.r}" y1="${f(v)}" y2="${f(v)}" stroke="var(--ps-line-2)"/>` +
+    `<text x="${W - M.r + 6}" y="${f(v) + 4}">${esc(fmt(v))}</text>`).join('');
+}
+
+function xLabels(n, X, label, every) {
+  let out = '';
+  const k = Math.max(1, Math.ceil(n / every));
+  // A label near the left edge is anchored at its start so it is never clipped.
+  for (let i = 0; i < n; i += k) out += `<text x="${X(i)}" y="${H - 6}" text-anchor="${X(i) < 40 ? 'start' : 'middle'}">${esc(label(i))}</text>`;
+  return out;
+}
+
+// Candles (or the close line when bars are too thin to read).
+function priceChart(el, bars, tf) {
+  const n = bars.length;
+  if (!n) { el.innerHTML = `<p class="meta">${esc(t('no_data'))}</p>`; return; }
+  const {W, ih, step, X} = frame(el, n);
+  const lo = Math.min(...bars.map((b) => b[3])), hi = Math.max(...bars.map((b) => b[2]));
+  const pad = (hi - lo) * .05 || 1;
+  const Y = (v) => M.t + ih - (v - (lo - pad)) / (hi - lo + 2 * pad) * ih;
+  let marks = '';
+  if (n <= 400) {
+    const bw = Math.max(1, step * .6);
+    for (let i = 0; i < n; i++) {
+      const [, o, h, l, c] = bars[i], col = c >= o ? 'var(--viz-1)' : 'var(--viz-2)';
+      marks += `<line x1="${X(i)}" x2="${X(i)}" y1="${Y(h)}" y2="${Y(l)}" stroke="${col}" stroke-width="1"/>` +
+        `<rect x="${X(i) - bw / 2}" y="${Math.min(Y(o), Y(c))}" width="${bw}" height="${Math.max(1, Math.abs(Y(o) - Y(c)))}" fill="${col}"/>`;
+    }
+  } else {
+    marks = `<path d="${bars.map((b, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(b[4]).toFixed(1)).join('')}" fill="none" stroke="var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  const daily = tf === 'D1' || tf === 'W1';
+  const lab = (i) => daily ? day(bars[i][0]) : (tf === '4h' || tf === '1h' ? `${day(bars[i][0]).slice(5)} ${hhmm(bars[i][0])}` : hhmm(bars[i][0]));
+  const svg = `<svg viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(t('chart'))} ${esc(tf)}">` +
+    yAxis(lo - pad, hi + pad, Y, W, (v) => num(v, 0)) + marks + xLabels(n, X, lab, Math.max(2, Math.floor(W / 110))) +
+    `<line class="xh" y1="${M.t}" y2="${M.t + ih}" stroke="var(--ps-mut)" visibility="hidden"/></svg>`;
+  hover(el, svg, n, X, step, (i) => {
+    const [ts, o, h, l, c] = bars[i];
+    return `<b>${esc(when(ts))}</b><br>${esc(t('open'))} ${num(o)} · ${esc(t('high'))} ${num(h)}<br>${esc(t('low'))} ${num(l)} · ${esc(t('close'))} ${num(c)}`;
+  }, W);
+}
+
+// Bars from a zero baseline; one or two series side by side; optional shaded slots.
+function barChart(el, labels, series, opts = {}) {
+  const n = labels.length;
+  if (!n) { el.innerHTML = `<p class="meta">${esc(t('no_data'))}</p>`; return; }
+  const {W, ih, step, X} = frame(el, n);
+  const vals = series.flatMap((s) => s.values.filter((v) => v !== null && v !== undefined));
+  let lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  if (hi === lo) hi = lo + 1;
+  const Y = (v) => M.t + ih - (v - lo) / (hi - lo) * ih;
+  let shade = '';
+  if (opts.shade) {
+    for (let i = 0; i < n; i++) if (opts.shade[i]) shade += `<rect x="${M.l + i * step}" y="${M.t}" width="${step + .5}" height="${ih}" fill="var(--ps-gold-bg)"/>`;
+  }
+  const k = series.length, gap = step > 6 ? 2 : 0, bw = Math.max(.6, (step - gap * (k + 1)) / k);
+  let marks = '';
+  series.forEach((s, j) => s.values.forEach((v, i) => {
+    if (v === null || v === undefined) return;
+    const x = M.l + i * step + gap + j * (bw + gap), y0 = Y(0), y = Y(v);
+    const r = Math.min(4, bw / 2), hgt = Math.max(1, Math.abs(y - y0));
+    marks += `<rect x="${x}" y="${Math.min(y, y0)}" width="${bw}" height="${hgt}" rx="${step > 8 ? r : 0}" fill="${s.color}"/>`;
+  }));
+  const fmt = opts.fmt || ((v) => num(v, 2));
+  const svg = `<svg viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(opts.title || '')}">` + shade +
+    yAxis(lo, hi, Y, W, fmt) + marks + `<line x1="${M.l}" x2="${W - M.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--ps-mut)"/>` +
+    xLabels(n, X, (i) => labels[i], Math.max(2, Math.floor(W / 64))) +
+    `<line class="xh" y1="${M.t}" y2="${M.t + ih}" stroke="var(--ps-mut)" stroke-dasharray="2 3" visibility="hidden"/></svg>`;
+  hover(el, svg, n, X, step, (i) => `<b>${esc(labels[i])}</b>` +
+    series.map((s) => `<br>${esc(s.name)}: ${s.values[i] === null || s.values[i] === undefined ? '—' : esc(fmt(s.values[i]))}`).join('') +
+    (opts.extra ? opts.extra(i) : ''), W);
+}
+
+function lineChart(el, points, refs, fmt) {
+  const n = points.length;
+  if (!n) { el.innerHTML = `<p class="meta">${esc(t('no_data'))}</p>`; return; }
+  const {W, ih, step, X} = frame(el, n);
+  const vs = points.map((p) => p[1]).concat(refs.map((r) => r.v));
+  const lo = Math.min(...vs), hi = Math.max(...vs), pad = (hi - lo) * .08 || 1;
+  const Y = (v) => M.t + ih - (v - (lo - pad)) / (hi - lo + 2 * pad) * ih;
+  const path = points.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join('');
+  const ref = refs.map((r) => `<line x1="${M.l}" x2="${W - M.r}" y1="${Y(r.v)}" y2="${Y(r.v)}" stroke="var(--ps-mut)" stroke-dasharray="5 4"/>` +
+    `<text x="${M.l + 4}" y="${Y(r.v) - 4}">${esc(r.label)}</text>`).join('');
+  const svg = `<svg viewBox="0 0 ${W} ${H}" tabindex="0" role="img" aria-label="${esc(t('realised'))}">` +
+    yAxis(lo - pad, hi + pad, Y, W, fmt) + ref + `<path d="${path}" fill="none" stroke="var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>` +
+    xLabels(n, X, (i) => day(points[i][0]), Math.max(2, Math.floor(W / 110))) +
+    `<line class="xh" y1="${M.t}" y2="${M.t + ih}" stroke="var(--ps-mut)" visibility="hidden"/></svg>`;
+  hover(el, svg, n, X, step, (i) => `<b>${esc(day(points[i][0]))}</b><br>${esc(fmt(points[i][1]))}`, W);
+}
+
+// ── loading ─────────────────────────────────────────────────────────────────
+async function get(section, params = {}) {
+  const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v !== null && v !== undefined));
+  const r = await fetch(`/api/gold-analytics/${section}${q.toString() ? '?' + q : ''}`, {cache: 'no-store'});
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.detail || r.status);
+  setTexts(body);
+  return body;
+}
+
+function fail(id, e) { $(id).innerHTML = `<p class="meta">${esc(t('error'))} ${esc(String(e.message || e))}</p>`; }
+function staleMark(p) { return p.stale ? `<span class="stale">${esc(t('stale'))} · ${esc(t('as_of'))} ${esc(when(p.as_of))}</span>` : ''; }
+
+function options(sel, values, label, current) {
+  const el = $(sel);
+  const keep = el.value || String(current);
+  el.innerHTML = values.map((v) => `<option value="${esc(v)}">${esc(label(v))}</option>`).join('');
+  el.value = values.map(String).includes(keep) ? keep : String(current);
+}
+
+function fillControls() {
+  if (!OPTS) return;
+  const days = (v) => `${v} ${t('days')}`;
+  options('ss-period', OPTS.periods, days, 60);
+  options('id-interval', OPTS.intervals, (v) => `${v} ${t('minutes')}`, 60);
+  options('id-period', OPTS.periods, days, 60);
+  options('id-metric', ['abs_mean', 'ret_mean', 'range_mean', 'accel', 'spread_median', 'spread_p90', 'high_share', 'low_share'], t, 'abs_mean');
+  options('ev-event', OPTS.events, t, 'nfp');
+  options('ev-months', OPTS.event_months, (v) => `${v} ${t('months')}`, 24);
+  options('hi-period', OPTS.periods, days, 20);
+  const g = $('tf-group');
+  if (!g.children.length) {
+    g.innerHTML = OPTS.timeframes.map((tf) => `<button type="button" data-tf="${tf}" aria-pressed="${tf === chartTf}">${tf}</button>`).join('');
+    g.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+      chartTf = b.dataset.tf;
+      g.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      loadChart();
+    }));
+  }
+}
+
+// ── sections ───────────────────────────────────────────────────────────────
+let chartTf = '1h';
+function renderOverview() {
+  const p = state.overview; if (!p) return;
+  const d = p.data, tk = d.tick, dy = d.day || {};
+  $('ov-stale').innerHTML = staleMark(p);
+  const sess = d.session.current.length ? d.session.current.map((k) => t(k)).join(' · ')
+    : `${t('between')}${d.session.next ? ` — ${t('next_session')}: ${t(d.session.next.key)} ${t('starts')} ${when(d.session.next.start_label)}` : ''}`;
+  let html = '<dl class="facts">' +
+    fact('bid', num(tk.bid), ' class="big"') + fact('ask', num(tk.ask)) +
+    fact('spread_now', tk.spread === null ? '—' : `${num(tk.spread)} $`) +
+    fact('change', `<span class="${cls(dy.usd)}">${sgn(dy.usd)} $ · ${sgn(dy.pct)} %</span>`) +
+    fact('open', num(dy.open)) + fact('high', num(dy.high)) + fact('low', num(dy.low)) + fact('prev_close', num(dy.prev_close)) +
+    fact('session_now', esc(sess)) + fact('hv20', pct(d.hv20_pct)) +
+    fact('intraday_vol', `${pct(d.intraday_vol.so_far_pct, 3)} <small>${esc(t('intraday_vol_day'))}: ${pct(d.intraday_vol.day_pct, 2)}</small>`) +
+    '</dl>';
+  html += `<p class="meta">${esc(t('as_of'))} ${esc(when(tk.time))} · ${esc(t('day_is'))}${d.market_open ? '' : ' · ' + esc(t('market_closed'))}</p>`;
+  $('ov-body').innerHTML = html;
+}
+
+function renderChart() {
+  const p = state.chart; if (!p) return;
+  const d = p.data;
+  priceChart($('price-chart'), d.bars, d.timeframe);
+  $('chart-meta').textContent = `${t('first_bar')} (${d.timeframe}): ${when(d.first_bar)} · ${d.n_bars} / ${d.capped_at}` +
+    (['1m', '5m', '15m', '30m'].includes(d.timeframe) ? ` · ${t('max_bars_note')}` : '');
+}
+
+function renderSessions() {
+  const p = state.sessions; if (!p) return;
+  const d = p.data, keys = Object.keys(d.sessions);
+  const row = (k, f) => `<tr><th scope="row">${esc(t(k))}</th>${keys.map((s) => `<td>${f(d.sessions[s].summary, d.sessions[s])}</td>`).join('')}</tr>`;
+  let html = staleMark(p) + `<div class="tbl-wrap"><table><thead><tr><th></th>${keys.map((k) => `<th scope="col">${esc(t(k))}</th>`).join('')}</tr></thead><tbody>` +
+    row('session_hours', (s, b) => b.hours_sofia ? b.hours_sofia.join('–') : '—') +
+    row('n', (s) => s.n) +
+    row('range', (s) => `${num(s.mean_range_usd)} $ <small>${pct(s.mean_range_pct, 2)}</small>`) +
+    row('ret', (s) => `<span class="${cls(s.mean_ret_pct)}">${sgn(s.mean_ret_pct, 3)} %</span>`) +
+    row('rv', (s) => pct(s.mean_rv_pct, 2)) +
+    row('bias_up', (s) => share(s.bias_up)) + row('breakout', (s) => share(s.breakout)) +
+    row('persistence', (s) => share(s.persistence)) + '</tbody></table></div>';
+  html += `<p class="meta">${esc(t('ci'))}: Wilson. ${esc(t('no_edge'))} · ${esc(t('resolution'))} ${esc(d.resolution)} · ${d.days_used} ${esc(t('days'))}</p>`;
+  const od = d.overnight_day;
+  html += `<h3 class="sub">${esc(t('overnight_day'))}</h3><div class="two">` + ['overnight', 'day'].map((k) => {
+    const s = od[k];
+    return `<dl class="facts" style="margin:0"><div class="fact" style="grid-column:1/-1"><dt>${esc(t(k))}</dt></div>` +
+      fact('ret', `<span class="${cls(s.mean_ret_pct)}">${sgn(s.mean_ret_pct, 3)} %</span>`) +
+      fact('sum_log_ret', `${sgn(s.sum_log_ret_pct, 1)} %`) + fact('bias_up', share(s.bias_up)) + '</dl>';
+  }).join('') + '</div>';
+  $('ss-body').innerHTML = html;
+}
+
+function renderIntraday() {
+  const p = state.intraday; if (!p) return;
+  const d = p.data, metric = $('id-metric').value || 'abs_mean';
+  const isPct = !['spread_median', 'spread_p90', 'high_share', 'low_share'].includes(metric);
+  const shareM = metric === 'high_share' || metric === 'low_share';
+  const vals = d.slots.map((s) => s[metric] === null || s[metric] === undefined ? null : (shareM ? s[metric] * 100 : s[metric]));
+  const fmt = (v) => shareM ? num(v, 1) + ' %' : (isPct ? num(v, 3) + ' %' : num(v, 3) + ' $');
+  let html = staleMark(p) + '<div class="chart" id="id-chart"></div>' +
+    `<div class="legend"><span style="--c:var(--viz-1)">${esc(t(metric))}</span><span style="--c:var(--ps-gold-bg)">${esc(t('window'))}</span></div>`;
+  const notes = [`${t('resolution')} ${d.resolution}`, `${d.days_used} ${t('days')}`];
+  if (d.limited) notes.push(t('limited_days').replace('{used}', d.days_used).replace('{requested}', d.days_requested));
+  html += `<p class="meta">${esc(notes.join(' · '))}</p>`;
+  html += `<p class="meta">${esc(t('momentum'))}: ${d.momentum.corr === null ? '—' : num(d.momentum.corr, 2)} (n ${d.momentum.n})</p>`;
+  html += `<p class="meta">${esc(d.spread_cached_days ? t('spread_source') + ` (${d.spread_days || d.spread_cached_days} ${t('days')})` : t('spread_missing'))}</p>`;
+  const cols = ['ret_mean', 'abs_mean', 'range_mean', 'accel', 'spread_median', 'spread_p90', 'high_share', 'low_share'];
+  html += `<details><summary>${esc(t('slot'))} — ${esc(t('n'))} ${d.slots.length}</summary><div class="tbl-wrap"><table><thead><tr><th>${esc(t('slot'))}</th>` +
+    cols.map((c) => `<th>${esc(t(c))}</th>`).join('') + '</tr></thead><tbody>' +
+    d.slots.map((s) => `<tr><td>${esc(s.slot)}${s.in_window ? ' ●' : ''}</td><td>${num(s.ret_mean, 3)}</td><td>${num(s.abs_mean, 3)}</td>` +
+      `<td>${num(s.range_mean, 3)}</td><td>${sgn(s.accel, 3)}</td><td>${num(s.spread_median, 3)}</td><td>${num(s.spread_p90, 3)}</td>` +
+      `<td>${s.high_share === null || s.high_share === undefined ? '—' : num(s.high_share * 100, 1)}</td><td>${s.low_share === null || s.low_share === undefined ? '—' : num(s.low_share * 100, 1)}</td></tr>`).join('') +
+    '</tbody></table></div></details>';
+  $('id-body').innerHTML = html;
+  barChart($('id-chart'), d.slots.map((s) => s.slot), [{name: t(metric), values: vals, color: 'var(--viz-1)'}],
+    {shade: d.slots.map((s) => s.in_window), fmt, title: t(metric),
+     extra: (i) => {
+       const s = d.slots[i];
+       return s.spread_median_pct === undefined || s.spread_median_pct === null ? '' :
+         `<br>${esc(t('spread_median'))}: ${num(s.spread_median, 3)} $ (${num(s.spread_median_pct, 4)} %)`;
+     }});
+}
+
+function offsetTime(base, mins) {
+  if (!base) return (mins >= 0 ? '+' : '−') + `${Math.floor(Math.abs(mins) / 60)}:${String(Math.abs(mins) % 60).padStart(2, '0')}`;
+  const [h, m] = base.split(':').map(Number), x = ((h * 60 + m + mins) % 1440 + 1440) % 1440;
+  return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+}
+
+function renderEvents() {
+  const p = state.events; if (!p) return;
+  const d = p.data;
+  const typical = d.release_sofia ? Object.entries(d.release_sofia).sort((a, b) => b[1] - a[1]).map((e) => e[0])[0] : null;
+  let html = staleMark(p) + '<dl class="facts">' + fact('releases', `${d.n_releases}`) +
+    fact('next_release', esc(when(d.next))) +
+    (d.first_hour ? fact('first_hour', `${pct(d.first_hour.release_abs_mean, 3)} <small>${esc(t('other_days'))}: ${pct(d.first_hour.baseline_abs_mean, 3)}</small>`) : '') +
+    '</dl>';
+  if (!d.n_releases) { html += `<p class="meta">${esc(t('no_data'))}</p>`; }
+  else {
+    html += '<div class="chart" id="ev-chart"></div>' +
+      `<div class="legend"><span style="--c:var(--viz-1)">${esc(t('release_days'))}</span><span style="--c:var(--viz-2)">${esc(t('other_days'))}</span></div>`;
+    html += `<p class="meta">${esc(t('abs_mean'))} · ${esc(t('slot'))} = ${esc(t('offset'))}${typical ? ' (' + esc(typical) + ')' : ''}</p>`;
+    html += `<details><summary>${esc(t('offset'))}</summary><div class="tbl-wrap"><table><thead><tr><th>${esc(t('slot'))}</th><th>${esc(t('release_days'))}</th><th>${esc(t('other_days'))}</th><th>${esc(t('ratio'))}</th><th>${esc(t('spread_median'))}</th></tr></thead><tbody>` +
+      d.offsets.map((r) => `<tr><td>${esc(offsetTime(typical, r.offset_min))}</td><td>${pct(r.release_abs_mean, 3)}</td><td>${pct(r.baseline_abs_mean, 3)}</td>` +
+        `<td>${num(r.ratio, 1)}</td><td>${num(r.release_spread_median, 3)} / ${num(r.baseline_spread_median, 3)}</td></tr>`).join('') + '</tbody></table></div></details>';
+  }
+  const notes = [t('surprise_note')];
+  if (d.fred === 'cache') notes.push(t('fred_cache').replace('{age}', num(d.cache_age_days, 1)));
+  if (d.fred === 'missing') notes.push(t('fred_missing'));
+  if (d.limited) notes.push(`${t('first_bar')} (15m): ${when(d.first_bar)}`);
+  html += notes.map((n) => `<p class="meta">${esc(n)}</p>`).join('');
+  $('ev-body').innerHTML = html;
+  if (d.n_releases) {
+    barChart($('ev-chart'), d.offsets.map((r) => offsetTime(typical, r.offset_min)),
+      [{name: t('release_days'), values: d.offsets.map((r) => r.release_abs_mean), color: 'var(--viz-1)'},
+       {name: t('other_days'), values: d.offsets.map((r) => r.baseline_abs_mean), color: 'var(--viz-2)'}],
+      {fmt: (v) => num(v, 3) + ' %', title: t('events'),
+       extra: (i) => d.offsets[i].release_spread_median === undefined ? '' :
+         `<br>${esc(t('spread_median'))}: ${num(d.offsets[i].release_spread_median, 3)} / ${num(d.offsets[i].baseline_spread_median, 3)} $`});
+  }
+}
+
+function renderVolatility() {
+  const p = state.volatility; if (!p) return;
+  const d = p.data, rg = d.regime;
+  let html = staleMark(p) + '<dl class="facts">' +
+    fact('atr', `${num(d.atr.usd)} $ <small>${pct(d.atr.pct, 2)}</small>`) +
+    Object.entries(d.realised).map(([w, v]) => fact('realised', `${pct(v, 1)} <small>${w} ${esc(t('days'))}</small>`)).join('') +
+    fact('regime', rg.regime ? `${esc(t('regime_' + rg.regime))} <small>${num(rg.percentile * 100, 0)}-${esc(t('percentile'))}</small>` : '—') +
+    fact('range_today', d.range.ratio === null ? '—' : `${num(d.range.ratio, 2)}× <small>${num(d.range.today_usd)} / ${num(d.range.average_usd)} $</small>`) +
+    fact('intraday_vol', `${pct(d.intraday.so_far_pct, 3)} <small>${esc(t('intraday_vol_day'))}: ${pct(d.intraday.day_pct, 2)}</small>`) +
+    '</dl><div class="chart" id="vo-chart"></div>' +
+    `<p class="meta">${esc(t('regime_note'))}</p>`;
+  $('vo-body').innerHTML = html;
+  lineChart($('vo-chart'), d.rv_series, rg.low === null ? [] :
+    [{v: rg.low, label: t('regime_low')}, {v: rg.high, label: t('regime_high')}], (v) => num(v, 1) + ' %');
+}
+
+function renderHistory() {
+  const p = state.history; if (!p) return;
+  const d = p.data;
+  if (!d.days) { $('hi-body').innerHTML = staleMark(p) + `<p class="meta">${esc(t('no_data'))}</p>`; return; }
+  let html = staleMark(p) + '<dl class="facts">' +
+    fact('days', `${d.days} <small>${esc(day(d.first))} – ${esc(day(d.last))}</small>`) +
+    fact('mean_ret', `<span class="${cls(d.mean_ret_pct)}">${sgn(d.mean_ret_pct, 3)} %</span>`) +
+    fact('mean_range', `${num(d.mean_range_usd)} $ <small>${pct(d.mean_range_pct, 2)}</small>`) +
+    fact('atr', `${num(d.atr_usd)} $`) + fact('realised', pct(d.realised_pct, 1)) +
+    fact('total_ret', `<span class="${cls(d.total_ret_pct)}">${sgn(d.total_ret_pct, 2)} %</span>`) +
+    fact('max_drawdown', pct(d.max_drawdown_pct, 2)) +
+    fact('persistence', d.persistence.share === null ? '—' : `${num(d.persistence.share * 100, 0)} % <small>n ${d.persistence.n}</small>`) +
+    '</dl>' + `<h3 class="sub">${esc(t('histogram'))}</h3><div class="chart" id="hi-chart"></div>`;
+  if (d.compare) {
+    const c = d.compare, s = c.session;
+    html += `<h3 class="sub">${esc(t('compare_now'))}</h3><div class="tbl-wrap"><table><thead><tr><th></th><th>${esc(t('now'))}</th><th>${esc(t('average'))}</th></tr></thead><tbody>` +
+      `<tr><td>${esc(t('range'))}</td><td>${pct(c.range_pct.now, 2)}</td><td>${pct(c.range_pct.average, 2)}</td></tr>` +
+      `<tr><td>${esc(t('realised'))}</td><td>${pct(c.realised_pct.now, 1)}</td><td>${pct(c.realised_pct.average, 1)}</td></tr>` +
+      (s ? `<tr><td>${esc(t(s.key))} — ${esc(t('ret'))}</td><td>${sgn(s.now_ret_pct, 3)} %</td><td>${sgn(s.average_ret_pct, 3)} %</td></tr>` +
+           `<tr><td>${esc(t(s.key))} — ${esc(t('range'))}</td><td>${pct(s.now_range_pct, 2)}</td><td>${pct(s.average_range_pct, 2)}</td></tr>` : '') +
+      '</tbody></table></div>';
+  }
+  if (d.sessions) {
+    const keys = Object.keys(d.sessions);
+    html += `<h3 class="sub">${esc(t('sessions'))}</h3><div class="tbl-wrap"><table><thead><tr><th></th>${keys.map((k) => `<th>${esc(t(k))}</th>`).join('')}</tr></thead><tbody>` +
+      `<tr><td>${esc(t('ret'))}</td>${keys.map((k) => `<td>${sgn(d.sessions[k].summary.mean_ret_pct, 3)} %</td>`).join('')}</tr>` +
+      `<tr><td>${esc(t('range'))}</td>${keys.map((k) => `<td>${pct(d.sessions[k].summary.mean_range_pct, 2)}</td>`).join('')}</tr>` +
+      `<tr><td>${esc(t('bias_up'))}</td>${keys.map((k) => `<td>${share(d.sessions[k].summary.bias_up)}</td>`).join('')}</tr>` +
+      '</tbody></table></div>' + `<p class="meta">${esc(t('resolution'))} ${esc(d.resolution)}</p>`;
+  }
+  $('hi-body').innerHTML = html;
+  barChart($('hi-chart'), d.histogram.map((b) => `${num(b.from, 2)}…${num(b.to, 2)}`),
+    [{name: t('n'), values: d.histogram.map((b) => b.count), color: 'var(--viz-1)'}],
+    {fmt: (v) => num(v, 0), title: t('histogram')});
+}
+
+function renderBenchmarks() {
+  const p = state.benchmarks; if (!p) return;
+  const d = p.data;
+  if (!$('bm-start').value && d.start) $('bm-start').value = d.start.slice(0, 16);
+  let html = staleMark(p) + '<dl class="facts">' +
+    fact('twap', `${num(d.twap)} <small>${when(d.start)} – ${when(d.end)} · ${d.n_bars} × ${d.bar_minutes} ${esc(t('minutes'))}</small>`) +
+    fact('vs_twap', `<span class="${cls(d.vs_twap.usd)}">${sgn(d.vs_twap.usd)} $ · ${sgn(d.vs_twap.pct, 3)} %</span> <small>${num(d.price_now)}</small>`) +
+    fact('arrival', `${num(d.arrival.arrival)} <small>${esc(when(d.arrival.start_label))}</small>`) + '</dl>' +
+    `<h3 class="sub">${esc(t('move_after'))}</h3><div class="tbl-wrap"><table><thead><tr><th></th><th>$</th><th>%</th></tr></thead><tbody>` +
+    d.arrival.moves.map((m) => `<tr><td>+${m.minutes} ${esc(t('minutes'))}</td><td class="${cls(m.usd)}">${sgn(m.usd)}</td><td class="${cls(m.pct)}">${sgn(m.pct, 3)}</td></tr>`).join('') +
+    '</tbody></table></div>' + `<p class="meta">${esc(t('hypothetical'))}</p>`;
+  $('bm-body').innerHTML = html;
+}
+
+const RENDER = {overview: renderOverview, chart: renderChart, sessions: renderSessions, intraday: renderIntraday,
+  events: renderEvents, volatility: renderVolatility, history: renderHistory, benchmarks: renderBenchmarks};
+const BODY = {overview: 'ov-body', chart: 'price-chart', sessions: 'ss-body', intraday: 'id-body', events: 'ev-body',
+  volatility: 'vo-body', history: 'hi-body', benchmarks: 'bm-body'};
+
+async function load(section, params) {
+  try {
+    state[section] = await get(section, params);
+    fillControls();
+    applyTexts();
+    RENDER[section]();
+  } catch (e) { fail(BODY[section], e); }
+}
+
+const loadChart = () => load('chart', {timeframe: chartTf});
+const loadSessions = () => load('sessions', {period: $('ss-period').value});
+const loadIntraday = () => load('intraday', {interval: $('id-interval').value, period: $('id-period').value});
+const loadEvents = () => load('events', {event: $('ev-event').value, months: $('ev-months').value});
+function loadHistory(custom) {
+  const s = $('hi-start').value, e = $('hi-end').value;
+  return load('history', custom && s && e ? {start: s, end: e} : {period: $('hi-period').value});
+}
+const loadBenchmarks = () => load('benchmarks', {start: $('bm-start').value, end: $('bm-end').value});
+
+function applyTexts() {
+  document.documentElement.lang = lang;
+  if (!TEXTS) return;
+  $('title').textContent = t('title'); document.title = t('title');
+  $('subtitle').textContent = t('subtitle');
+  $('label').textContent = LABEL[lang];
+  document.querySelectorAll('[data-t]').forEach((el) => { el.textContent = t(el.dataset.t); });
+  document.querySelectorAll('[data-label]').forEach((el) => { el.textContent = LABEL[lang]; });
+}
+
+function renderAll() { applyTexts(); fillControls(); Object.values(RENDER).forEach((f) => f()); }
+
+$('ss-period').addEventListener('change', loadSessions);
+$('id-interval').addEventListener('change', loadIntraday);
+$('id-period').addEventListener('change', loadIntraday);
+$('id-metric').addEventListener('change', renderIntraday);
+$('ev-event').addEventListener('change', loadEvents);
+$('ev-months').addEventListener('change', loadEvents);
+$('hi-period').addEventListener('change', () => { $('hi-start').value = ''; $('hi-end').value = ''; loadHistory(false); });
+$('hi-apply').addEventListener('click', () => loadHistory(true));
+$('bm-apply').addEventListener('click', loadBenchmarks);
+document.addEventListener('ps:lang', (e) => { lang = e.detail; renderAll(); });
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderAll, 150); });
+
+// The overview and chart refresh every 10 s while the tab is visible and the
+// market is open; with the market closed, once a minute so the reopening shows.
+let lastLive = 0;
+async function live() {
+  if (!visible()) return;
+  const open = state.overview ? state.overview.data.market_open : true;
+  if (!open && Date.now() - lastLive < 60e3) return;
+  lastLive = Date.now();
+  await load('overview');
+  await loadChart();
+}
+document.addEventListener('visibilitychange', () => { if (visible()) { lastLive = 0; live(); } });
+
+(async () => {
+  applyTexts();
+  await load('overview');
+  lastLive = Date.now();
+  await loadChart();
+  await Promise.all([loadSessions(), loadIntraday(), loadEvents(), load('volatility'), loadHistory(false), loadBenchmarks()]);
+  setInterval(live, 10e3);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "symbol_aliases": ["GOLD", "XAUUSD"],
+  "label_zone": "Europe/Berlin",
+  "display_zone": "Europe/Sofia",
+  "owner_window": {"start": "15:30", "end": "23:00"},
+  "sessions": [
+    {"key": "asia", "start": "09:00", "end": "15:00", "zone": "Asia/Tokyo"},
+    {"key": "london", "start": "08:00", "end": "16:30", "zone": "Europe/London"},
+    {"key": "new_york", "start": "08:20", "end": "13:30", "zone": "America/New_York"}
+  ],
+  "overlap": {"key": "overlap", "of": ["london", "new_york"]},
+  "overnight_day": {"day_start": "london", "day_end": "new_york"},
+  "intervals": [1, 5, 15, 30, 60],
+  "timeframes": ["1m", "5m", "15m", "30m", "1h", "4h", "D1", "W1"],
+  "chart_max_bars": 2000,
+  "periods": [5, 20, 60, 120, 250],
+  "regime": {"window": 20, "lookback": 250, "low_q": 0.33, "high_q": 0.67},
+  "atr_period": 14,
+  "realised_windows": [5, 20, 60],
+  "histogram_bin_pct": 0.25,
+  "arrival_horizons_min": [15, 30, 60, 120],
+  "events": {
+    "nfp": {"source": "fred", "release_id": 50, "time": "08:30", "zone": "America/New_York"},
+    "cpi": {"source": "fred", "release_id": 10, "time": "08:30", "zone": "America/New_York"},
+    "fomc": {"source": "fomc_csv", "time": "14:00", "zone": "America/New_York"}
+  },
+  "event_window": {"before_min": 120, "after_min": 180, "step_min": 30},
+  "event_months": [6, 12, 24, 36],
+  "spread_bucket_min": 5,
+  "overview_cache_s": 5,
+  "paths": {
+    "cache_dir": "research_models/gold/analytics",
+    "bars_m1": "research_models/gold/analytics/bars_M1.csv.gz",
+    "bars_m15": "research_models/gold/analytics/bars_M15.csv.gz",
+    "spread_5m": "research_models/gold/analytics/spread_5m.csv.gz",
+    "events": "research_models/gold/analytics/events.csv",
+    "last_tick": "research_models/gold/analytics/last_tick.json",
+    "d1": "results/gold/gold_d1.csv",
+    "h1": "results/gold/gold_h1.csv",
+    "fomc": "results/fomc_dates.csv"
+  }
+}

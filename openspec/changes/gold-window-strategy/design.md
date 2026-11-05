@@ -2,213 +2,153 @@
 
 ## Context
 
-- The gold caches (`results/gold/gold_{d1,h1}.csv`) start in 2013-08 and 2015-01. MT5
-  history for the symbol starts on 2013-08-08. Every year since then has been looked at,
-  in the gold study and in the 2026-11-03/04 backtests.
-- The H1 cache holds bid closes only. MT5's per-bar `spread` is a single value per bar:
-  0.00 for 2015–2017 and a flat 0.25 or 0.50 later. It cannot show the widening at the
-  daily break, so the 01:00–02:00 Sofia rise in `DESCRIPTIVE.md` cannot be told apart from
-  a bid artifact with repo data.
+- Data available:
+  - `results/gold/gold_h1.csv` from 2015-01-02 and `gold_d1.csv` from 2013-08-08. Both
+    are bid OHLC only.
+  - MT5, read-only, has gold H1 bars with a per-bar `spread` from 2014-12 and M15 bars
+    only from 2022-08-12. The bar spread is 0 for 2015–2017 and partly 2017, and a flat
+    0.25 or 0.50 later.
+- Every year has been looked at, and the four rules were chosen after the descriptive
+  statistics. The owner declined an independent history on 2026-11-04. So nothing this
+  change produces is evidence (proposal, Why).
 - Labels are Europe/Berlin wall time stored as UTC (CLAUDE.md item 6). Sofia is
-  Berlin + 1 h all year, including 2004–2013, because both follow the EU rule.
+  Berlin + 1 h all year.
 - Reusable pieces, all used read-only:
   - `src/gold/challengers.py`: `GoldLSTM` (heads ret, dir, vol; 5 seeds; a partial
-    ensemble refused) and `GoldGarch` (D1, parameters from training rows only);
-  - `src/gold/features.py`: scale-free features, with spread and volume forbidden;
-  - `src/gold/targets.py`;
+    ensemble refused) and `GoldGarch` (D1, parameters from fit rows only), built through
+    `challengers.make` and `build_inputs`;
+  - `src/gold/targets.build_targets`;
   - `src/forecast_eval/stats.block_bootstrap_ci`;
-  - `src/forecast_eval/prereg.committed_and_clean`;
-  - `src/external/tsfm.gpu_job` (the shared GPU lock).
-- `gold_config.json` is pinned by round one. It is read for the LSTM settings and never
+  - `src/external/tsfm.gpu_job`, the shared GPU lock;
+  - `src/gold/data.resolve_gold_symbol`.
+- `gold_config.json` is pinned by round one. It is read for the model settings and never
   written.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One honest, net-of-cost answer per cell, on years no one has looked at, with the rule
-  frozen before any of those prices is read.
-- The seen-span numbers kept clearly apart from that answer.
+- Honest model inputs: every prediction comes from a fit that ended before its year.
+- Honest costs, with an explicit floor.
+- A report that cannot be mistaken for a verdict.
 
 **Non-Goals:**
-- Tuning anything on the archive. There is no parameter search; each parameter is fixed
-  in the registration.
-- Trading outside the window, an overnight hold, or a live signal.
-- Making the walk-forward models a version, a challenger or a forward-logged model.
+- Any verdict, registration, registry row, or forward logging.
+- Tuning: no threshold, window or horizon search, and no extra rule variants.
+- Making the walk-forward models a version, a challenger or a logged model.
 
 ## Decisions
 
-### D1. Source: Dukascopy daily M1 candle files, bid and ask
+### D1. Bars and spreads
 
-The files are `https://datafeed.dukascopy.com/datafeed/XAUUSD/{YYYY}/{MM-1:02d}/{DD:02d}/{BID|ASK}_candles_min_1.bi5`:
-one LZMA file per side per day, of fixed-size big-endian records. The first task
-verifies the record layout and the price divisor on a day inside the MT5 overlap before
-any bulk fetch.
+`bars.py` returns three frames for a given span:
+- **H1:** the cache, plus the MT5 per-bar spread joined on label.
+- **D1:** the cache.
+- **M15:** MT5 bars with their spread.
 
-Storage is one gzip CSV per year per side under `research_data/dukascopy/`,
-which is gitignored. Downloads are limited to at most 2 requests per second, with
-exponential backoff and 5 retries.
+MT5 fetches are chunked by year, because one long `copy_rates_range` fails with
+"Invalid params". They are saved once to gitignored
+`research_models/gold/window/mt5/{h1_spread,m15}.csv.gz`, with digests in
+`artifact_manifest.csv`, so a backtest re-run reads the same inputs. Each function takes
+frames, so the tests never need MT5.
 
-- **Why M1, not ticks:** M15, H1 and D1 are all built from it, and it is about 7,000
-  files instead of about 70,000.
-- **Alternatives rejected:**
-  - yfinance `GC=F`: futures, not spot, and intraday history only for recent years;
-  - HistData: bid only, so the spread question stays open.
+- **Alternative rejected:** an H1 version of the breakout. It would change a rule the
+  owner saw, and the shorter M15 span is stated in the report instead.
 
-### D2. Archive read guard
+### D2. Walk-forward schedule
 
-`archive.load(kind, start, end)` returns prices only through one of two gates:
-- the requested range is on or after 2013-08-08 (the overlap and later);
-- `committed_and_clean` holds for both registration files.
+The calendar year is the refit unit, on an expanding window.
+- H1 is fit-only for 2015–2017, then predicts 2018 onward. That is about 9 yearly fits of
+  `h1_lstm`, 5 seeds each.
+- D1 is fit-only for 2013 (partial), 2014 and 2015, then predicts 2016 onward. `d1_lstm`
+  and the D1 GARCH are each refit about 11 times.
+- For year Y, inputs are built over the whole cache, which is causal: features read bars
+  ≤ t. The model is fit on positions whose bar and next-bar target are labelled before
+  Y-01-01. It predicts every row labelled in Y.
+- Early stopping uses the classes' own last-1/8 split of those fit rows.
 
-`archive.timestamps()` and `archive.counts()` are always allowed. Every price-returning
-path in `src/gold/window/` goes through `archive.load`, and a test asserts that no other
-module opens the raw files.
+Artifacts go to `research_models/gold/window/<model>/<YYYY>/`, and predictions to
+`research_models/gold/window/predictions_{h1,d1}.csv.gz`, with digests in
+`artifact_manifest.csv`. The run resumes from the last completed year. It holds `gpu_job()` only
+when TensorFlow sees a GPU. The `.venv` TensorFlow on this PC is CPU-only, and there the lock
+would only push the hourly external pass onto the same CPU. A full H1 fit took 172 s on CPU in
+the gold study.
 
-### D3. Clock and scale verification
+- **Alternative rejected:** a monthly refit, about 12 times the GPU time for a refit
+  frequency the gold study never showed helps.
 
-On the overlap (2013-08-08 to 2014-12-31):
-- H1 mid closes are built from the archive;
-- they are inner-joined with the MT5 cache on label;
-- the correlation of hourly log returns is computed at lags −2 to +2.
+### D3. Gates
 
-The thresholds, from the spec, are lag 0 best, ρ ≥ 0.95 and a median |Δclose| of at most
-$1.00. The MT5 cache is bid-only, so the comparison uses archive mid against MT5 bid plus
-the median MT5 half-spread. The weekly open label distribution is tabulated over the whole
-archive from timestamps only and written to the manifest.
-
-### D4. Walk-forward schedule
-
-The calendar year is the refit unit.
-- Years 1–3 of the archive are fit-only.
-- For year Y, every model is fit on all bars labelled before Y-01-01, then predicts Y.
-- The same `GoldLSTM` and `GoldGarch` classes are used, through `challengers.make`, with
-  settings from `gold_config.json`.
-- Seeds are `[42..46]`. H1 uses the H1 feature set and D1 the D1 set, exactly as the gold
-  study does.
-- Early stopping uses the classes' own last-1/8 split of the fit rows. No archive row
-  after the fit end is ever seen.
-
-Artifacts go to `research_models/gold/window/<model>/<YYYY>/`, with SHA-256 digests in
-`results/gold/window/artifact_manifest.csv`. Predictions go to
-`research_models/gold/window/predictions_{h1,d1}.csv.gz`. Those are gitignored, but their
-digests are tracked.
-
-The run holds `gpu_job()` for its whole duration. There are about 7 yearly refits of
-5 seeds for H1, the expensive part, which is expected to take hours. The run resumes from
-the last completed year.
-
-- **Alternative rejected:** a monthly refit. That is 12 times the cost, for a benefit the
-  gold study never showed.
-
-### D5. Gate thresholds
-
-- Each gate compares today's forecast with a quantile of the cell's own forecasts on the
+- Each gate compares today's forecast with a quantile of the rule's own forecasts on the
   previous 250 trading days: the 80th percentile for `h1_gated_direction`, and the median
   for the GARCH and `d1_lstm` gates.
 - For `h1_gated_direction`, the pool is the in-window forecasts of those days, as-of
   labels 14–20.
-- The quantile is computed with `numpy.quantile(..., method='linear')` on a strictly-prior
-  slice.
-- With fewer than 250 prior days, the gate is closed. So each cell's first tradable day
-  is about one year after its first prediction year.
+- The quantile uses `numpy.quantile(..., method='linear')` on a strictly-prior slice.
+- With fewer than 250 prior days, the gate is closed.
 
-### D6. Simulation
+### D4. Simulation
 
-- Mid is (bid + ask) / 2 from the archive, per bar close. Signals use mid. Fills use the
-  ask for a buy and the bid for a sell, at the stated bar's close.
-- The cost floor is applied per trade: if the realised round-trip cost, as a fraction of
-  the entry mid, is below 0.0062 %, the difference is charged.
-- The stress figure uses a 0.0122 % floor.
-- A daily series has one value per eligible weekday: the sum of that day's trade returns,
-  or 0.
+- Signals use the bid close. A buy fills at the bid plus the bar's spread, and a sell at
+  the bid.
+- A round trip whose spread cost, as a fraction of the entry price, is below 0.0062 % is
+  topped up to it. The stress series uses a 0.0122 % floor.
+- The daily series has one value per eligible weekday: the sum of that day's trade
+  returns, or 0. For `h1_gated_direction`, up to 7 one-hour trades sum into one day.
+- Eligibility:
+  - the H1 rules need H1 bars labelled 14:00–21:00;
+  - the breakout needs M15 bars labelled 14:30–21:45;
+  - every rule needs a Monday-to-Friday day.
 
-Eligibility means every M15 bar labelled 14:30–21:45 Berlin is present and the weekday
-is Monday to Friday. For `h1_gated_direction`, at most 7 one-hour trades can sum into one
-day's value. That keeps every cell on the same daily unit and block length.
+### D5. Report contents
 
-### D7. Power, from the seen span only
+For each rule, `backtest.md` gives, net and at the stress cost:
+- the span, the eligible days and the trades;
+- the mean daily return with a 95 % moving-block bootstrap interval (block 20, 2,000
+  resamples, seed 42);
+- the total compounded return, maximum drawdown and hit rate;
+- a per-year table;
+- comparators on the same days:
+  - the rule with its gate always open;
+  - always long from 16:00 to 23:00 Sofia;
+  - a placebo that rolls the rule's gate series by every offset from 20 to N − 20 days
+    and reports the share of offsets doing at least as well.
 
-The registration computes, for each cell, the standard deviation of its daily net series
-replayed on MT5 2015-01 to 2022-10. That span has spread-free bid data, so the `bid + 0.25`
-fill is an approximation, stated as such. The neural cells use the honest validation-block
-predictions.
+Each section carries the descriptive label. The words CLEARED and DROP are never written.
+A test asserts both.
 
-From that standard deviation it gives:
-- N = the expected eligible days in the confirmation span (about 250 per year × the
-  number of walk-forward years after warm-up);
-- the detectable mean daily return at 80 % power and alpha 0.0125 (normal
-  approximation, block dependence ignored and stated).
+### D6. Placement
 
-No archive return enters this, because the registration is written before any archive
-price is read.
+The code goes in the top-level package `src/gold_window/`, not under `src/gold/`. The
+`src/gold` isolation contract (its package docstring, and
+`tests/test_gold_isolation.py::test_gold_never_reads_spread_or_volume_as_data`) says
+spread is used nowhere, "not as costs". This family is net of cost by design, so it gets
+its own package with its own contract instead of an exception carved into gold's. The
+gold contract and its tests stay byte-identical.
 
-The power function records only dispersion and counts, never a mean, so it cannot steer
-a rule. For the neural cells it draws on the validation-block predictions, which overlap
-the D9 replay span, and only their dispersion is recorded. A test asserts that it returns
-only standard deviations and counts.
-
-### D8. Registry and report
-
-- Each confirmation run appends one row per cell to `results/gold/gold_window_hypothesis_log.csv`
-  with the gold registries' columns: `n`, `date`, `cell`, `family`, …, `verdict`, `notes`.
-- The `notes` hold: the trades, the days, the gross and net mean, the stress mean, the hit
-  rate, and the "simulated, net of the stated costs" label.
-- `confirmation_report.md` renders the same information with a per-year table.
-- A run where all four cell rows already exist appends nothing.
-
-### D9. Seen-span replay
-
-This runs after registration. It covers November 2022 to 2026 on MT5 M15 and H1, with the
-existing honest predictions:
-- `validation_predictions_{d1,h1}.csv` and `test_predictions_{d1,h1}.csv`, for the
-  neural gates;
-- the GARCH refit on the same yearly schedule over the MT5 caches.
-
-M15 is read from MT5 read-only, because the repo has no gold M15 cache. Fills are bid,
-plus the per-bar MT5 spread or the floor. It is written to `replay_seen.md` with the
-"already seen, never evidence" banner.
-
-### D10. Placement
-
-The code goes in the new package `src/gold/window/`. It imports gold, forecast_eval and
-external_tsfm helpers read-only. It does not read `config.json`, writes nothing under
-`models/` and is not imported by `api.py`. There is no page or MT5 change in this change.
+`src/gold_window/` imports gold, forecast_eval and external_tsfm helpers read-only. It
+does not read `config.json`, writes nothing under `models/`, and is not imported by
+`api.py`. This change adds no page and changes nothing in MT5.
 
 ## Risks / Trade-offs
 
-- **[Dukascopy gold history may start later than 2004, or have thin early years]** →
-  The availability check reads timestamps only and runs before registration. The
-  registration records the actual span and recomputes N and power. If fewer than 4
-  walk-forward years remain after warm-up, the registration says so, and the owner
-  decides before committing.
-- **[Archive spreads (ECN) differ from the broker's]** → The broker floor makes every
-  trade at least as expensive as today's window median. A 0.0122 % stress figure is
-  reported.
-- **[The 2004–2013 market (pre-2013 crash, the 2011 peak) is a different regime]** →
-  That is the point of an independent span. A rule that only works in 2022–26 should fail
-  there. The per-year table shows whether a CLEARED cell depends on one year.
-- **[Walk-forward neural fits are slow and could hang the GPU]** → There is a resumable
-  per-year checkpoint and the shared GPU lock. A failed year leaves that year without
-  neural predictions, so those cells trade nothing then. It is never patched with a
-  partial ensemble.
-- **[Four cells at 0.0125 over about 6 years are weakly powered]** → The power statement
-  says so before commit. An UNDERPOWERED or DROP result is a valid answer.
-- **[Data snooping through the descriptive report]** → The four rules were chosen after
-  the 2015–2026 statistics were seen. That is exactly why the confirmation uses only
-  2004–2013. Each rule's parameters (80th percentile, median, 15:30–16:30 range, 20:00
-  cut-off) are fixed in the registration, and no other variant is ever scored on the
-  archive.
-- **[Copilot auto-commit could commit the registration before the owner reviews it]**
-  (this happened in `ab420d3` and `dec983e`) → The owner turns auto-commit off before the
-  registration is written. Task 4.2 checks `git log` first.
+- **[The report looks like evidence]** → Every section is labelled. No verdict words are
+  used. The proposal and `RESULTS.md` say that the rules were chosen after the data was
+  seen.
+- **[MT5 spread is 0 or flat for many years]** → The 0.0062 % floor applies. The stress
+  figure doubles it.
+- **[The breakout covers only about 3 years]** → The report states its span. The gate
+  warm-up comes from the GARCH, which has D1 history from 2013, so it costs no M15 days.
+- **[Walk-forward neural fits are slow, and could hang the GPU or contend with the hourly
+  pass]** → There is a resumable per-year checkpoint and the shared GPU lock. A failed
+  year has no neural predictions, and its rules trade nothing that year.
+- **[Copilot auto-commits mid-task]** (as in `9211520`) → Nothing in this change depends
+  on a commit, so an early commit is only untidy. Before any commit Claude makes, it
+  checks `git log`.
 
 ## Migration Plan
 
-1. Build the download, the guard and the verification, and the descriptive report.
-2. Fetch the archive. Verify the clock and scale on the overlap.
-3. Write the registration. The owner reviews and commits it alone.
-4. Fit walk-forward. Score the confirmation once. Run the seen-span replay.
-5. Record the verdicts in `results/gold/RESULTS.md`.
+Build the bars, rules and simulation with tests. Run the walk-forward. Run the backtest.
+Record the summary in `RESULTS.md`.
 
-Rollback: before step 3, delete `src/gold/window/` and the gitignored folders. After
-step 3, the family stays registered. An unfinished run only means fewer verdicts.
+Rollback: delete `src/gold_window/`, `results/gold/window/` and
+`research_models/gold/window/`. Nothing else depends on them.

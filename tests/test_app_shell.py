@@ -30,6 +30,16 @@ def test_more_menu_marks_its_current_item():
     assert 'ps-more-current' in nav
 
 
+def test_gold_analytics_follows_gold_in_the_main_navigation():
+    """openspec change gold-market-analytics: the page sits in the main bar, after Gold."""
+    hrefs = [h for h, _ in S.NAV]
+    assert hrefs.index('/gold-analytics') == hrefs.index('/gold') + 1
+    assert '/gold-analytics' in S.PAGE_PATHS
+    nav = S.render_nav('/gold-analytics')
+    assert re.search(r'href="/gold-analytics" aria-current="page"', nav)
+    assert nav.count('aria-current="page"') == 1 and 'ps-more-current' not in nav
+
+
 def test_retired_view_is_not_listed():
     for path in S.PAGE_PATHS:
         assert '/kronos-direction' not in S.render_nav(path)

@@ -50,7 +50,9 @@ def test_api_imports_only_the_read_only_summary():
                                                    _read('api.py'), re.M)]
     for h in hits:
         assert h.startswith(('from src.gold.summary import', 'from src.gold.history import',
-                             'from src.gold.health import', 'from src.gold.leaderboard import')), \
+                             'from src.gold.health import', 'from src.gold.leaderboard import',
+                             # the separate read-only market page (openspec change gold-market-analytics)
+                             'from src.gold_analytics.service import')), \
             f'api.py imports more than the read-only views: {h}'
 
 

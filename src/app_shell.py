@@ -28,13 +28,14 @@ MARKER = 'data-ps-shell'
 # Page routes the layer decorates. An explicit list, never a prefix match, so a
 # JSON or CSV route can never be rewritten by accident.
 PAGE_PATHS = ('/', '/gold', '/advanced', '/history', '/paper-trading', '/forecasts',
-              '/h1-direction', '/kronos-volatility', '/kronos-direction', '/second-opinion')
+              '/h1-direction', '/kronos-volatility', '/kronos-direction', '/second-opinion', '/gold-analytics')
 
 BRAND = {'bg': 'EUR/USD Prophet', 'en': 'EUR/USD Prophet'}
 
 NAV = (
     ('/', {'bg': 'Начало', 'en': 'Home'}),
     ('/gold', {'bg': 'Злато', 'en': 'Gold'}),
+    ('/gold-analytics', {'bg': 'Анализ на златото', 'en': 'Gold analytics'}),
     ('/forecasts', {'bg': 'Прогнози', 'en': 'Forecasts'}),
     ('/history', {'bg': 'История', 'en': 'History'}),
     ('/paper-trading', {'bg': 'Симулация', 'en': 'Paper trading'}),
