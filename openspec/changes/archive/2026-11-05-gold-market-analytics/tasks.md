@@ -121,7 +121,7 @@
   - a wording test finds no buy or sell words;
   - in the running app, the page renders in BG and EN, light and dark, at 360 px with no
     horizontal scroll, and every control works from the keyboard.
-- [ ] 5.2 Run `python -m src.gold_analytics.refresh --days 250` on this PC. Open
+- [x] 5.2 Run `python -m src.gold_analytics.refresh --days 250` on this PC. Open
   `/gold-analytics` and show the owner each section.
 
   Verify:

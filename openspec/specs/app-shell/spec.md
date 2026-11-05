@@ -39,10 +39,10 @@ not change.
 - **THEN** the result equals `static/index.html` byte for byte
 
 ### Requirement: Navigation shows where the owner is
-The navigation SHALL link to Home, Gold, Forecasts, History, Paper trading and the
-research console. It SHALL mark the current page as current, and the less-used views
-(H1 direction, Kronos volatility) SHALL be under one "More" menu. A retired view SHALL
-not be listed.
+The navigation SHALL link to Home, Gold, Gold analytics, Forecasts, History, Paper
+trading and the research console. It SHALL mark the current page as current, and the
+less-used views (H1 direction, Kronos volatility, Second opinion) SHALL be under one
+"More" menu. A retired view SHALL not be listed.
 
 #### Scenario: On the gold page
 - **WHEN** `/gold` is open
@@ -51,6 +51,14 @@ not be listed.
 #### Scenario: Retired view
 - **WHEN** the navigation is rendered
 - **THEN** it has no link to `/kronos-direction`
+
+#### Scenario: Second opinion
+- **WHEN** `/second-opinion` is open
+- **THEN** the "More" menu lists it and marks it `aria-current="page"`
+
+#### Scenario: Gold analytics
+- **WHEN** `/gold-analytics` is open
+- **THEN** the main navigation lists it after Gold and marks it `aria-current="page"`
 
 ### Requirement: Navigation works on a phone and from the keyboard
 At 360 px wide the navigation SHALL collapse into a menu button with no horizontal page
