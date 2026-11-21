@@ -1,0 +1,8 @@
+{
+ "stage": "mlp",
+ "run_at": "2026-11-21T21:06:58+00:00",
+ "config_digest": "d9a6001de49d80aa14f398680da8e53670eadda34e855e810b21afc9dd522375",
+ "feature_list_digest": "937460de3544aedc1449c62316c6c7b1e730f8e13d56631dadf26f35a6fabbb4",
+ "trained_pairs": [],
+ "pairs": {}
+}

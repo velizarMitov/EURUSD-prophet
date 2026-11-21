@@ -217,6 +217,21 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
     - It never writes `models/`. Its frozen artifacts are in `research_models/fx_session/`.
     - Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.
 
+11. **The 2-year yield differential at a 5-day horizon is its own family, `fx_rates`
+    (`src/fx_rates/`, openspec change `fx-rates-2y`, `ARCHITECTURE_DOCS.md §3.16`).**
+    - It covers EURUSD and GBPUSD, with DE2Y−US2Y and UK2Y−US2Y.
+    - Yields come from FRED (`DGS2`, `DGS10`), the Bundesbank Svensson curve and the BoE
+      GLC spot curve at 2.0 years. Use the generic client name: FRED drops a fake
+      browser User-Agent.
+    - Yields always lag one FX trading day. The fill limit is 3 business days.
+    - FX D1 bars are read-only from the fx_session H1 caches from 2012.
+    - It is **gross of cost** and decided by its own walk-forward only.
+    - It has four cells at `alpha = 0.05/4` in `results/fx_rates/fx_rates_hypothesis_log.csv`,
+      with 10-day blocks for the overlapping 5-day targets.
+    - The MLP cells run only behind a LightGBM KEEP.
+    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_rates/`.
+    - Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

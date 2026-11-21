@@ -1,0 +1,99 @@
+{
+  "family": "fx_rates",
+  "pairs": ["EURUSD", "GBPUSD"],
+  "foreign_2y": {"EURUSD": "de2y", "GBPUSD": "uk2y"},
+  "paths": {
+    "data": "results/fx_rates/data",
+    "results": "results/fx_rates",
+    "artifacts": "research_models/fx_rates",
+    "fx_h1": "results/fx_session/data"
+  },
+  "sources": {
+    "user_agent": "Mozilla/5.0 (research data client)",
+    "timeout_s": 180,
+    "fred_csv": "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}",
+    "fred_series": {"us2y": "DGS2", "us10y": "DGS10"},
+    "bundesbank_csv": "https://api.statistiken.bundesbank.de/rest/data/BBSIS/D.I.ZST.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A?format=csv&lang=en",
+    "boe_archive_zip": "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/glcnominalddata.zip",
+    "boe_current_zip": "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves/latest-yield-curve-data.zip",
+    "boe_archive_from_year": 2005,
+    "boe_maturity_years": 2.0
+  },
+  "data": {
+    "fx_history_start": "2012-01-01",
+    "min_h1_per_d1": 12,
+    "yield_start": "2005-01-01"
+  },
+  "alignment": {
+    "lag_fx_days": 1,
+    "fill_limit_business_days": 3
+  },
+  "target": {
+    "horizon_days": 5,
+    "pip": 0.0001
+  },
+  "windows": {
+    "spread_changes": [5, 20, 60],
+    "zscore": 60,
+    "vol_short": 20,
+    "vol_long": 60,
+    "ma_fast": 20,
+    "ma_slow": 50,
+    "fx_returns": [5, 20],
+    "divergence_horizon": 20,
+    "divergence_norm": 252
+  },
+  "features": {
+    "columns": [
+      "spread_2y_level", "spread_2y_chg_5d", "spread_2y_chg_20d", "spread_2y_chg_60d",
+      "spread_2y_zscore_60d", "us_2s10s_slope",
+      "fx_ret_5d", "fx_ret_20d", "fx_vs_spread_div_20d",
+      "fx_ma20_vs_ma50", "fx_vol_20d_ratio", "yield_stale_flag"
+    ]
+  },
+  "folds": {
+    "first_eval_start": "2015-01-01",
+    "fold_months": 6,
+    "val_fraction": 0.15,
+    "purge_days": 5,
+    "embargo_days": 5
+  },
+  "lightgbm": {
+    "objective": "binary",
+    "num_leaves": 7,
+    "min_data_in_leaf": 50,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "mlp": {
+    "hidden": [32, 16],
+    "dropout": [0.2, 0.2],
+    "lr": 0.001,
+    "weight_decay": 0.001,
+    "batch_size": 256,
+    "max_epochs": 300,
+    "patience": 20,
+    "plateau_factor": 0.5,
+    "plateau_patience": 8,
+    "seeds": [11, 22, 33, 44, 55],
+    "allow_cpu": false
+  },
+  "scoring": {
+    "alpha": 0.0125,
+    "family_size": 4,
+    "block_days": 10,
+    "resamples": 10000,
+    "seed": 20261123,
+    "power": 0.8,
+    "vif_lags": 4
+  }
+}

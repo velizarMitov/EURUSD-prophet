@@ -1793,6 +1793,79 @@ truncation test proves:
   - LightGBM's log-loss is above the prior's by 0.0009 (EURUSD) and 0.0014 (GBPUSD).
   - Accuracy is 51.3 % and 50.6 %, against a minimum detectable accuracy of 52.6 %.
 
+### 3.16 The 2-year yield differential at a 5-day horizon: the `fx_rates` family (openspec change `fx-rates-2y`; research-only, GROSS of cost)
+
+**What it asks.** Does the foreign-minus-US 2-year yield spread predict the sign of the
+EUR/USD or GBP/USD move over the next 5 FX trading days? The spread is DE2Y − US2Y and
+UK2Y − US2Y respectively.
+
+The idea follows Rockefeller: the 2Y spread reacts most to policy expectations and leads
+the exchange rate over days to weeks. A 5-day horizon avoids reading same-day co-movement
+as prediction.
+
+The code is in `src/fx_rates/`, the results in `results/fx_rates/`, and the frozen
+artifacts in the gitignored `research_models/fx_rates/`.
+
+**Data.**
+- **FRED `DGS2` and `DGS10`.** Public CSV. The generic client name is required: FRED
+  drops a fake browser User-Agent.
+- **Bundesbank.** BBSIS Svensson term structure, residual maturity 2.0 years.
+- **Bank of England nominal spot curve, 2.0 years.**
+  - It comes from sheet "4. spot curve" of the GLC daily archive, plus the current-month
+    file, which wins where the two overlap.
+  - The `.xlsx` files are read with the standard library.
+  - IADB has no 2Y code: `IUDSNZC` is 5Y and `IUDMNZC` is 10Y.
+- **The caches.** Each series has its own append-only cache, revisions are counted, and
+  one source failing never touches another.
+- **FX D1 bars** are built read-only from the fx_session H1 caches from 2012-01-01. A D1
+  bar needs at least 12 H1 bars. The mid close is the last bid close plus half the
+  spread.
+
+**Causality.**
+- **Lag.** The decision is at the D1 close of `t`. Yields are taken as of the previous FX
+  trading day, as a backward as-of join; nothing looks forward.
+- **Fill limit.** A forward-fill of up to 3 business days sets `yield_stale_flag`. Older
+  data excludes the day.
+- **FX** uses closes up to `t`.
+- **A truncation test** cuts the FX bars after `t` and the yields from `t` on, and
+  proves each row unchanged.
+
+**Features (12).**
+- The spread level, its 5/20/60-day changes and its 60-day z-score.
+- The US 2s10s slope.
+- Volatility-scaled 5- and 20-day FX returns.
+- The FX-versus-rates divergence: z of the 20-day FX return minus z of the 20-day spread
+  change, each against the previous 252 days.
+- log(MA20 / MA50) / vol20, and vol20 / vol60.
+- The stale flag.
+
+**Target and power.**
+- The target is the sign of the mid close at `t+5` minus `t`. Ties are dropped and there
+  are no class weights.
+- Overlapping targets have a sign autocorrelation of about 0.6 / 0.4 / 0.25 / 0.1 at lags
+  1–4, so VIF ≈ 3.6–4.4.
+- `labels.md` gives the minimum detectable accuracy before any model:
+  - about 55.3–55.8 % on the effective size;
+  - 56.2 % on the roughly 615 independent weeks.
+
+**Evaluation.**
+- 6-month folds from 2015-01-01, with a 5-day purge plus a 5-day embargo on both gaps.
+- LightGBM with fixed small-sample settings. A `32-16` CUDA MLP runs only behind a
+  LightGBM KEEP. The model and artifact code is fx_session's, read-only.
+- Four cells at `alpha = 0.05/4` in `fx_rates_hypothesis_log.csv`. Each is tested with a
+  one-sided circular block bootstrap (10-day blocks) on the per-day log-loss difference,
+  and scored once.
+- The config guard covers every stage.
+- The report adds:
+  - accuracy with a Wilson interval on the effective size;
+  - per-year and stale-day accuracy, and reliability;
+  - a non-overlapping weekly rule per start offset, gross, against always-long.
+
+**Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.**
+- EURUSD scores 0.69429 against the prior's 0.69333, with accuracy 50.6 %.
+- GBPUSD scores 0.69346 against 0.69293, with accuracy 52.5 % (49.1–55.9 % on the
+  effective size).
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics
