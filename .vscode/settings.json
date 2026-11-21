@@ -1,5 +1,6 @@
 {
   "python.defaultInterpreterPath": "C:\\Program Files\\Python312\\python.exe",
   "python.analysis.pythonPath": "C:\\Program Files\\Python312\\python.exe",
-  "python-envs.defaultEnvManager": "ms-python.python:system"
+  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "python.terminal.useEnvFile": true
 }

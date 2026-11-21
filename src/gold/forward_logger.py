@@ -280,6 +280,7 @@ def run_once(cfg=None, frames=None, loader=load_cell, ph=None, gvz=None, chart=N
         status['settled'] = len(settled)
         status['ranges'] = log_ranges(cfg, now_iso, new_preds)
         status['alerts'] = log_alerts(cfg, now_iso, new_preds)
+        status['forecast_push'] = log_forecast_pushes(cfg, now_iso, new_preds)
         if chart is not None:
             status['chart'] = chart(cfg, now_iso)
         if gvz is not None:
@@ -475,24 +476,65 @@ def settle_v2(cfg, frames, now_iso, cfg2=None) -> int:
         return 0
 
 
-def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None) -> str:
+def log_forecast_pushes(cfg, now_iso, new_preds, pusher=None) -> str:
+    """Per-bar h1_lstm / d1_lstm / d1_gbm forecast pushes to the phone, same
+    cadence as MT5's arrows -- not gated by the alert threshold. The owner
+    picks what to act on, so this stream is informational research and never
+    writes under alerts.csv. forecast_pushes.csv dedups by key so a backfill or
+    a replayed bar never double-sends. Failures land in the status (and in the
+    health row) and never stop the pass."""
+    try:
+        from . import alerts as A
+        pusher = pusher or A.push_phone
+        existing = {r['key'] for r in read_rows(out_path(cfg, 'forecast_pushes'))}
+        rows, notes = A.push_forecasts(new_preds, existing, pusher, now_iso)
+        append_rows(out_path(cfg, 'forecast_pushes'), rows, A.PUSH_LOG_FIELDS)
+        return '; '.join([f'{len(rows)} pushed'] + notes)
+    except Exception as e:  # noqa: BLE001 -- pushes must never cost the pass
+        append_rows(out_path(cfg, 'failures'), [{'cell': 'forecast_push', 'cadence': '*', 'as_of_bar': '',
+                                                 'error': f'{type(e).__name__}: {e}', 'logged_at': now_iso}],
+                    FAIL_FIELDS)
+        return f'failed: {type(e).__name__}'
+
+
+def log_alerts(cfg, now_iso, new_preds, alert_cfg=None, notifier=None, pusher=None) -> str:
     """Large-move alerts (change gold-forecasting-v2, spec gold-forecasting/move-alerts):
-    one row and one notification per new h1_lstm forecast at or above the
-    calibrated threshold, then the realised move of every alert that settled. A
-    failed notification is reported in the returned status (it lands in the
-    health row) and never stops the row being written."""
+    one row, one Windows toast and one phone push per new h1_lstm forecast at or
+    above the calibrated threshold, then the realised move of every alert that
+    settled. A failed toast or push is reported in the returned status (it lands
+    in the health row) and never stops the row being written. The 'notified'
+    column reflects the toast; a phone-push outcome lands in the status notes
+    (push is skipped silently when the ntfy topic env is unset)."""
     try:
         from . import alerts as A
         alert_cfg = alert_cfg if alert_cfg is not None else A.settings()
         notifier = notifier or A.notify
+        pusher = pusher or A.push_phone
         existing = read_rows(out_path(cfg, 'alerts'))
         rows = A.check(new_preds, {r['key'] for r in existing}, alert_cfg, now_iso)
+        # Same-bar h1_lstm direction + probability (unvalidated research), sent to
+        # the phone push so it mirrors the arrow MT5 draws next to the alert marker.
+        p_by_key = {p['key']: p for p in new_preds if p.get('cell') == A.ALERT_CELL}
         notes = []
         for r in rows:
             ok, err = notifier(r['vol_pct'])
             r['notified'] = 'yes' if ok else 'failed'
             if not ok:
                 notes.append(f'notification failed: {err}')
+            p = p_by_key.get(r['key']) or {}
+            p_up = p.get('p_up')
+            direction = None
+            prob = None
+            try:
+                if p_up not in (None, ''):
+                    v = float(p_up)
+                    direction = 'up' if v >= 0.5 else 'down'
+                    prob = (v if direction == 'up' else 1.0 - v) * 100.0
+            except (TypeError, ValueError):
+                direction, prob = None, None
+            p_ok, p_err = pusher(r['vol_pct'], direction, prob)
+            if not p_ok:
+                notes.append(f'phone push failed: {p_err}')
         append_rows(out_path(cfg, 'alerts'), rows, A.ALERT_FIELDS)
         setts = {r['key']: r for r in read_rows(out_path(cfg, 'settlements'))}
         done = {r['key'] for r in read_rows(out_path(cfg, 'alert_settlements'))}

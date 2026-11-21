@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import subprocess
+import urllib.request
 from datetime import datetime, timezone
 
 import numpy as np
@@ -35,11 +36,39 @@ ALERT_SETTLE_FIELDS = ['key', 'realised_vol_pct', 'settled_at']
 ALERT_CELL = 'h1_lstm'
 NOTIFY_TIMEOUT_S = 10
 
+# Phone push via ntfy.sh: free, no account, subscribe a private topic in the ntfy
+# phone app. The topic is a secret in practice -- anyone who knows it can post, so
+# keep it in .env, never commit it. Unset => push is skipped (toast still fires).
+NTFY_TOPIC_ENV = 'GOLD_ALERT_NTFY_TOPIC'
+NTFY_SERVER_ENV = 'GOLD_ALERT_NTFY_SERVER'
+NTFY_DEFAULT_SERVER = 'https://ntfy.sh'
+
 TEXT = {
     'title': {'bg': 'Злато: очаква се голямо движение', 'en': 'Gold: a large move is expected'},
     'body': {'bg': 'Следващия час: около ±{v:.2f} %. Посоката е неизвестна.',
              'en': 'Next hour: about ±{v:.2f} %. Direction unknown.'},
+    # Research direction line for the phone push only -- the SAME unvalidated
+    # h1_lstm direction MT5 draws next to the alert marker. Marked as research
+    # with no proven edge, so it is never read as a validated signal and the
+    # alert's canonical "direction unknown" line still stands.
+    'research_up': {'bg': 'нагоре', 'en': 'up'},
+    'research_down': {'bg': 'надолу', 'en': 'down'},
+    'research': {'bg': 'Research посока (без доказан edge): {d} {p} %',
+                 'en': 'Research direction (no proven edge): {d} {p} %'},
+    # Per-bar forecast push: fires on every new h1_lstm / d1_lstm / d1_gbm bar,
+    # not gated by the alert threshold -- same cadence as MT5's arrows. Research
+    # tagged, never a trade word.
+    'forecast_title': {'h1_lstm': {'bg': 'Злато H1 lstm', 'en': 'Gold H1 lstm'},
+                       'd1_lstm': {'bg': 'Злато D1 lstm', 'en': 'Gold D1 lstm'},
+                       'd1_gbm': {'bg': 'Злато D1 gbm', 'en': 'Gold D1 gbm'}},
+    'forecast_size': {'bg': 'Очакван размер: около ±{v:.2f} %',
+                      'en': 'Expected size: about +-{v:.2f} %'},
+    'forecast_tag': {'bg': 'Research — без доказан edge.',
+                     'en': 'Research -- no proven edge.'},
 }
+
+FORECAST_CELLS = ('h1_lstm', 'd1_lstm', 'd1_gbm')
+PUSH_LOG_FIELDS = ['key', 'pushed_at']
 
 # PowerShell's own Windows Runtime toast API: no extra dependency. The texts come
 # in through environment variables, so no quoting can break the command. A plain
@@ -72,6 +101,144 @@ def settings() -> dict:
 def texts(vol_pct: float) -> dict:
     """Title and body in both languages. Size only: never buy, sell, entry, stop or target."""
     return {lang: {'title': TEXT['title'][lang], 'body': TEXT['body'][lang].format(v=vol_pct)} for lang in ('bg', 'en')}
+
+
+def _forecast_body(cell: str, direction: str | None, prob_pct: float | None,
+                   vol_pct: float | None) -> tuple[bytes, str, str]:
+    """Body / ASCII title / priority for a flavor='forecast' push."""
+    cell = cell if cell in FORECAST_CELLS else 'h1_lstm'
+    title = TEXT['forecast_title'][cell]
+    r = research_line(direction, prob_pct)
+    size_bg = size_en = None
+    if vol_pct is not None:
+        try:
+            v = float(vol_pct)
+            if np.isfinite(v):
+                size_bg = TEXT['forecast_size']['bg'].format(v=v)
+                size_en = TEXT['forecast_size']['en'].format(v=v)
+        except (TypeError, ValueError):
+            pass
+    bg_lines = [f"{title['bg']}:"]
+    en_lines = [f"{title['en']}:"]
+    if r is not None:
+        bg_lines.append(r['bg'])
+        en_lines.append(r['en'])
+    if size_bg is not None:
+        bg_lines.append(size_bg)
+        en_lines.append(size_en)
+    bg_lines.append(TEXT['forecast_tag']['bg'])
+    en_lines.append(TEXT['forecast_tag']['en'])
+    body = ('\n'.join(bg_lines) + '\n\n' + '\n'.join(en_lines)).encode('utf-8')
+    dir_tag = direction if direction in ('up', 'down') else '?'
+    title_ascii = f'{title["en"]}: {dir_tag}'
+    if prob_pct is not None:
+        try:
+            title_ascii += f' {float(prob_pct):.0f}%'
+        except (TypeError, ValueError):
+            pass
+    return body, title_ascii, 'default'
+
+
+def push_forecasts(new_preds: list, pushed_keys: set, pusher, now_iso: str) -> tuple[list, list]:
+    """Per-bar forecast pushes -- every new h1_lstm / d1_lstm / d1_gbm bar, not
+    gated by the alert threshold. Same cadence as MT5's arrows. Returns
+    (log_rows, notes): log_rows get appended to forecast_pushes.csv for dedup,
+    notes carry per-push failures."""
+    log_rows, notes = [], []
+    for p in new_preds:
+        cell = p.get('cell')
+        if cell not in FORECAST_CELLS or p.get('key') in pushed_keys:
+            continue
+        p_up = p.get('p_up')
+        direction = None
+        prob = None
+        try:
+            if p_up not in (None, ''):
+                v = float(p_up)
+                direction = 'up' if v >= 0.5 else 'down'
+                prob = (v if direction == 'up' else 1.0 - v) * 100.0
+        except (TypeError, ValueError):
+            direction, prob = None, None
+        vol = p.get('vol_pct')
+        vol_val = None
+        try:
+            if vol not in (None, ''):
+                vv = float(vol)
+                if np.isfinite(vv):
+                    vol_val = vv
+        except (TypeError, ValueError):
+            pass
+        ok, err = pusher(vol_val, direction, prob, 'forecast', cell)
+        if not ok:
+            notes.append(f'forecast push failed ({cell} {p.get("as_of_bar", "")}): {err}')
+        log_rows.append({'key': p['key'], 'pushed_at': now_iso})
+    return log_rows, notes
+
+
+def research_line(direction: str | None, prob_pct: float | None) -> dict | None:
+    """Bilingual research-direction line, or None when direction is unknown or
+    prob is missing. 'up' / 'down' only; anything else is treated as unknown."""
+    if direction not in ('up', 'down') or prob_pct is None:
+        return None
+    try:
+        p = float(prob_pct)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(p):
+        return None
+    out = {}
+    for lang in ('bg', 'en'):
+        d = TEXT[f'research_{direction}'][lang]
+        out[lang] = TEXT['research'][lang].format(d=d, p=f'{p:.0f}')
+    return out
+
+
+def push_phone(vol_pct: float | None, direction: str | None = None,
+               prob_pct: float | None = None, flavor: str = 'alert',
+               cell: str = ALERT_CELL, http_post=None) -> tuple[bool, str]:
+    """ntfy.sh push to the phone. (ok, err). Returns (True, 'skipped') when the
+    topic env is unset -- a missing topic is not a failure, it is the opt-out.
+
+    flavor='alert' (default): large-move alert body, size-only + optional
+    research direction line. Priority: urgent. Used by the threshold-gated
+    alert path -- same spec as the Windows toast.
+
+    flavor='forecast': per-bar forecast push for one of FORECAST_CELLS, not
+    gated by the alert threshold. Shows direction + prob + size, tagged as
+    research with no proven edge -- same cadence as MT5's arrows. Priority:
+    default (quiet-friendly), so hourly h1_lstm pushes do not scream."""
+    topic = (os.environ.get(NTFY_TOPIC_ENV) or '').strip()
+    if not topic:
+        return True, 'skipped'
+    server = ((os.environ.get(NTFY_SERVER_ENV) or '').strip() or NTFY_DEFAULT_SERVER).rstrip('/')
+    if flavor == 'forecast':
+        body, title_ascii, priority = _forecast_body(cell, direction, prob_pct, vol_pct)
+    else:
+        t = texts(float(vol_pct))
+        lines = [t['bg']['body'], t['en']['body']]
+        r = research_line(direction, prob_pct)
+        if r is not None:
+            lines += [r['bg'], r['en']]
+        body = '\n'.join(lines).encode('utf-8')
+        title_ascii = f'Gold: large move expected (+-{float(vol_pct):.2f}%)'
+        priority = 'urgent'
+    req = urllib.request.Request(
+        f'{server}/{topic}',
+        data=body,
+        headers={'Title': title_ascii, 'Priority': priority,
+                 'Tags': 'warning' if priority == 'urgent' else 'chart_with_upwards_trend',
+                 'Content-Type': 'text/plain; charset=utf-8'},
+        method='POST',
+    )
+    poster = http_post or (lambda r: urllib.request.urlopen(r, timeout=NOTIFY_TIMEOUT_S))
+    try:
+        resp = poster(req)
+    except Exception as e:  # noqa: BLE001 -- a push must never cost the logger pass
+        return False, f'{type(e).__name__}: {e}'
+    code = getattr(resp, 'status', None) or getattr(resp, 'getcode', lambda: 0)()
+    if 200 <= int(code or 0) < 300:
+        return True, ''
+    return False, f'HTTP {code}'
 
 
 def notify(vol_pct: float, runner=subprocess.run) -> tuple[bool, str]:
@@ -168,11 +335,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description='gold large-move alerts')
     ap.add_argument('--calibrate', action='store_true', help='fix the threshold from the frozen h1_lstm')
     ap.add_argument('--test-notification', action='store_true', help='raise one sample notification')
+    ap.add_argument('--test-push', action='store_true', help='post one sample push to the configured ntfy topic')
     args = ap.parse_args(argv)
     if args.calibrate:
         print(json.dumps(calibrate(), indent=1))
     if args.test_notification:
         print(notify(0.35))
+    if args.test_push:
+        print(push_phone(0.35))
 
 
 if __name__ == '__main__':

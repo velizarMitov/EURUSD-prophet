@@ -10,3 +10,44 @@ chronos2,eurusd,2026-11-06 03:00:00+00:00,worker timed out after 120 s and was s
 chronos2,gold,2026-11-06 22:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-08T23:01:03+00:00
 chronos2,gold,2026-11-09 06:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-09T06:01:02+00:00
 chronos2,eurusd,2026-11-09 06:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-09T06:01:02+00:00
+chronos2,gold,2026-11-09 18:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-09T18:01:02+00:00
+chronos2,eurusd,2026-11-09 18:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-09T18:01:02+00:00
+chronos2,gold,2026-11-10 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-10T05:01:02+00:00
+chronos2,eurusd,2026-11-10 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-10T05:01:02+00:00
+*,gold,,MT5 unreachable: nothing forecast,2026-11-10T16:01:01+00:00
+*,eurusd,,MT5 unreachable: nothing forecast,2026-11-10T16:01:01+00:00
+*,gold,,MT5 unreachable: nothing forecast,2026-11-10T17:01:02+00:00
+*,eurusd,,MT5 unreachable: nothing forecast,2026-11-10T17:01:02+00:00
+chronos2,gold,2026-11-10 18:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-10T18:01:03+00:00
+chronos2,eurusd,2026-11-10 18:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-10T18:01:03+00:00
+chronos2,gold,2026-11-11 21:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-11T21:01:02+00:00
+chronos2,eurusd,2026-11-11 21:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-11T21:01:02+00:00
+chronos2,gold,2026-11-12 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-12T05:01:02+00:00
+chronos2,eurusd,2026-11-12 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-12T05:01:02+00:00
+chronos2,gold,2026-11-12 21:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-12T21:01:02+00:00
+chronos2,eurusd,2026-11-12 21:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-12T21:01:02+00:00
+chronos2,gold,2026-11-13 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-13T05:01:03+00:00
+chronos2,eurusd,2026-11-13 05:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-13T05:01:03+00:00
+chronos2,gold,2026-11-13 10:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-13T10:01:03+00:00
+chronos2,eurusd,2026-11-13 10:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-13T10:01:03+00:00
+chronos2,eurusd,2026-11-13 22:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-14T00:01:02+00:00
+chronos2,gold,2026-11-13 22:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-15T23:01:03+00:00
+chronos2,eurusd,2026-11-15 23:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-15T23:01:03+00:00
+timesfm25,gold,2026-11-16 22:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-16T23:01:04+00:00
+timesfm25,eurusd,2026-11-16 23:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-16T23:01:04+00:00
+chronos2,gold,2026-11-17 10:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-17T10:01:03+00:00
+chronos2,eurusd,2026-11-17 10:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-17T10:01:03+00:00
+chronos2,gold,2026-11-17 16:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-17T16:01:02+00:00
+chronos2,eurusd,2026-11-17 16:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-17T16:01:02+00:00
+chronos2,gold,2026-11-18 17:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-18T17:01:03+00:00
+chronos2,eurusd,2026-11-18 17:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-18T17:01:03+00:00
+chronos2,gold,2026-11-20 02:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T02:01:07+00:00
+chronos2,eurusd,2026-11-20 02:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T02:01:07+00:00
+chronos2,gold,2026-11-20 06:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T06:01:03+00:00
+chronos2,eurusd,2026-11-20 06:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T06:01:03+00:00
+chronos2,gold,2026-11-20 14:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T14:01:03+00:00
+chronos2,eurusd,2026-11-20 14:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T14:01:03+00:00
+chronos2,gold,2026-11-20 17:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T17:01:02+00:00
+chronos2,eurusd,2026-11-20 17:00:00+00:00,worker timed out after 120 s and was stopped,2026-11-20T17:01:02+00:00
+*,gold,,MT5 unreachable: nothing forecast,2026-11-21T07:01:03+00:00
+*,eurusd,,MT5 unreachable: nothing forecast,2026-11-21T07:01:03+00:00

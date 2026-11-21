@@ -2,3 +2,8 @@ model,cadence,horizon,as_of_bar,error,logged_at
 *,*,,,"MT5Unavailable: MT5 terminal not reachable: (-10005, 'IPC timeout')",2026-10-28T07:03:41+00:00
 *,*,,,"MT5Unavailable: MT5 terminal not reachable: (-10005, 'IPC timeout')",2026-10-28T16:03:39+00:00
 *,*,,,"MT5Unavailable: MT5 terminal not reachable: (-10005, 'IPC timeout')",2026-11-04T01:17:05+00:00
+*,*,,,"MT5Unavailable: MT5 terminal not reachable: (-6, 'Terminal: Authorization failed')",2026-11-21T06:46:04+00:00
+*,*,,,"MT5Unavailable: MT5 terminal not reachable: (-6, 'Terminal: Authorization failed')",2026-11-21T07:01:04+00:00
+*,*,,,"MT5Unavailable: MT5 terminal not reachable: (-6, 'Terminal: Authorization failed')",2026-11-21T07:16:04+00:00
+*,*,,,"MT5Unavailable: MT5 terminal not reachable: (-6, 'Terminal: Authorization failed')",2026-11-21T07:31:04+00:00
+*,*,,,"MT5Unavailable: MT5 terminal not reachable: (-6, 'Terminal: Authorization failed')",2026-11-21T07:46:04+00:00

@@ -88,6 +88,231 @@ def test_notify_survives_a_broken_powershell():
     assert ok is False and 'powershell' in err
 
 
+def test_push_phone_is_skipped_silently_when_the_topic_env_is_unset(monkeypatch):
+    monkeypatch.delenv(A.NTFY_TOPIC_ENV, raising=False)
+    calls = []
+    ok, err = A.push_phone(0.3, http_post=lambda r: calls.append(r) or _Resp(200))
+    assert ok is True and err == 'skipped' and calls == []
+
+
+def test_push_phone_posts_bilingual_body_with_an_ascii_title(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 'secret-topic')
+    seen = {}
+
+    def poster(req):
+        seen['url'] = req.full_url
+        seen['body'] = req.data.decode('utf-8')
+        seen['headers'] = {k.title(): v for k, v in req.headers.items()}
+        return _Resp(200)
+
+    ok, err = A.push_phone(0.35, http_post=poster)
+    assert ok is True and err == ''
+    assert seen['url'] == 'https://ntfy.sh/secret-topic'
+    assert '0.35' in seen['body']
+    assert 'Неизвестна' in seen['body'] or 'неизвестна' in seen['body']
+    assert 'unknown' in seen['body'].lower()
+    # ntfy header values must be ASCII; Cyrillic belongs in the body only.
+    seen['headers']['Title'].encode('ascii')
+    assert seen['headers']['Priority'] == 'urgent'
+    for w in BANNED:
+        assert w not in seen['body'].lower() and w not in seen['headers']['Title'].lower()
+
+
+def test_push_phone_honours_a_self_hosted_server(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    monkeypatch.setenv(A.NTFY_SERVER_ENV, 'https://ntfy.example.com/')
+    seen = {}
+    A.push_phone(0.2, http_post=lambda r: seen.setdefault('url', r.full_url) or _Resp(200))
+    assert seen['url'] == 'https://ntfy.example.com/t'
+
+
+def test_push_phone_reports_http_error(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    ok, err = A.push_phone(0.2, http_post=lambda r: _Resp(503))
+    assert ok is False and '503' in err
+
+
+def test_push_phone_survives_a_network_error(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    def boom(req):
+        raise ConnectionError('no route')
+    ok, err = A.push_phone(0.2, http_post=boom)
+    assert ok is False and 'ConnectionError' in err and 'no route' in err
+
+
+def test_log_alerts_carries_a_push_failure_into_the_status(cfg):
+    status = FL.log_alerts(cfg, 'now', [_pred('2026-10-22 14:00:00+00:00', 0.25)], ALERTS,
+                           notifier=lambda v: (True, ''),
+                           pusher=lambda v, d=None, p=None: (False, 'HTTP 500'))
+    [row] = FL.read_rows(FL.out_path(cfg, 'alerts'))
+    assert row['notified'] == 'yes'  # toast succeeded -> the column stays bound to the toast
+    assert 'phone push failed: HTTP 500' in status
+
+
+def test_log_alerts_passes_the_same_bar_direction_to_the_push(cfg):
+    pred = _pred('2026-10-22 14:00:00+00:00', 0.25)
+    pred['p_up'] = 0.72
+    seen = {}
+    FL.log_alerts(cfg, 'now', [pred], ALERTS,
+                  notifier=lambda v: (True, ''),
+                  pusher=lambda v, d=None, p=None: (seen.update({'v': v, 'd': d, 'p': p}) or (True, '')))
+    assert seen == {'v': 0.25, 'd': 'up', 'p': pytest.approx(72.0)}
+
+
+def test_log_alerts_turns_sub_half_p_up_into_a_down_direction(cfg):
+    pred = _pred('2026-10-22 14:00:00+00:00', 0.3)
+    pred['p_up'] = 0.4
+    seen = {}
+    FL.log_alerts(cfg, 'now', [pred], ALERTS,
+                  notifier=lambda v: (True, ''),
+                  pusher=lambda v, d=None, p=None: (seen.update({'d': d, 'p': p}) or (True, '')))
+    assert seen == {'d': 'down', 'p': pytest.approx(60.0)}
+
+
+def test_log_alerts_omits_direction_when_p_up_is_missing(cfg):
+    pred = _pred('2026-10-22 14:00:00+00:00', 0.3)  # no p_up key at all
+    seen = {}
+    FL.log_alerts(cfg, 'now', [pred], ALERTS,
+                  notifier=lambda v: (True, ''),
+                  pusher=lambda v, d=None, p=None: (seen.update({'d': d, 'p': p}) or (True, '')))
+    assert seen == {'d': None, 'p': None}
+
+
+def test_push_body_adds_the_research_direction_line_when_known(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    seen = {}
+    A.push_phone(0.35, direction='up', prob_pct=72.0,
+                 http_post=lambda r: seen.setdefault('body', r.data.decode('utf-8')) or _Resp(200))
+    body_lower = seen['body'].lower()
+    # Canonical size-only sentence stays (both languages, with "direction unknown").
+    assert 'неизвестна' in seen['body'] and 'unknown' in body_lower
+    # Research line present, both languages, marked as unvalidated, with prob and direction.
+    assert 'research' in body_lower and 'edge' in body_lower
+    assert 'нагоре' in seen['body'] and ' up ' in f' {body_lower} '
+    assert '72' in seen['body']
+    # Still never names a trade.
+    for w in BANNED:
+        assert w not in body_lower
+
+
+def test_push_body_stays_size_only_when_direction_is_absent(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    seen = {}
+    A.push_phone(0.35, http_post=lambda r: seen.setdefault('body', r.data.decode('utf-8')) or _Resp(200))
+    assert 'research' not in seen['body'].lower()
+    assert 'нагоре' not in seen['body'] and 'надолу' not in seen['body']
+
+
+def test_canonical_alert_text_is_still_size_only():
+    """The research line is a push-only addition; the canonical text (used by the
+    toast, the CSV row and the open-alert banner) must still carry 'size only,
+    direction unknown', so every size-only invariant stays intact."""
+    t = A.texts(0.35)
+    full = ' '.join(t[l]['title'] + ' ' + t[l]['body'] for l in ('bg', 'en')).lower()
+    assert 'research' not in full and 'edge' not in full
+    assert 'нагоре' not in full and 'надолу' not in full
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status = status
+    def getcode(self):
+        return self.status
+
+
+def test_push_forecasts_fires_on_every_new_h1_lstm_d1_lstm_d1_gbm_bar():
+    preds = [
+        {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm', 'as_of_bar': '2026-10-22 14:00:00+00:00',
+         'p_up': 0.62, 'vol_pct': 0.11},
+        {'key': 'd1_lstm|D1|2026-10-22 00:00:00+00:00', 'cell': 'd1_lstm', 'as_of_bar': '2026-10-22 00:00:00+00:00',
+         'p_up': 0.47, 'vol_pct': 0.9},
+        {'key': 'd1_gbm|D1|2026-10-22 00:00:00+00:00', 'cell': 'd1_gbm', 'as_of_bar': '2026-10-22 00:00:00+00:00',
+         'p_up': 0.55, 'vol_pct': 1.1},
+        {'key': 'd1_garch|D1|2026-10-22 00:00:00+00:00', 'cell': 'd1_garch', 'as_of_bar': '2026-10-22 00:00:00+00:00',
+         'vol_pct': 0.8},                      # GARCH is a baseline -- no arrow in MT5, no push
+    ]
+    calls = []
+    log, notes = A.push_forecasts(preds, set(), lambda *a: (calls.append(a) or (True, '')), 'now')
+    assert [r['key'] for r in log] == [preds[0]['key'], preds[1]['key'], preds[2]['key']]
+    assert [c[4] for c in calls] == ['h1_lstm', 'd1_lstm', 'd1_gbm']   # flavor='forecast', cell= arg
+    assert all(c[3] == 'forecast' for c in calls) and notes == []
+    # Direction derivation: p_up >= 0.5 -> up, else down; prob is the confident-side %.
+    assert calls[0][1] == 'up' and calls[0][2] == pytest.approx(62.0)
+    assert calls[1][1] == 'down' and calls[1][2] == pytest.approx(53.0)
+    assert calls[2][1] == 'up' and calls[2][2] == pytest.approx(55.0)
+
+
+def test_push_forecasts_dedups_against_the_log_so_a_bar_never_double_sends():
+    pred = {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm',
+            'as_of_bar': '2026-10-22 14:00:00+00:00', 'p_up': 0.6, 'vol_pct': 0.1}
+    calls = []
+    _, _ = A.push_forecasts([pred], {pred['key']}, lambda *a: (calls.append(a) or (True, '')), 'now')
+    assert calls == []
+
+
+def test_push_forecasts_still_sends_when_p_up_is_missing():
+    pred = {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm',
+            'as_of_bar': '2026-10-22 14:00:00+00:00', 'vol_pct': 0.1}   # no p_up
+    calls = []
+    log, _ = A.push_forecasts([pred], set(), lambda *a: (calls.append(a) or (True, '')), 'now')
+    assert [c[1] for c in calls] == [None] and [c[2] for c in calls] == [None]
+    assert [r['key'] for r in log] == [pred['key']]
+
+
+def test_push_forecasts_carries_a_failure_into_notes_and_still_logs_the_key():
+    pred = {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm',
+            'as_of_bar': '2026-10-22 14:00:00+00:00', 'p_up': 0.6, 'vol_pct': 0.1}
+    log, notes = A.push_forecasts([pred], set(), lambda *a: (False, 'HTTP 503'), 'now')
+    assert len(log) == 1 and 'HTTP 503' in notes[0] and 'h1_lstm' in notes[0]
+
+
+def test_forecast_push_body_is_research_tagged_and_never_a_trade(monkeypatch):
+    monkeypatch.setenv(A.NTFY_TOPIC_ENV, 't')
+    seen = {}
+    A.push_phone(0.12, direction='up', prob_pct=62.0, flavor='forecast', cell='h1_lstm',
+                 http_post=lambda r: seen.setdefault('req', r) or _Resp(200))
+    body = seen['req'].data.decode('utf-8')
+    body_lower = body.lower()
+    assert 'h1 lstm' in body_lower and 'research' in body_lower and 'edge' in body_lower
+    assert 'нагоре' in body and ('62' in body)
+    # Expected-size line is present but without the large-move "unknown" sentence.
+    assert '0.12' in body and 'неизвестна' not in body and 'direction unknown' not in body_lower
+    # No alert wording at the top.
+    assert 'очаква се голямо движение' not in body and 'large move' not in body_lower
+    # ntfy header: ASCII, no priority=urgent (quiet-friendly cadence).
+    headers = {k.title(): v for k, v in seen['req'].headers.items()}
+    headers['Title'].encode('ascii')
+    assert headers['Priority'] == 'default'
+    for w in BANNED:
+        assert w not in body_lower
+
+
+def test_logger_hooks_forecast_pushes_after_alerts(cfg):
+    from src.gold import forward_logger as FL2
+    preds = [
+        {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm', 'as_of_bar': '2026-10-22 14:00:00+00:00',
+         'p_up': 0.6, 'vol_pct': 0.05},                                           # below threshold => no alert
+        {'key': 'd1_lstm|D1|2026-10-22 00:00:00+00:00', 'cell': 'd1_lstm', 'as_of_bar': '2026-10-22 00:00:00+00:00',
+         'p_up': 0.45, 'vol_pct': 0.9},
+    ]
+    calls = []
+    status = FL2.log_forecast_pushes(cfg, 'now', preds,
+                                     pusher=lambda *a: (calls.append(a) or (True, '')))
+    assert [c[4] for c in calls] == ['h1_lstm', 'd1_lstm']   # both pushed, neither crossed the alert threshold
+    assert '2 pushed' in status
+    # A second pass on the same bars pushes nothing.
+    status2 = FL2.log_forecast_pushes(cfg, 'later', preds, pusher=lambda *a: (True, ''))
+    assert '0 pushed' in status2
+
+
+def test_logger_forecast_push_failures_land_in_the_health_status(cfg):
+    from src.gold import forward_logger as FL2
+    pred = {'key': 'h1_lstm|H1|2026-10-22 14:00:00+00:00', 'cell': 'h1_lstm',
+            'as_of_bar': '2026-10-22 14:00:00+00:00', 'p_up': 0.6, 'vol_pct': 0.05}
+    status = FL2.log_forecast_pushes(cfg, 'now', [pred], pusher=lambda *a: (False, 'HTTP 500'))
+    assert 'forecast push failed' in status and 'HTTP 500' in status
+
+
 def test_alert_text_names_size_and_never_a_trade():
     t = A.texts(0.35)
     for lang in ('bg', 'en'):

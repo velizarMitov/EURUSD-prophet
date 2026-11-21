@@ -24,6 +24,13 @@ def main(argv=None) -> int:
     module, name = (argv or sys.argv[1:])[:2]
     if not module.startswith('src.gold.'):
         raise SystemExit(f'refusing to run {module!r}: only src.gold modules')
+    # api.py loads .env on startup; the scheduler does not go through api.py, so
+    # the forward logger would otherwise miss GOLD_ALERT_NTFY_TOPIC and FRED_API_KEY.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(repo_path('.env'))
+    except Exception:  # noqa: BLE001 -- dotenv is optional, the task must still run
+        pass
     log_dir = repo_path(load_config()['paths']['artifacts'])
     os.makedirs(log_dir, exist_ok=True)
     code = 0
