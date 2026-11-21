@@ -42,7 +42,7 @@ code to integrate with, and they would add a second toolchain for no gain.
 ### D1. Package layout
 
 `src/fx_fib/` holds the following modules:
-- `config.json`;
+- `fx_fib_config.json`, named so it cannot be confused with production's root `config.json`;
 - `data_loader.py`, `mtf_aligner.py`, `swing_detector.py`;
 - `fib_features.py`, `tgd.py`, `spiral_engine.py`;
 - `features.py`, the assembler and column check;
@@ -82,7 +82,10 @@ order:
    candidate to this bar.
 2. Test confirmation, using this bar's close and range against a candidate from an
    **earlier** bar only. The bar that sets the extreme can never confirm it.
-3. Apply the 3-bar spacing. A qualifying candidate that is too close to the previous
+3. Apply the 3-bar spacing, counting both pivot bars, so extreme indices must differ by
+   at least 2. The owner chose this on 2026-11-21 after the checkpoint. The stricter
+   reading, a difference of 3, dropped about a quarter of the D1 swings, including
+   confirmed 150-pip V-turns. A qualifying candidate that is too close to the previous
    pivot stays pending and keeps updating.
 
 `min_swing` uses ATR at the confirming bar, which is known then. The defaults
@@ -110,7 +113,14 @@ The mapping must be settled before the first fold trains. After that it is froze
    Time is a trading-day index, and an H1 bar counts as `day + bars_elapsed/24`.
 2. Take `R0` and `θ0` from the start point. `A` is the default, and `C` is selectable in
    the config.
-3. Sample each ring at 720 points per turn, for each `DIR`.
+3. Sample each ring at 720 points per turn, for each `DIR`. Two sets are built, by the
+   owner's choice of 2026-11-21:
+   - `spiral306`: `k = 0.306349`, rings 0–2;
+   - `spiral077`: `k = 0.076587`, rings 2–4.
+
+   The spec's original `k = 0.306349` on rings 2–4 put those rings 25–175 ATR away. The
+   distance was capped on about 98 % of rows, with no crossings. The choice was made on
+   feature coverage alone, never on labels or model results.
 4. Find where the branch crosses the vertical line at `x_now`, and refine each crossing
    by linear interpolation.
 5. Report the nearest `|y_now − y_branch|`.

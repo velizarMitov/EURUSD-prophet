@@ -1,4 +1,4 @@
-# Spec Delta
+# fx-fibonacci/market-data Specification
 
 ## Purpose
 
@@ -6,7 +6,7 @@ Supplies the fx-fibonacci research family with MT5 hourly bars for each configur
 currency pair, daily bars built from them on the broker calendar, and the causal rule
 that decides which daily bars an hourly bar may see.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Pairs come from the family config
 The family SHALL process exactly the pairs listed in its config. Phase 1 lists `EURUSD` and
@@ -49,17 +49,34 @@ the expected Berlin open hour.
 - **THEN** its weekly open is checked against that week's own expected hour, not the usual one
 
 ### Requirement: Daily bars are built from hourly bars
-D1 bars SHALL be aggregated from the H1 cache by broker-calendar date: first open, maximum
-high, minimum low, last close. A bar labelled on a Sunday SHALL be merged into the next
-Monday's D1 bar. A D1 bar SHALL close at the end of its last H1 bar.
+D1 bars SHALL be aggregated from the H1 cache by trading date: first open, maximum high,
+minimum low, last close. When a date's first bar is labelled 22:00 or later, the date holds
+only a market reopen, and its bars SHALL belong to the next date. A D1 bar SHALL close at the
+midnight that ends its date on the label clock.
 
 #### Scenario: Sunday stub
 - **WHEN** the H1 cache holds a bar labelled Sunday 23:00
 - **THEN** no Sunday D1 bar exists, and that bar's prices are part of Monday's D1 bar
 
+#### Scenario: Holiday reopen
+- **WHEN** the market is closed on 25 December and reopens with a bar labelled 25 December 23:00
+- **THEN** no 25 December D1 bar exists, and that bar is part of 26 December's D1 bar
+
+#### Scenario: Close depends only on the date
+- **WHEN** D1 close times are computed
+- **THEN** each equals the midnight after its trading date, whatever bars have arrived
+
 #### Scenario: Reproducible aggregation
 - **WHEN** D1 bars are built twice from the same H1 cache
 - **THEN** both results are identical
+
+#### Scenario: Partial day in a truncated history
+- **WHEN** the cache ends at the bar labelled Wednesday 14:00
+- **THEN** Wednesday's D1 bar still closes at Thursday 00:00, so no bar up to 14:00 can use it
+
+#### Scenario: Friday's bar
+- **WHEN** the last bar of the week is labelled Friday 22:00
+- **THEN** Friday's D1 bar closes at Saturday 00:00, and the week's first bar (labelled Sunday 23:00) is the first to use it
 
 ### Requirement: An hourly bar sees only closed daily bars
 For an H1 bar labelled `t`, which closes at `t + 1 h`, every D1-derived value SHALL come

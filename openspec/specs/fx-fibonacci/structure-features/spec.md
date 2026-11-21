@@ -1,11 +1,11 @@
-# Spec Delta
+# fx-fibonacci/structure-features Specification
 
 ## Purpose
 
 Turns hourly and daily bars into Robert Fischer's swing structure, and into causal,
 ATR-normalised Fibonacci, time and spiral features that carry over between currency pairs.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Every feature is causal
 Each feature value for an H1 bar labelled `t` SHALL depend only on H1 bars up to and
@@ -58,13 +58,18 @@ any bar before its confirmation bar.
 - **THEN** features at bars 100 to 103 do not use it, and features from bar 104 do
 
 ### Requirement: Fischer's 3-bar rule
-Two consecutive confirmed pivots on the same timeframe SHALL be at least 3 bars apart,
-measured between their extreme bars. A candidate closer than that SHALL NOT be confirmed.
-The 3-bar spacing SHALL apply on both H1 and D1.
+Two consecutive confirmed pivots on the same timeframe SHALL span at least 3 bars, counting
+both pivot bars. Their extreme-bar indices SHALL therefore differ by at least 2. A candidate
+closer than that SHALL NOT be confirmed. The rule SHALL apply on both H1 and D1. This is the
+owner's choice of 2026-11-21.
 
-#### Scenario: Pivots too close
-- **WHEN** a low would be confirmed 2 bars after the previous confirmed high
-- **THEN** it is not confirmed
+#### Scenario: Adjacent pivots
+- **WHEN** a high's extreme bar directly follows the previous low's extreme bar
+- **THEN** that high is not confirmed
+
+#### Scenario: Fast V-turn kept
+- **WHEN** a high's extreme bar is 2 bars after the previous low's, and the leg and reversal conditions hold
+- **THEN** the high is confirmed
 
 ### Requirement: Fischer's 15-bar rule
 When at least 15 D1 bars have closed since the last confirmed D1 pivot, the TGD features
@@ -84,6 +89,15 @@ family SHALL compute `swing_amp_atr`, `retracement_pct` and `dist_to_fib_382`, `
 #### Scenario: Retracement of an up-leg
 - **WHEN** `P0` is a low at 1.1000, `P1` a high at 1.1100, and the H1 close is 1.1050
 - **THEN** `retracement_pct` is 0.50, and `dist_to_fib_500` is 0
+
+### Requirement: Swing duration features
+On each timeframe, `swing_bars` SHALL be the newest confirmed leg's length in that
+timeframe's bars, from `P0`'s extreme bar to `P1`'s. This lets a model tell fast V-turns
+from slow swings. It is the owner's addition of 2026-11-21.
+
+#### Scenario: Fast V-turn
+- **WHEN** `P0` sits at D1 index 3055 and `P1` at 3057
+- **THEN** `d1_swing_bars` is 2
 
 ### Requirement: Extension and price-band features
 With the newest leg `P0 → P1`, `dist_to_ext_1618_w3` SHALL measure the distance to
@@ -139,9 +153,14 @@ projection SHALL be `C = B + 1.618·(B − A)` in D1 bar indices. The features S
 - **THEN** `price_time_confluence` is 1, its maximum
 
 ### Requirement: The logarithmic spiral uses the positive constant
-The spiral SHALL be `R(θ) = R0·e^{k·θ}` with `k` taken from the config. The default SHALL
-be `k = (2/π)·ln φ ≈ 0.306349`. The alternative `ln φ / (2π) ≈ 0.0766` SHALL be
-selectable. The negative constant `log(1/φ)` SHALL be rejected as a config value.
+The spiral SHALL be `R(θ) = R0·e^{k·θ}`. The family SHALL build two spiral feature sets:
+`spiral306`, with `k = (2/π)·ln φ ≈ 0.306349` on rings 0–2, and `spiral077`, with
+`k = ln φ/(2π) ≈ 0.076587` on rings 2–4. A negative or zero `k`, such as the misprinted
+`log(1/φ)`, SHALL be rejected.
+
+#### Scenario: Ring choice from coverage
+- **WHEN** `k = 0.306349` is used on rings 2–4
+- **THEN** the distance is capped on about 98 % of rows, which is why the owner chose rings 0–2 for that constant on 2026-11-21
 
 #### Scenario: Wrong constant refused
 - **WHEN** the config sets `k` to a negative value
@@ -158,14 +177,15 @@ fractions of a day.
 - **THEN** their spiral features are identical
 
 ### Requirement: Spiral features
-For both directions (`DIR = +1` counter-clockwise, `DIR = −1` clockwise), the family SHALL
-compute `spiral_dist_ccw_atr` and `spiral_dist_cw_atr`. Each SHALL be the vertical distance
-from the H1 close to the nearest branch of rings 2 to 4. `spiral_ring_id` SHALL name that
-branch's ring, and `spiral_crossed_flag` SHALL mark a crossing since the previous H1 bar.
+For each spiral set and each direction (`ccw` = +1, `cw` = −1), the family SHALL compute
+`<set>_dist_<dir>_atr`: the distance from the H1 close to the nearest branch of that set's
+rings. Ring `n` SHALL be the turn `φ ∈ [2π(n−1), 2πn)` from the start, so ring 0 lies just
+inside it. `<set>_ring_id_<dir>` and `<set>_crossed_<dir>` SHALL name the ring and flag a
+crossing.
 
 #### Scenario: No branch crosses
 - **WHEN** no ring 2–4 branch exists at the current `x`
-- **THEN** the distance is the configured cap, and `spiral_ring_id` is 0
+- **THEN** the distance is the configured cap, and that set's ring id is 0
 
 ### Requirement: The feature list is fixed by config
 The ordered feature list SHALL be declared in the config, and its digest SHALL be recorded

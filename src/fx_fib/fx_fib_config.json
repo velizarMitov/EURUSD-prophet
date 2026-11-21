@@ -1,0 +1,119 @@
+{
+  "pairs": ["EURUSD", "GBPUSD"],
+  "paths": {
+    "data": "results/fx_fib/data",
+    "results": "results/fx_fib",
+    "artifacts": "research_models/fx_fib"
+  },
+  "data": {
+    "history_start": "2015-01-01",
+    "max_bars": 120000,
+    "label_tz": "Europe/Berlin"
+  },
+  "atr_period": 14,
+  "swings": {
+    "k_atr_d1": 1.5,
+    "k_atr_h1": 2.0,
+    "retrace_confirm": 0.382,
+    "min_bars_between_pivots": 2,
+    "quiet_bars_d1": 15
+  },
+  "fib": {
+    "retracements": [0.382, 0.5, 0.618],
+    "extension": 1.618,
+    "target2": 0.618,
+    "alignment_zone_atr_d1": 0.25,
+    "price_square_bars": 5,
+    "rr_divisor_floor_atr": 0.1
+  },
+  "tgd": {
+    "ratio": 1.618,
+    "band_days": 2,
+    "confluence_price_scale_atr": 0.5,
+    "confluence_time_scale_days": 1.0,
+    "no_tgd_days": 30
+  },
+  "spiral": {
+    "variants": [
+      {"name": "spiral306", "k": 0.306349, "rings": [0, 1, 2]},
+      {"name": "spiral077", "k": 0.076587, "rings": [2, 3, 4]}
+    ],
+    "h_days": 5,
+    "start": "A",
+    "samples_per_turn": 720,
+    "distance_cap_atr": 10.0
+  },
+  "labels": {
+    "m_atr_d1": 1.0,
+    "horizon_bars": 24,
+    "tie_class": 0,
+    "min_class_share": 0.10
+  },
+  "folds": {
+    "first_eval_start": "2019-07-01",
+    "fold_months": 6,
+    "val_fraction": 0.15
+  },
+  "mlp": {
+    "hidden": [128, 64, 32],
+    "dropout": [0.3, 0.2],
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "batch_size": 1024,
+    "max_epochs": 200,
+    "patience": 15,
+    "plateau_factor": 0.5,
+    "plateau_patience": 5,
+    "seeds": [11, 22, 33, 44, 55],
+    "allow_cpu": false
+  },
+  "mlp_small": {
+    "hidden": [64, 32],
+    "dropout": [0.3, 0.2]
+  },
+  "lightgbm": {
+    "objective": "multiclass",
+    "num_leaves": 31,
+    "learning_rate": 0.03,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "min_child_samples": 200,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "deterministic": true,
+    "seed": 42
+  },
+  "logistic": {
+    "C": 1.0,
+    "max_iter": 2000
+  },
+  "scoring": {
+    "alpha": 0.0125,
+    "block_bars": 24,
+    "resamples": 10000,
+    "seed": 20261121
+  },
+  "features": {
+    "columns": [
+      "d1_swing_amp_atr", "d1_swing_bars", "d1_retracement_pct",
+      "d1_dist_to_fib_382", "d1_dist_to_fib_500", "d1_dist_to_fib_618",
+      "d1_dist_to_ext_1618_w3", "d1_dist_to_target2_0618", "d1_price_band_width_atr",
+      "h1_swing_amp_atr", "h1_swing_bars", "h1_retracement_pct",
+      "h1_dist_to_fib_382", "h1_dist_to_fib_500", "h1_dist_to_fib_618",
+      "h1_dist_to_ext_1618_w3", "h1_dist_to_target2_0618", "h1_price_band_width_atr",
+      "h1_breakout_1", "h1_breakout_2", "h1_breakout_4",
+      "h1_close_vs_high_bar_low", "h1_close_vs_low_bar_high",
+      "d1_alignment_flag",
+      "price_square_low_atr", "price_square_high_atr", "rr_to_50pct_target",
+      "d1_bars_to_nearest_tgd", "d1_tgd_cluster_count", "price_time_confluence",
+      "spiral306_dist_ccw_atr", "spiral306_dist_cw_atr",
+      "spiral306_ring_id_ccw", "spiral306_ring_id_cw",
+      "spiral306_crossed_ccw", "spiral306_crossed_cw",
+      "spiral077_dist_ccw_atr", "spiral077_dist_cw_atr",
+      "spiral077_ring_id_ccw", "spiral077_ring_id_cw",
+      "spiral077_crossed_ccw", "spiral077_crossed_cw"
+    ]
+  }
+}

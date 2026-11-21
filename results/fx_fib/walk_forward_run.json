@@ -1,0 +1,528 @@
+{
+ "run_at": "2026-11-21T13:50:22+00:00",
+ "config_digest": "8792332ffa33529d3f264c839800bd170acbc5a4425c85abfca18a4d65767276",
+ "feature_list_digest": "a6d3bb9995ef6bfaa3c7946ea23a3b9c3b6b30822ce595a08e87c8e382613eb7",
+ "pairs": {
+  "EURUSD": {
+   "folds": [
+    {
+     "k": 0,
+     "start": "2019-07-01",
+     "end": "2020-01-01",
+     "n_fit": 22862,
+     "n_val": 4043,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      31,
+      13,
+      6,
+      25,
+      15
+     ],
+     "lightgbm_best_iteration": 670,
+     "seconds": 70.9
+    },
+    {
+     "k": 1,
+     "start": "2020-01-01",
+     "end": "2020-07-01",
+     "n_fit": 25534,
+     "n_val": 4514,
+     "n_eval": 3097,
+     "mlp_best_epochs": [
+      11,
+      12,
+      16,
+      4,
+      2
+     ],
+     "lightgbm_best_iteration": 618,
+     "seconds": 64.6
+    },
+    {
+     "k": 2,
+     "start": "2020-07-01",
+     "end": "2021-01-01",
+     "n_fit": 28166,
+     "n_val": 4979,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      2,
+      2,
+      0,
+      6,
+      4
+     ],
+     "lightgbm_best_iteration": 612,
+     "seconds": 55.1
+    },
+    {
+     "k": 3,
+     "start": "2021-01-01",
+     "end": "2021-07-01",
+     "n_fit": 30838,
+     "n_val": 5450,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      4,
+      0,
+      2,
+      1,
+      0
+     ],
+     "lightgbm_best_iteration": 904,
+     "seconds": 29.3
+    },
+    {
+     "k": 4,
+     "start": "2021-07-01",
+     "end": "2022-01-01",
+     "n_fit": 33450,
+     "n_val": 5911,
+     "n_eval": 3167,
+     "mlp_best_epochs": [
+      3,
+      8,
+      4,
+      3,
+      6
+     ],
+     "lightgbm_best_iteration": 975,
+     "seconds": 15.4
+    },
+    {
+     "k": 5,
+     "start": "2022-01-01",
+     "end": "2022-07-01",
+     "n_fit": 36142,
+     "n_val": 6386,
+     "n_eval": 3097,
+     "mlp_best_epochs": [
+      2,
+      3,
+      2,
+      9,
+      1
+     ],
+     "lightgbm_best_iteration": 786,
+     "seconds": 14.9
+    },
+    {
+     "k": 6,
+     "start": "2022-07-01",
+     "end": "2023-01-01",
+     "n_fit": 38774,
+     "n_val": 6851,
+     "n_eval": 3119,
+     "mlp_best_epochs": [
+      3,
+      3,
+      3,
+      6,
+      5
+     ],
+     "lightgbm_best_iteration": 486,
+     "seconds": 36.8
+    },
+    {
+     "k": 7,
+     "start": "2023-01-01",
+     "end": "2023-07-01",
+     "n_fit": 41425,
+     "n_val": 7319,
+     "n_eval": 3119,
+     "mlp_best_epochs": [
+      3,
+      3,
+      10,
+      11,
+      2
+     ],
+     "lightgbm_best_iteration": 816,
+     "seconds": 74.2
+    },
+    {
+     "k": 8,
+     "start": "2023-07-01",
+     "end": "2024-01-01",
+     "n_fit": 44077,
+     "n_val": 7786,
+     "n_eval": 3094,
+     "mlp_best_epochs": [
+      2,
+      0,
+      5,
+      3,
+      5
+     ],
+     "lightgbm_best_iteration": 861,
+     "seconds": 24.3
+    },
+    {
+     "k": 9,
+     "start": "2024-01-01",
+     "end": "2024-07-01",
+     "n_fit": 46706,
+     "n_val": 8251,
+     "n_eval": 3096,
+     "mlp_best_epochs": [
+      0,
+      1,
+      0,
+      2,
+      0
+     ],
+     "lightgbm_best_iteration": 929,
+     "seconds": 16.3
+    },
+    {
+     "k": 10,
+     "start": "2024-07-01",
+     "end": "2025-01-01",
+     "n_fit": 49338,
+     "n_val": 8715,
+     "n_eval": 3142,
+     "mlp_best_epochs": [
+      4,
+      7,
+      0,
+      2,
+      5
+     ],
+     "lightgbm_best_iteration": 848,
+     "seconds": 18.0
+    },
+    {
+     "k": 11,
+     "start": "2025-01-01",
+     "end": "2025-07-01",
+     "n_fit": 52009,
+     "n_val": 9186,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      4,
+      1,
+      1,
+      1,
+      0
+     ],
+     "lightgbm_best_iteration": 880,
+     "seconds": 17.9
+    },
+    {
+     "k": 12,
+     "start": "2025-07-01",
+     "end": "2026-01-01",
+     "n_fit": 54621,
+     "n_val": 9647,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      0,
+      1,
+      0,
+      1,
+      4
+     ],
+     "lightgbm_best_iteration": 1095,
+     "seconds": 20.8
+    },
+    {
+     "k": 13,
+     "start": "2026-01-01",
+     "end": "2026-07-01",
+     "n_fit": 57292,
+     "n_val": 10119,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      0,
+      1,
+      0,
+      1,
+      0
+     ],
+     "lightgbm_best_iteration": 1349,
+     "seconds": 21.5
+    },
+    {
+     "k": 14,
+     "start": "2026-07-01",
+     "end": "2027-01-01",
+     "n_fit": 59904,
+     "n_val": 10580,
+     "n_eval": 2446,
+     "mlp_best_epochs": [
+      4,
+      1,
+      0,
+      2,
+      0
+     ],
+     "lightgbm_best_iteration": 1580,
+     "seconds": 23.8
+    }
+   ]
+  },
+  "GBPUSD": {
+   "folds": [
+    {
+     "k": 0,
+     "start": "2019-07-01",
+     "end": "2020-01-01",
+     "n_fit": 23087,
+     "n_val": 4082,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      0,
+      0,
+      4,
+      1,
+      0
+     ],
+     "lightgbm_best_iteration": 481,
+     "seconds": 10.3
+    },
+    {
+     "k": 1,
+     "start": "2020-01-01",
+     "end": "2020-07-01",
+     "n_fit": 25758,
+     "n_val": 4554,
+     "n_eval": 3097,
+     "mlp_best_epochs": [
+      1,
+      0,
+      1,
+      8,
+      0
+     ],
+     "lightgbm_best_iteration": 503,
+     "seconds": 11.1
+    },
+    {
+     "k": 2,
+     "start": "2020-07-01",
+     "end": "2021-01-01",
+     "n_fit": 28391,
+     "n_val": 5018,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      1,
+      7,
+      0,
+      1,
+      0
+     ],
+     "lightgbm_best_iteration": 321,
+     "seconds": 11.5
+    },
+    {
+     "k": 3,
+     "start": "2021-01-01",
+     "end": "2021-07-01",
+     "n_fit": 31062,
+     "n_val": 5490,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      3,
+      0,
+      0,
+      12,
+      1
+     ],
+     "lightgbm_best_iteration": 639,
+     "seconds": 15.4
+    },
+    {
+     "k": 4,
+     "start": "2021-07-01",
+     "end": "2022-01-01",
+     "n_fit": 33674,
+     "n_val": 5951,
+     "n_eval": 3167,
+     "mlp_best_epochs": [
+      3,
+      4,
+      1,
+      2,
+      1
+     ],
+     "lightgbm_best_iteration": 767,
+     "seconds": 13.8
+    },
+    {
+     "k": 5,
+     "start": "2022-01-01",
+     "end": "2022-07-01",
+     "n_fit": 36366,
+     "n_val": 6426,
+     "n_eval": 3097,
+     "mlp_best_epochs": [
+      4,
+      2,
+      3,
+      4,
+      4
+     ],
+     "lightgbm_best_iteration": 694,
+     "seconds": 15.8
+    },
+    {
+     "k": 6,
+     "start": "2022-07-01",
+     "end": "2023-01-01",
+     "n_fit": 38999,
+     "n_val": 6890,
+     "n_eval": 3119,
+     "mlp_best_epochs": [
+      6,
+      3,
+      0,
+      8,
+      2
+     ],
+     "lightgbm_best_iteration": 439,
+     "seconds": 15.0
+    },
+    {
+     "k": 7,
+     "start": "2023-01-01",
+     "end": "2023-07-01",
+     "n_fit": 41650,
+     "n_val": 7358,
+     "n_eval": 3119,
+     "mlp_best_epochs": [
+      2,
+      8,
+      1,
+      8,
+      0
+     ],
+     "lightgbm_best_iteration": 684,
+     "seconds": 16.0
+    },
+    {
+     "k": 8,
+     "start": "2023-07-01",
+     "end": "2024-01-01",
+     "n_fit": 44301,
+     "n_val": 7826,
+     "n_eval": 3094,
+     "mlp_best_epochs": [
+      1,
+      7,
+      9,
+      2,
+      2
+     ],
+     "lightgbm_best_iteration": 711,
+     "seconds": 17.5
+    },
+    {
+     "k": 9,
+     "start": "2024-01-01",
+     "end": "2024-07-01",
+     "n_fit": 46931,
+     "n_val": 8290,
+     "n_eval": 3096,
+     "mlp_best_epochs": [
+      0,
+      13,
+      1,
+      8,
+      4
+     ],
+     "lightgbm_best_iteration": 1175,
+     "seconds": 21.6
+    },
+    {
+     "k": 10,
+     "start": "2024-07-01",
+     "end": "2025-01-01",
+     "n_fit": 49562,
+     "n_val": 8755,
+     "n_eval": 3142,
+     "mlp_best_epochs": [
+      1,
+      8,
+      5,
+      3,
+      1
+     ],
+     "lightgbm_best_iteration": 1133,
+     "seconds": 21.1
+    },
+    {
+     "k": 11,
+     "start": "2025-01-01",
+     "end": "2025-07-01",
+     "n_fit": 52233,
+     "n_val": 9226,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      6,
+      1,
+      12,
+      1,
+      5
+     ],
+     "lightgbm_best_iteration": 1179,
+     "seconds": 22.0
+    },
+    {
+     "k": 12,
+     "start": "2025-07-01",
+     "end": "2026-01-01",
+     "n_fit": 54845,
+     "n_val": 9687,
+     "n_eval": 3143,
+     "mlp_best_epochs": [
+      14,
+      4,
+      2,
+      2,
+      7
+     ],
+     "lightgbm_best_iteration": 993,
+     "seconds": 23.4
+    },
+    {
+     "k": 13,
+     "start": "2026-01-01",
+     "end": "2026-07-01",
+     "n_fit": 57517,
+     "n_val": 10158,
+     "n_eval": 3073,
+     "mlp_best_epochs": [
+      0,
+      0,
+      1,
+      1,
+      5
+     ],
+     "lightgbm_best_iteration": 1201,
+     "seconds": 89.2
+    },
+    {
+     "k": 14,
+     "start": "2026-07-01",
+     "end": "2027-01-01",
+     "n_fit": 60129,
+     "n_val": 10619,
+     "n_eval": 2446,
+     "mlp_best_epochs": [
+      12,
+      15,
+      2,
+      1,
+      6
+     ],
+     "lightgbm_best_iteration": 1438,
+     "seconds": 123.9
+    }
+   ]
+  }
+ },
+ "device": "NVIDIA GeForce RTX 4070 Laptop GPU",
+ "torch": "2.11.0+cu128",
+ "cuda": "12.8"
+}

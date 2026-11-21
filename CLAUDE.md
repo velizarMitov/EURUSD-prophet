@@ -186,6 +186,19 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
      committed. The forward logger is the task `EURUSDProphet-ExternalLogger` at :01,
      before the gold pass. Runbook: `results/external_tsfm/RUNBOOK.md`.
 
+9. **Fischer Fibonacci + CUDA MLP is its own family, `fx_fib` (`src/fx_fib/`, openspec change
+   `fx-fibonacci-mlp`, `ARCHITECTURE_DOCS.md §3.14`).**
+   - It covers EURUSD and GBPUSD H1, with D1 as causal context, and is **gross of spread and
+     slippage** by owner decision. No verdict from it is a trading result.
+   - It is decided by its own purged walk-forward (owner decision 2026-11-21), in four
+     cells at `alpha = 0.05/4` in `results/fx_fib/fx_fib_hypothesis_log.csv`. Each cell is
+     scored once.
+   - Earlier results (#7, the H1 direction block) are recorded as facts, not blockers. It
+     never touches the `0.05/9` bar.
+   - A changed `src/fx_fib/fx_fib_config.json` is a new hypothesis. Label, training and
+     scoring stages refuse a config whose digest differs from the verdicts'.
+   - It never writes `models/`. Its frozen artifacts are in `research_models/fx_fib/`.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

@@ -75,7 +75,7 @@ Out of scope:
 ## Impact
 
 - **New code:** `src/fx_fib/` (about 11 modules) and `tests/test_fx_fib_*.py`.
-- **Config:** `src/fx_fib/config.json`. Its digest is recorded with the verdicts.
+- **Config:** `src/fx_fib/fx_fib_config.json`. Its digest is recorded with the verdicts.
 - **Data and results:** `results/fx_fib/` (cache, reports, registry).
 - **Artifacts:** frozen models in the gitignored `research_models/fx_fib/`, with digests
   in `results/fx_fib/artifact_manifest.csv`.

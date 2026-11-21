@@ -1608,6 +1608,100 @@ the gold study's own h1_lstm on the same rows. Those comparisons inform no choic
 
 Every text carries "external model — research, no proven edge".
 
+### 3.14 Fischer Fibonacci structure + CUDA MLP: the `fx_fib` family (openspec change `fx-fibonacci-mlp`; research-only, GROSS of cost)
+
+**What it asks.** Do Robert Fischer's quantitative Fibonacci rules, read from daily context
+into an hourly decision grid, carry information that a compact neural network can learn?
+It asks this for EUR/USD and GBP/USD. The pairs are listed in config, so adding one is a
+config change. The code is in `src/fx_fib/`, the results in `results/fx_fib/`, and the
+frozen artifacts in the gitignored `research_models/fx_fib/` (digests in
+`results/fx_fib/artifact_manifest.csv`).
+
+**Isolation.**
+- It never writes `models/`, never reads the root `config.json`, and never rewrites
+  `results/pooled_h1/` or `results/eurusd_h1.csv`.
+- It feeds neither the API nor the paper-trading ledgers, and has no execution code.
+- `tests/test_fx_fib_protected.py` asserts all of this.
+- Its config is `src/fx_fib/fx_fib_config.json`, named apart from the production config on
+  purpose.
+
+**Data and clock.**
+- `src/fx_fib/data_loader.py` keeps its own MT5 OHLC cache, append-only, with no tick volume
+  and no spread.
+- It reads from MT5 position 1, so a forming bar is never stored. The pooled cache's
+  partial last row of 2026-07-28 15:00 shows why this matters.
+- Labels are on the Berlin broker clock and are checked week by week against the weekly
+  open.
+- D1 bars are built from H1 by trading date. A date whose first bar is labelled 22:00 or
+  later (a Sunday, or a 25 December or 1 January reopen) joins the next date.
+- A D1 bar closes at the midnight that ends its date. An H1 bar labelled `t` uses only D1
+  bars closed by `t + 1 h`. This is truncation-invariant by construction
+  (`mtf_aligner.py`).
+
+**Structure (`swing_detector.py`).**
+- Swings use Fischer's adaptive filter, `k_atr × ATR(14)`, with `k_atr` 1.5 on D1 and
+  2.0 on H1.
+- A pivot is confirmed by a close beyond the extreme bar's opposite side, a counter-move
+  of at least `min_swing`, or a retracement of at least 38.2 %.
+- The 3-bar rule counts both pivot bars, so extreme bars must be at least 2 apart. This
+  is the owner's reading B; the stricter reading dropped about 25 % of D1 swings,
+  including confirmed 150-pip V-turns.
+- A pivot is visible only from its confirming bar. A continued swing moves the pivot
+  through a replacement event.
+- The 15-bar rule feeds the TGD features only.
+
+**Features (42, `features.py`).** Every feature is causal and divided by ATR of its own
+timeframe:
+- D1 and H1 Fibonacci leg geometry: amplitude, duration in bars (the owner's addition),
+  retracement, the 0.382, 0.5 and 0.618 levels, the 1.618 extension, target 2 and band
+  width;
+- H1 breakouts, and a D1 zone alignment flag;
+- risk geometry;
+- D1 Time Goal Days: `C = B + 1.618·(B − A)`, with cluster and price-time confluence;
+- two spiral sets:
+  - `spiral306`: `k = (2/π)·ln φ`, rings 0–2;
+  - `spiral077`: `k = ln φ/(2π)`, rings 2–4.
+
+  The specified rings 2–4 at `k = 0.306349` were capped on about 98 % of rows. The owner
+  chose both constants on coverage alone.
+
+**Labels (`labeling.py`).**
+- Triple barrier at `±1.0 × ATR_D1` from the H1 close, over 24 H1 bars. Classes are
+  neutral 0, up 1 and down 2, and a same-bar tie counts as 0.
+- Labels are gross of cost.
+- The train-row balance is about 78 / 11 / 11 %.
+- Mean uniqueness is about 0.047, so about 73 600 labels per pair are worth only about
+  3 450 independent ones.
+
+**Models (`model_mlp_cuda.py`, `baselines.py`).**
+- The registered model is a 5-seed ensemble, all-or-nothing, of
+  `Linear128-LN-ReLU-Drop.3 → Linear64-LN-ReLU-Drop.2 → Linear32-ReLU → 3`.
+- It trains on CUDA with the whole fold resident on the GPU. Batch order comes from a
+  seeded device generator. It uses class-weighted cross-entropy, AdamW with weight decay,
+  ReduceLROnPlateau, and early stopping on validation log-loss.
+- Reruns reproduce probabilities within 1e-5.
+- LightGBM with fixed parameters is the registered baseline.
+- The L2 logistic regression and the 64-32 MLP are descriptive only.
+
+**Evaluation (`splits.py`, `walk_forward_backtest.py`, `score.py`, `report.py`).**
+- Expanding walk-forward, with 6-month folds from 2019-07-01 on dates shared by both pairs.
+- The early-stopping slice is the last 15 % of each training span.
+- Purge plus embargo leaves at least `2H` bars between slices. The scaler is fit on fit
+  rows only.
+- The family is decided by its own walk-forward (owner decision 2026-11-21). It has four
+  cells in `fx_fib_hypothesis_log.csv`, at `alpha = 0.05/4`, scored once:
+  - per pair, MLP vs the class prior;
+  - per pair, MLP vs LightGBM.
+- Each cell's test is a one-sided circular block bootstrap (block 24) on the per-row
+  log-loss difference.
+- A changed config is a new hypothesis. Label, training and scoring stages refuse a
+  config whose digest differs from the one recorded with the verdicts.
+- Earlier results, the daily Fibonacci #7 and the H1 direction family's read block, are
+  stated in each registry row as facts, never as blockers.
+- `walk_forward_report.md` carries the verdicts, pooled and per-fold metrics, the MLP
+  reliability table, and the fixed gross rule (profit factor, Sharpe, drawdown), all
+  labelled "gross of spread and slippage — not a trading result".
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics
