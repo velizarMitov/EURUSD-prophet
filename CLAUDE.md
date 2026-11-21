@@ -198,6 +198,24 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
    - A changed `src/fx_fib/fx_fib_config.json` is a new hypothesis. Label, training and
      scoring stages refuse a config whose digest differs from the verdicts'.
    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_fib/`.
+   - All four cells were DROP on 2026-11-21.
+
+10. **One forecast per day after the New York open is its own family, `fx_session`
+    (`src/fx_session/`, openspec change `fx-session-ny`, `ARCHITECTURE_DOCS.md §3.15`).**
+    - It covers EURUSD and GBPUSD; AUDUSD feeds only the dollar factor.
+    - Features are taken at the close of the bar labelled 14:00 Berlin (16:00 Sofia). The
+      target is the sign of the mid close at 21:00 Berlin (23:00 Sofia).
+    - It is **gross of spread and slippage**, and decided by its own walk-forward only.
+    - It has four cells at `alpha = 0.05/4` in `results/fx_session/fx_session_hypothesis_log.csv`:
+      LightGBM vs prior, and an MLP vs LightGBM that runs only after that pair's LightGBM
+      KEEP. Untriggered alpha is never reassigned.
+    - History starts on 2012-01-01. The broker's GBPUSD H1 bars from December 2010 to
+      November 2011 are one hour off, yet pass the 90 % clock check, so do not trust that
+      threshold alone for this broker's old history.
+    - A day is used only if its own week's weekly open is on the Berlin clock.
+    - A changed `fx_session_config.json` is a new hypothesis; every stage refuses it.
+    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_session/`.
+    - Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.
 
 ## Notebook specifics
 

@@ -1,0 +1,14 @@
+{
+ "EURUSD": {
+  "symbol": "EURUSD",
+  "point": 1e-05
+ },
+ "GBPUSD": {
+  "symbol": "GBPUSD",
+  "point": 1e-05
+ },
+ "AUDUSD": {
+  "symbol": "AUDUSD",
+  "point": 1e-05
+ }
+}

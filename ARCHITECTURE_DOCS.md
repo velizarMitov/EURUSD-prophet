@@ -1701,6 +1701,97 @@ timeframe:
 - `walk_forward_report.md` carries the verdicts, pooled and per-fold metrics, the MLP
   reliability table, and the fixed gross rule (profit factor, Sharpe, drawdown), all
   labelled "gross of spread and slippage — not a trading result".
+- **Result (2026-11-21): all four cells DROP.**
+  - The MLP's log-loss is about 0.38 above the class prior's, and 0.12–0.14 above
+    LightGBM's.
+  - Macro F1 is no better than the prior's.
+
+### 3.15 One forecast per day after the New York open: the `fx_session` family (openspec change `fx-session-ny`; research-only, GROSS of cost)
+
+**What it asks.** Does the state of the market at 16:00 Sofia predict whether EUR/USD or
+GBP/USD closes higher at 23:00 Sofia, the end of the owner's trading window? At 16:00 the
+08:30 ET US data and the New York open have already printed. The family changes the
+information and the moment, not the model:
+- LightGBM is tested first;
+- a CUDA MLP trains only for a pair whose LightGBM cell is KEEP.
+
+The code is in `src/fx_session/`, the results in `results/fx_session/`, and the frozen
+artifacts in the gitignored `research_models/fx_session/` (digests in
+`results/fx_session/artifact_manifest.csv`).
+
+**Isolation.**
+- Its config is `src/fx_session/fx_session_config.json`.
+- It never writes `models/`, `config.json`, another family's cache or registry, or
+  `results/fomc_dates.csv`, which it only reads.
+- It reuses fx_fib helpers read-only: D1 aggregation, ATR, the block bootstrap and the
+  CUDA determinism helpers.
+- `tests/test_fx_session_protected.py` asserts all of this. It also pins fx_fib's config
+  to the digest recorded with fx_fib's verdicts.
+
+**Data (`data_loader.py`, `session.py`).**
+- It keeps its own MT5 H1 caches for EURUSD, GBPUSD and AUDUSD, with the bar's spread in
+  points. The point size goes to `symbols.json`.
+- A refresh is all-or-nothing: one failing pair writes nothing for any pair.
+- History starts on **2012-01-01**, by owner decision after the first refresh.
+  - The broker's GBPUSD bars from December 2010 to November 2011 sit one hour off
+    EURUSD's. Hourly returns correlate at about 0.6 only at lag −1 h.
+  - The pooled clock check still passed at 91 %, so a threshold alone cannot catch a
+    shifted year.
+- GBPUSD March 2014, which holds one bar per day, is a declared broker gap. It is kept as
+  returned, left out of the clock check, and never filled. D1 bars with fewer than 12 H1
+  bars count as missing.
+- **One clock, Berlin labels**, with Sofia = Berlin + 1 h:
+  - entry is the close of the bar labelled 14:00;
+  - exit is the close of the bar labelled 21:00;
+  - the label hours never move.
+- A day is eligible only if:
+  - both scored pairs have every bar from 14:00 to 21:00; and
+  - every loaded pair's weekly open for that week is on the Berlin clock. Before 2017 the
+    broker's DST-mismatch weeks opened at 23:00, so those weeks are excluded.
+
+**Features (20, `features.py`).** Every value is known at the entry close, which a
+truncation test proves:
+- the Asia, London and data-hour moves, divided by ATR(14) of the last valid D1 bar;
+- the London and data-hour range ratios, against their 20-day means;
+- the position in the London range;
+- yesterday's move, range and close location, and the move since yesterday's close;
+- the broke-high and broke-low flags, and ATR as a fraction of price;
+- a synthetic dollar factor, the mean of the three pairs' normalised pre-session moves,
+  with the pair's residual against it;
+- the calendar: day of week, NFP (the first-Friday rule, a declared approximation),
+  scheduled FOMC days, and the US/EU DST-mismatch flag.
+
+**Target (`labeling.py`).**
+- The target is the sign of the mid close at exit minus at entry. Mid is bid plus half
+  the bar's spread.
+- There are no barriers and no class weights. Ties are dropped. No two days share a bar.
+- The bid-sign twin feeds the parity check only. Its gap on the real data is
+  0.00–0.03 pp.
+- `labels.md` holds the counts, up-rates and power table before any model runs: about
+  3 470 out-of-sample days per pair, and a minimum detectable accuracy of 52.6 % at
+  alpha 0.0125 and 80 % power.
+
+**Evaluation (`splits.py`, `walk_forward.py`, `score.py`, `report.py`).**
+- Expanding 6-month folds from 2013-01-01, with shared dates and the last 15 % of
+  training days as the early-stopping slice.
+- A 1-day embargo on both gaps. The scaler is fit on the fit slice only.
+- LightGBM settings are fixed for small samples: 7 leaves, at least 50 rows per leaf,
+  learning rate 0.02.
+- The MLP is `32-16`, LayerNorm and GELU, BCE without weights, 5 seeds, CUDA only.
+- Four cells in `fx_session_hypothesis_log.csv`, at `alpha = 0.05/4`:
+  - per pair, LightGBM vs the fit-slice prior;
+  - per pair, the MLP vs LightGBM, run only after that pair's LightGBM KEEP. Otherwise
+    it is NOT TRIGGERED, and its alpha is never reassigned.
+- Each cell's test is a one-sided circular block bootstrap (block 5 days) on the per-day
+  log-loss difference. Each cell is scored once.
+- A changed config is refused by every stage.
+- `walk_forward_report.md` is descriptive and gross. It holds:
+  - accuracy with a Wilson interval, per year and on DST-mismatch days;
+  - reliability and bid-versus-mid parity;
+  - a sign rule in pips against an always-long baseline.
+- **Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.**
+  - LightGBM's log-loss is above the prior's by 0.0009 (EURUSD) and 0.0014 (GBPUSD).
+  - Accuracy is 51.3 % and 50.6 %, against a minimum detectable accuracy of 52.6 %.
 
 ---
 

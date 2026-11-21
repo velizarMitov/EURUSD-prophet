@@ -1,0 +1,85 @@
+{
+  "family": "fx_session",
+  "pairs": ["EURUSD", "GBPUSD"],
+  "factor_pairs": ["EURUSD", "GBPUSD", "AUDUSD"],
+  "paths": {
+    "data": "results/fx_session/data",
+    "results": "results/fx_session",
+    "artifacts": "research_models/fx_session"
+  },
+  "data": {
+    "history_start": "2012-01-01",
+    "latest_allowed_start": "2012-01-31",
+    "known_gaps": {"GBPUSD": ["2014-03"]},
+    "min_h1_per_d1": 12,
+    "max_bars": 120000,
+    "label_tz": "Europe/Berlin"
+  },
+  "session": {
+    "entry_hour": 14,
+    "exit_hour": 21,
+    "asia_hours": [0, 8],
+    "london_hours": [9, 13],
+    "data_hour": 14,
+    "atr_period": 14,
+    "range_window_days": 20,
+    "fomc_dates": "results/fomc_dates.csv"
+  },
+  "target": {
+    "price": "mid",
+    "parity_tolerance_pp": 1.0
+  },
+  "features": {
+    "columns": [
+      "asia_move", "london_move", "data_hour_move",
+      "london_range_ratio", "data_hour_range_ratio", "london_position",
+      "prev_day_move", "prev_day_range", "prev_close_location", "move_since_prev_close",
+      "broke_prev_high", "broke_prev_low", "atr_d1_frac",
+      "usd_factor", "usd_factor_data_hour", "pair_residual",
+      "day_of_week", "is_nfp_day", "is_fomc_day", "dst_mismatch"
+    ]
+  },
+  "folds": {
+    "first_eval_start": "2013-01-01",
+    "fold_months": 6,
+    "val_fraction": 0.15,
+    "embargo_days": 1
+  },
+  "lightgbm": {
+    "objective": "binary",
+    "num_leaves": 7,
+    "min_data_in_leaf": 50,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "mlp": {
+    "hidden": [32, 16],
+    "dropout": [0.2, 0.2],
+    "lr": 0.001,
+    "weight_decay": 0.001,
+    "batch_size": 256,
+    "max_epochs": 300,
+    "patience": 20,
+    "plateau_factor": 0.5,
+    "plateau_patience": 8,
+    "seeds": [11, 22, 33, 44, 55],
+    "allow_cpu": false
+  },
+  "scoring": {
+    "alpha": 0.0125,
+    "family_size": 4,
+    "block_days": 5,
+    "resamples": 10000,
+    "seed": 20261122,
+    "power": 0.8
+  }
+}

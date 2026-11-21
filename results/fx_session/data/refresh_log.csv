@@ -1,0 +1,10 @@
+run_at,pair,symbol,point,status,appended,rows,start,end,clock_match_rate,clock_weeks,overlap_mismatches,detail
+2026-11-21T14:34:21+00:00,EURUSD,EURUSD,,refused,0,,,,,,,not written: another pair was refused
+2026-11-21T14:34:21+00:00,GBPUSD,GBPUSD,,refused,0,,,,,,,"GBPUSD: coverage: MT5 GBPUSD H1 (H1) has a coverage hole and was REFUSED, not repaired: thin month 2014-03: 72 bars vs ~531 expected (14%). Most likely the MT5 symbol was not selected in Market Watch, so only a partial history block was synced -- call sync_symbol() before fetching and retry. The frame was not written"
+2026-11-21T14:34:21+00:00,AUDUSD,AUDUSD,,refused,0,,,,,,,not written: another pair was refused
+2026-11-21T14:35:30+00:00,EURUSD,EURUSD,,refused,0,,,,,,,not written: another pair was refused
+2026-11-21T14:35:30+00:00,GBPUSD,GBPUSD,,refused,0,,,,,,,"GBPUSD: clock: bar labels do not match Europe/Berlin: only 88.8% of 878 weekly opens land on the predicted hour (aligned weeks modal 23, expected 23). Establish the clock before any session rule is applied."
+2026-11-21T14:35:30+00:00,AUDUSD,AUDUSD,,refused,0,,,,,,,not written: another pair was refused
+2026-11-21T14:41:44+00:00,EURUSD,EURUSD,1e-05,ok,92557,92557,2012-01-02 08:00:00+00:00,2026-11-20 21:00:00+00:00,0.9658,790,0,
+2026-11-21T14:41:44+00:00,GBPUSD,GBPUSD,1e-05,ok,92081,92081,2012-01-02 08:00:00+00:00,2026-11-20 21:00:00+00:00,0.967,787,0,
+2026-11-21T14:41:44+00:00,AUDUSD,AUDUSD,1e-05,ok,92558,92558,2012-01-02 08:00:00+00:00,2026-11-20 21:00:00+00:00,0.9658,790,0,
