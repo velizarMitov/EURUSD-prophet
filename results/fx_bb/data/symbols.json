@@ -1,0 +1,14 @@
+{
+ "USDJPY": {
+  "symbol": "USDJPY",
+  "point": 0.001
+ },
+ "USDCAD": {
+  "symbol": "USDCAD",
+  "point": 1e-05
+ },
+ "USDCHF": {
+  "symbol": "USDCHF",
+  "point": 1e-05
+ }
+}

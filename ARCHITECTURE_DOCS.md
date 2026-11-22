@@ -1866,6 +1866,133 @@ artifacts in the gitignored `research_models/fx_rates/`.
 - GBPUSD scores 0.69346 against 0.69293, with accuracy 52.5 % (49.1–55.9 % on the
   effective size).
 
+### 3.17 Bollinger Band mean reversion on D1: the `fx_bb` family (openspec change `fx-bb-reversion`; research-only, GROSS of cost)
+
+**What it asks.** Rockefeller (*The Foreign Exchange Matrix*, Ch. 8) reads a daily close
+outside the 20-day, 2-SD Bollinger Bands as a counter-trend signal. This family asks two
+separate questions about that rule:
+- **Cell 1, the rule.** Does the price move back over the next 3 trading days?
+- **Cell 2, a filter.** Can a small pooled model tell the events that revert from the ones
+  that do not?
+
+The rule's 20, 2 and 3 come from the book and are never searched.
+
+The code is in `src/fx_bb/`, the results in `results/fx_bb/`, and the frozen artifacts in
+the gitignored `research_models/fx_bb/`.
+
+**Data.**
+- **Six pairs.**
+  - EURUSD, GBPUSD and AUDUSD are read-only from the fx_session H1 caches.
+  - USDJPY, USDCAD and USDCHF are in the family's own append-only caches,
+    `results/fx_bb/data/`, written all-or-nothing by `python -m src.fx_bb.data_loader`.
+- **Checks.** Every refresh and every load runs the weekly-open clock check, at 90 % or
+  more between declared gaps. It also runs a new **lag check**: for each calendar year, the
+  absolute correlation of the pair's hourly returns with EURUSD's must peak at lag 0 among
+  −1, 0 and +1.
+- **USDCHF 2012-01 … 2014-11 is one hour off on this broker.** It peaks at lag +1, at
+  0.76–0.92, while matching 96 % of the weekly opens. USDCHF therefore starts on
+  2015-02-01, which also skips the 76-hour SNB-floor hole. No bar is shifted.
+- **Declared gaps.** GBPUSD 2014-03 and USDCAD 2013-05 (232 h).
+- **Corrupt spreads.** A bar whose spread exceeds 50 pips voids any mid price that needs
+  it. This catches AUDUSD (300 000 points) and USDJPY (3 000 points) on 2014-01-07.
+- **D1 bars close at 17:00 New York.** The Berlin labels are converted to New York time,
+  and the trading date is the New York time plus 7 hours.
+  - The last bar of a day is labelled 22:00 Berlin, or 21:00 in DST-mismatch weeks. The
+    Sunday reopen belongs to Monday.
+  - A D1 bar needs at least 12 H1 bars. Its close is the mid close.
+  - This avoids MT5's Sunday D1 stubs and the rollover hour.
+
+**Events and outcome.**
+- **Event.** The first mid close outside the bands, with the previous close inside. The
+  direction is counter-trend, with a 3-day cooldown per pair.
+- **Outcome.** `r = dir · (close[t+3] − close[t]) / ATR20[t]`.
+- **Pair-gap exclusion.** An event is excluded when its pair misses a reference date
+  inside `t−19 … t+3`. A reference date is one on which at least 4 started pairs have a
+  bar.
+- **The label report reads no outcome.** About 1 262 eligible events from 2012 (928
+  dates), and 1 051 from 2015 (751 dates).
+- **Minimum detectable effects.**
+  - Cell 1: about 0.091 ATR on events and 0.106 ATR on dates. These use the all-days SD of
+    the 3-day ATR move, 1.15.
+  - Cell 2: about 54.3 % on events and 55.1 % on dates.
+
+**Evaluation.**
+- **Cell 1** uses every eligible event and fits nothing.
+- **Cell 2** is one LightGBM pooled over the six pairs.
+  - It uses 10 oriented features and 4 leaves.
+  - It is compared with the fit slice's base rate on log-loss.
+  - It runs in expanding 12-month folds from 2015, with a 10-business-day purge and embargo
+    after each slice's last `t+3`.
+- **The bootstrap.** Both cells use a circular block bootstrap over business days, with
+  5-day blocks and the same blocks for the daily sums and counts. With one event per day,
+  it reproduces `fx_fib.score.circular_block_means` exactly.
+- **Two cells at `alpha = 0.05/2`.** Each is scored once, and a config guard covers every
+  stage.
+- **Bid parity.** A bid parity line is recorded for Cell 1.
+- **The report** gives win rate (Wilson on dates), mean `r`, pips and profit factor, both
+  gross and after the mean closing spread. It shows a cell's numbers only after that
+  cell's verdict.
+
+**Result (2026-11-22): both cells DROP.**
+- **Cell 1.** The mean is +0.014 ATR on 1 262 events. The bootstrap 2.5 % quantile is
+  −0.062, and the win rate 50.7 %. Bid parity is +0.015, a gap of 0.0007.
+- **Cell 2.** LightGBM's log-loss is 0.69967 against the base rate's 0.69616. The upper
+  bound is +0.0097, and accuracy is 50.9 % on 1 048 events.
+
+### 3.19 Bollinger first breach as a trade, exit at SMA20: the `fx_bb_sma` family (openspec change `fx-bb-sma-exit`; research-only, NET of the recorded spread)
+
+(§3.18 is reserved by the pending change `fx-ny-volatility`.)
+
+**What it asks.** The owner's practical version of §3.17 on the same events:
+- **Entry.** At the D1 mid close of a first Bollinger (20, 2) breach.
+- **Take profit.** At the fixed `SMA20[t]`.
+- **Stop.** At the same distance beyond the entry.
+- **Exits.** Scanned hour by hour on H1 bars. A bar that touches both levels counts as the
+  stop. The take profit fills at its level; the stop fills at its level, or at the mid
+  open on a gap.
+- **Time stop.** At the close of the 10th valid trading day.
+- **One open trade per pair.** An excluded trade holds its slot until `t+10`.
+
+The code is in `src/fx_bb_sma/`, the results in `results/fx_bb_sma/`, and the frozen artifacts
+in the gitignored `research_models/fx_bb_sma/`.
+
+**Data.** The fx_bb caches, D1 bars and checks, all read-only through fx_bb's loader.
+- A config test pins the shared event and feature blocks to fx_bb's config.
+- `src/fx_bb_sma/trades.py` builds the stream of trades. The exit times needed for the
+  one-trade rule come apart from the results, so the label report reads no outcome.
+
+**Costs.**
+- `R = net / |Close[t] − SMA20[t]|`.
+- `net` is the gross mid result minus half the entry bar's spread and half the exit bar's
+  spread.
+- **This is the first fx family scored net of cost.** The cost is the recorded bar spread
+  only: no slippage, swap or commission.
+- A bid/ask control fill is recorded in the Cell 1 row: long in at the ask and out on the
+  bid, short mirrored.
+
+**Evaluation.**
+- **Cell 1** (mean net R > 0) uses every trade from 2012.
+- **Cell 2** is one LightGBM pooled over the six pairs, with fx_bb's ten features and the
+  target `net > 0`, compared with the base rate on log-loss.
+  - It uses expanding 12-month folds from 2015.
+  - A 10-business-day gap is measured from each trade's EXIT date.
+- **The bootstrap** is fx_bb's day-block ratio bootstrap, keyed by entry date, with
+  **10-business-day blocks** to cover the longest trade.
+- **Registration.** Two cells at `alpha = 0.05/2`, each scored once. Every registry note
+  records that the events were seen in §3.17.
+- **The report** has a plain-language Bulgarian section: exit shares, win rate, average
+  win and loss, profit factor gross and net, total R, and five example trades chosen by a
+  fixed rule.
+
+**Result (2026-11-22): both cells DROP.**
+- **Cell 1.** The mean is −0.0082 net R on 1 089 trades (821 dates), with the bootstrap
+  2.5 % quantile at −0.068.
+  - Exits: 32.2 % take profit, 32.2 % stop and 35.5 % time stop.
+  - The win rate after spread is 49.2 %. The profit factor is 0.937 gross and 0.924 net.
+  - No same-bar conflict occurred.
+- **Cell 2.** LightGBM scores 0.69113 against 0.69452. The difference is −0.0034, with the
+  upper bound at +0.0028.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

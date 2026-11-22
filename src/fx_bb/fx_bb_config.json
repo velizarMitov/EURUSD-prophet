@@ -1,0 +1,101 @@
+{
+  "family": "fx_bb",
+  "pairs": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF"],
+  "reference_pair": "EURUSD",
+  "paths": {
+    "data": "results/fx_bb/data",
+    "fx_session_data": "results/fx_session/data",
+    "results": "results/fx_bb",
+    "artifacts": "research_models/fx_bb"
+  },
+  "sources": {
+    "EURUSD": "fx_session",
+    "GBPUSD": "fx_session",
+    "AUDUSD": "fx_session",
+    "USDJPY": "fx_bb",
+    "USDCAD": "fx_bb",
+    "USDCHF": "fx_bb"
+  },
+  "pip": {
+    "EURUSD": 0.0001,
+    "GBPUSD": 0.0001,
+    "USDJPY": 0.01,
+    "AUDUSD": 0.0001,
+    "USDCAD": 0.0001,
+    "USDCHF": 0.0001
+  },
+  "data": {
+    "start": {
+      "EURUSD": "2012-01-01",
+      "GBPUSD": "2012-01-01",
+      "USDJPY": "2012-01-01",
+      "AUDUSD": "2012-01-01",
+      "USDCAD": "2012-01-01",
+      "USDCHF": "2015-02-01"
+    },
+    "latest_allowed_start": {
+      "EURUSD": "2012-01-31",
+      "GBPUSD": "2012-01-31",
+      "USDJPY": "2012-01-31",
+      "AUDUSD": "2012-01-31",
+      "USDCAD": "2012-01-31",
+      "USDCHF": "2015-02-28"
+    },
+    "known_gaps": {"GBPUSD": ["2014-03"], "USDCAD": ["2013-05"]},
+    "min_h1_per_d1": 12,
+    "max_spread_pips": 50,
+    "max_bars": 120000,
+    "label_tz": "Europe/Berlin",
+    "day_tz": "America/New_York",
+    "day_close_hour": 17,
+    "lag_check_lags": [-1, 0, 1]
+  },
+  "bands": {"length": 20, "width": 2.0, "ddof": 0},
+  "atr_period": 20,
+  "horizon_days": 3,
+  "cooldown_days": 3,
+  "reference_quorum": 4,
+  "features": {
+    "columns": [
+      "bb_zscore_abs", "bb_width_rank_60d", "rsi_14_dist", "bar_range_vs_atr20", "close_pos_in_bar",
+      "ret_3d_atr", "trend_ma50_alignment", "atr_ratio_20_60", "simultaneous_frac", "breach_side"
+    ],
+    "rsi_period": 14,
+    "sma_slow": 50,
+    "atr_slow": 60,
+    "width_rank_days": 60,
+    "momentum_days": 3
+  },
+  "folds": {
+    "first_eval_start": "2015-01-01",
+    "fold_months": 12,
+    "val_fraction": 0.15,
+    "purge_days": 5,
+    "embargo_days": 5
+  },
+  "lightgbm": {
+    "objective": "binary",
+    "num_leaves": 4,
+    "min_data_in_leaf": 20,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "scoring": {
+    "alpha": 0.025,
+    "family_size": 2,
+    "block_days": 5,
+    "resamples": 10000,
+    "seed": 20261124,
+    "power": 0.8,
+    "parity_tolerance_atr": 0.02
+  }
+}

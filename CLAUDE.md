@@ -232,6 +232,50 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
     - It never writes `models/`. Its frozen artifacts are in `research_models/fx_rates/`.
     - Result (2026-11-21): both LightGBM cells DROP, both MLP cells NOT TRIGGERED.
 
+12. **Bollinger Band (20, 2 SD) mean reversion on D1 is its own family, `fx_bb`
+    (`src/fx_bb/`, openspec change `fx-bb-reversion`, `ARCHITECTURE_DOCS.md §3.17`).**
+    - It covers EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD and USDCHF.
+      - The first three are read-only from the fx_session caches.
+      - USDJPY, USDCAD and USDCHF are in `results/fx_bb/data/`.
+    - D1 bars close at 17:00 New York and are built from the Berlin labels. The close is
+      the mid price.
+    - **USDCHF on this broker is one hour off from 2012-01 to 2014-11**, yet it passes 96 %
+      of the weekly-open check. It therefore starts on 2015-02-01. Each yearly lag check
+      against EURUSD must peak at lag 0, on every refresh and every load.
+    - **Corrupt spreads.** AUDUSD (300 000 points) and USDJPY (3 000 points) carry corrupt
+      spreads on 2014-01-07.
+      - A spread above 50 pips voids any mid price.
+      - fx_session read AUDUSD only through its bid prices, so it is unaffected.
+      - Check the spread field before using a mid price from these caches.
+    - It is **gross of cost**. It has two cells at `alpha = 0.05/2` in
+      `results/fx_bb/fx_bb_hypothesis_log.csv`: the rule itself on every event, and a pooled
+      LightGBM against the base rate. Both use day-block bootstraps. No MLP.
+    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_bb/`.
+    - Result (2026-11-22): both cells DROP. The rule averages +0.014 ATR with a 50.7 % win
+      rate. LightGBM's log-loss is worse than the base rate's.
+
+13. **The same Bollinger events as a trade with an SMA20 exit are their own family, `fx_bb_sma`
+    (`src/fx_bb_sma/`, openspec change `fx-bb-sma-exit`, `ARCHITECTURE_DOCS.md §3.19`).**
+    - **The trade.**
+      - Entry at the D1 mid close of a first breach.
+      - Take profit at `SMA20[t]`, and a stop at the same distance beyond the entry.
+      - Exits scanned hour by hour on H1 bars. A bar touching both levels is a stop.
+      - Time stop at the close of `t+10`, with one open trade per pair.
+    - **Data.** It reads fx_bb's caches and checks read-only and never refreshes them. A test
+      pins its event and feature config blocks to fx_bb's.
+    - **It is the only fx family scored NET of cost.** The cost is the recorded bar spread
+      only, half at entry and half at exit. Slippage, swap and commission are not
+      modelled, so no verdict is a trading result.
+    - **Cells.** Two cells at `alpha = 0.05/2` in
+      `results/fx_bb_sma/fx_bb_sma_hypothesis_log.csv`, using day-block bootstraps keyed by
+      entry date with **10-business-day blocks**, because a trade lives up to 10 days.
+    - **The events were already seen in fx_bb.** Its notes say so.
+    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_bb_sma/`.
+    - Result (2026-11-22): both cells DROP.
+      - The rule averages −0.008 net R. Its exits split 32 / 32 / 35 % between take profit,
+        stop and time stop. Its profit factor is 0.92 net.
+      - LightGBM is within noise of the base rate.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

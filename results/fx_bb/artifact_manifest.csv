@@ -1,0 +1,13 @@
+path,sha256,kind,pair,fold,member,written_at
+research_models/fx_bb/POOLED/fold_00/lightgbm.joblib,3be3d3c7d12161e3a6cd8959e5ae54bab25c20c98c02d391fe90459ce2139b80,lightgbm,POOLED,0,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_01/lightgbm.joblib,61a6f83da3801489cc136e4a47eba2cdef851243d71162149eb823020c6fb803,lightgbm,POOLED,1,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_02/lightgbm.joblib,0b2eb6db010e1022b9214e76baa3dd8eca74b5bef46593071e939cf0bd93ca60,lightgbm,POOLED,2,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_03/lightgbm.joblib,06bc41794f15213ddab7a2e38df31d57b8f959df61092d5e0bcc25dc6aa66440,lightgbm,POOLED,3,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_04/lightgbm.joblib,32462b3cee0af977ab14b0a3e40ed3f9226cd1174ad8cd557e3fe7d25531c207,lightgbm,POOLED,4,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_05/lightgbm.joblib,7901bc9dbe27dc3edae916df2b14cb9f5b5ba3fdfb6ac0832d7cb208ee3aaf84,lightgbm,POOLED,5,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_06/lightgbm.joblib,44e300de002e95df78041193ffa7b62c3f84fda111ab24752829417a2ef23313,lightgbm,POOLED,6,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_07/lightgbm.joblib,990d9f4a15a8c26acbf2efe1a223c07aa479a7666eb013aa9f6a3dd95753b79c,lightgbm,POOLED,7,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_08/lightgbm.joblib,bbe76aafba384229996d26ec815ca18beb2b5c27488534d0ab4426f9e7a68a90,lightgbm,POOLED,8,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_09/lightgbm.joblib,019068a1b26ac5554beb5e2b9518d89c518d6c5447c6cb2acfaced27228f4301,lightgbm,POOLED,9,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_10/lightgbm.joblib,d3d60bfa5475dc68f40445ba3086f0d0de5c83eabb1c8d12f362e89f82e63c6b,lightgbm,POOLED,10,lightgbm,2026-11-22T08:22:44+00:00
+research_models/fx_bb/POOLED/fold_11/lightgbm.joblib,28a11ebbd0f49ec6d2e40bc9abe7df2c640231dc75d3558e18729b2e6646fd8c,lightgbm,POOLED,11,lightgbm,2026-11-22T08:22:44+00:00

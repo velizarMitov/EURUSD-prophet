@@ -1,0 +1,162 @@
+{
+ "stage": "labels",
+ "generated": "2026-11-22T13:24:30+00:00",
+ "config_digest": "9604ad2401749e65927748cd119e3a79c73a7d11fbc54a9cba12d4ae7815f267",
+ "feature_list_digest": "10b6954e8e083316f8d17d1b3e4f1ad7df968152e25673e2f0154ce86f9b0fb5",
+ "power": {
+  "EURUSD": {
+   "cell1": {
+    "trades": 187,
+    "eligible": 187,
+    "dates": 187,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.204872,
+    "mde_dates": 0.204872
+   },
+   "cell2": {
+    "trades": 153,
+    "eligible": 153,
+    "dates": 153,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.613247,
+    "mde_dates": 0.613247
+   }
+  },
+  "GBPUSD": {
+   "cell1": {
+    "trades": 188,
+    "eligible": 186,
+    "dates": 186,
+    "pair gap": 1,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.205422,
+    "mde_dates": 0.205422
+   },
+   "cell2": {
+    "trades": 155,
+    "eligible": 154,
+    "dates": 154,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.612879,
+    "mde_dates": 0.612879
+   }
+  },
+  "USDJPY": {
+   "cell1": {
+    "trades": 191,
+    "eligible": 190,
+    "dates": 190,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.203248,
+    "mde_dates": 0.203248
+   },
+   "cell2": {
+    "trades": 150,
+    "eligible": 149,
+    "dates": 149,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.614757,
+    "mde_dates": 0.614757
+   }
+  },
+  "AUDUSD": {
+   "cell1": {
+    "trades": 197,
+    "eligible": 197,
+    "dates": 197,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.199605,
+    "mde_dates": 0.199605
+   },
+   "cell2": {
+    "trades": 157,
+    "eligible": 157,
+    "dates": 157,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.611795,
+    "mde_dates": 0.611795
+   }
+  },
+  "USDCAD": {
+   "cell1": {
+    "trades": 185,
+    "eligible": 183,
+    "dates": 183,
+    "pair gap": 1,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.207099,
+    "mde_dates": 0.207099
+   },
+   "cell2": {
+    "trades": 150,
+    "eligible": 149,
+    "dates": 149,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 1,
+    "mde_trades": 0.614757,
+    "mde_dates": 0.614757
+   }
+  },
+  "USDCHF": {
+   "cell1": {
+    "trades": 146,
+    "eligible": 146,
+    "dates": 146,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.231861,
+    "mde_dates": 0.231861
+   },
+   "cell2": {
+    "trades": 146,
+    "eligible": 146,
+    "dates": 146,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 0,
+    "mde_trades": 0.61593,
+    "mde_dates": 0.61593
+   }
+  },
+  "pooled": {
+   "cell1": {
+    "trades": 1094,
+    "eligible": 1089,
+    "dates": 821,
+    "pair gap": 2,
+    "corrupt spread": 0,
+    "open at data end": 3,
+    "mde_trades": 0.084897,
+    "mde_dates": 0.097776
+   },
+   "cell2": {
+    "trades": 911,
+    "eligible": 908,
+    "dates": 663,
+    "pair gap": 0,
+    "corrupt spread": 0,
+    "open at data end": 3,
+    "mde_trades": 0.546487,
+    "mde_dates": 0.554402
+   }
+  }
+ }
+}

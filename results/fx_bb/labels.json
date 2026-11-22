@@ -1,0 +1,197 @@
+{
+ "stage": "labels",
+ "generated": "2026-11-22T08:15:09+00:00",
+ "config_digest": "97c5e9099a87813a983e92aa370a41bd158294cbdcbe244bfd9b501a2814a787",
+ "feature_list_digest": "10b6954e8e083316f8d17d1b3e4f1ad7df968152e25673e2f0154ce86f9b0fb5",
+ "power": {
+  "EURUSD": {
+   "cell1": {
+    "events": 224,
+    "eligible": 224,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 224,
+    "targets": 224,
+    "target_dates": 224,
+    "sd": 1.130998,
+    "mde_events": 0.21171,
+    "mde_dates": 0.21171
+   },
+   "cell2": {
+    "events": 186,
+    "eligible": 186,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 186,
+    "targets": 186,
+    "target_dates": 186,
+    "mde_events": 0.602711,
+    "mde_dates": 0.602711
+   }
+  },
+  "GBPUSD": {
+   "cell1": {
+    "events": 222,
+    "eligible": 220,
+    "pair_gap": 1,
+    "no_outcome": 1,
+    "ties": 0,
+    "dates": 220,
+    "targets": 220,
+    "target_dates": 220,
+    "sd": 1.169023,
+    "mde_events": 0.220808,
+    "mde_dates": 0.220808
+   },
+   "cell2": {
+    "events": 180,
+    "eligible": 179,
+    "pair_gap": 0,
+    "no_outcome": 1,
+    "ties": 0,
+    "dates": 179,
+    "targets": 179,
+    "target_dates": 179,
+    "mde_events": 0.6047,
+    "mde_dates": 0.6047
+   }
+  },
+  "USDJPY": {
+   "cell1": {
+    "events": 221,
+    "eligible": 221,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 221,
+    "targets": 221,
+    "target_dates": 221,
+    "sd": 1.239695,
+    "mde_events": 0.233627,
+    "mde_dates": 0.233627
+   },
+   "cell2": {
+    "events": 172,
+    "eligible": 172,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 172,
+    "targets": 172,
+    "target_dates": 172,
+    "mde_events": 0.606809,
+    "mde_dates": 0.606809
+   }
+  },
+  "AUDUSD": {
+   "cell1": {
+    "events": 217,
+    "eligible": 217,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 217,
+    "targets": 217,
+    "target_dates": 217,
+    "sd": 1.089628,
+    "mde_events": 0.20723,
+    "mde_dates": 0.20723
+   },
+   "cell2": {
+    "events": 173,
+    "eligible": 173,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 173,
+    "targets": 173,
+    "target_dates": 173,
+    "mde_events": 0.6065,
+    "mde_dates": 0.6065
+   }
+  },
+  "USDCAD": {
+   "cell1": {
+    "events": 214,
+    "eligible": 213,
+    "pair_gap": 1,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 213,
+    "targets": 213,
+    "target_dates": 213,
+    "sd": 1.115609,
+    "mde_events": 0.214154,
+    "mde_dates": 0.214154
+   },
+   "cell2": {
+    "events": 175,
+    "eligible": 175,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 0,
+    "dates": 175,
+    "targets": 175,
+    "target_dates": 175,
+    "mde_events": 0.60589,
+    "mde_dates": 0.60589
+   }
+  },
+  "USDCHF": {
+   "cell1": {
+    "events": 167,
+    "eligible": 167,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 1,
+    "dates": 167,
+    "targets": 166,
+    "target_dates": 166,
+    "sd": 1.156,
+    "mde_events": 0.250613,
+    "mde_dates": 0.250613
+   },
+   "cell2": {
+    "events": 167,
+    "eligible": 167,
+    "pair_gap": 0,
+    "no_outcome": 0,
+    "ties": 1,
+    "dates": 167,
+    "targets": 166,
+    "target_dates": 166,
+    "mde_events": 0.608723,
+    "mde_dates": 0.608723
+   }
+  },
+  "pooled": {
+   "cell1": {
+    "events": 1265,
+    "eligible": 1262,
+    "pair_gap": 2,
+    "no_outcome": 1,
+    "ties": 1,
+    "dates": 928,
+    "targets": 1261,
+    "target_dates": 928,
+    "sd": 1.151782,
+    "mde_events": 0.090833,
+    "mde_dates": 0.105925
+   },
+   "cell2": {
+    "events": 1053,
+    "eligible": 1052,
+    "pair_gap": 0,
+    "no_outcome": 1,
+    "ties": 1,
+    "dates": 751,
+    "targets": 1051,
+    "target_dates": 751,
+    "mde_events": 0.543209,
+    "mde_dates": 0.551116
+   }
+  }
+ }
+}
