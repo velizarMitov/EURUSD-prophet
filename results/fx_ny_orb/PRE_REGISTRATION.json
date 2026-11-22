@@ -1,0 +1,85 @@
+{
+ "alpha_per_cell": 0.025,
+ "block_days": 5,
+ "cells": {
+  "orb_hot_minus_cold": "mean net R of hot-day trades - mean net R of non-hot trades > 0",
+  "orb_hot_net_r": "mean net R of hot-day trades > 0 (pooled EURUSD+GBPUSD)"
+ },
+ "change": "fx-ny-orb-hot",
+ "chart_gate": "a live entry sign is exported only when orb_hot_net_r is KEEP",
+ "config_digest": "cb6fd6a7d4f3b830d5b2d640eaa935cbc90c65b4e378fe4851aae29f5d056c41",
+ "declared_sd_r": 1.5,
+ "facts": [
+  "HAR-X (OLS on fx_nyvol's 14 features) was chosen after its range MSE was seen in fx-ny-volatility (2026-11-22, descriptive line, MSE 0.80x / 0.85x HAR); its walk-forward predictions are reused unchanged.",
+  "The breakout outcomes on these days were not computed or looked at before this pre-registration.",
+  "Earlier fx families: fx-fibonacci, fx-session-ny, fx-rates-2y, fx-bb-reversion and fx-bb-sma-exit were DROP; fx-ny-volatility LightGBM vs HAR KEEP for both pairs."
+ ],
+ "family_size": 2,
+ "forward": {
+  "alpha_per_cell": 0.025,
+  "cells": [
+   "EURUSD_harx_vs_har",
+   "GBPUSD_harx_vs_har"
+  ],
+  "deadline": "2028-01-31",
+  "frozen_fit_end": "2026-11-20",
+  "min_days": 270
+ },
+ "power": {
+  "cold": {
+   "breakout too far": 202,
+   "corrupt spread": 0,
+   "dates": 1290,
+   "days": 3701,
+   "mde_dates": 0.117004,
+   "mde_trades": 0.095141,
+   "no M15 data": 0,
+   "no breakout": 19,
+   "no forecast": 2,
+   "no range": 0,
+   "range too wide": 1506,
+   "simulable": 3701,
+   "too late": 21,
+   "trades": 1951
+  },
+  "hot": {
+   "breakout too far": 7,
+   "corrupt spread": 0,
+   "dates": 121,
+   "days": 415,
+   "mde_dates": 0.382034,
+   "mde_trades": 0.322308,
+   "no M15 data": 0,
+   "no breakout": 1,
+   "no forecast": 0,
+   "no range": 0,
+   "range too wide": 235,
+   "simulable": 415,
+   "too late": 2,
+   "trades": 170
+  }
+ },
+ "resamples": 10000,
+ "rule": {
+  "breakout_from": "15:00",
+  "breakout_max_f": 0.25,
+  "entry_before": "19:00",
+  "last_bar": "20:45",
+  "or_bars": [
+   "14:00",
+   "14:15",
+   "14:30",
+   "14:45"
+  ],
+  "or_width_max_f": 0.5,
+  "slippage_bps": 0.4,
+  "stop_f": 0.25,
+  "target_f": 0.6,
+  "tie_rule": "stop_wins"
+ },
+ "seed": 20261127,
+ "window": [
+  "2018-08-08",
+  "2026-08-07"
+ ]
+}

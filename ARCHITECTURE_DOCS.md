@@ -2039,6 +2039,58 @@ in the gitignored `research_models/fx_bb_sma/`.
 - **Cell 2.** LightGBM scores 0.69113 against 0.69452. The difference is −0.0034, with the
   upper bound at +0.0028.
 
+### 3.20 NY opening-range breakout on hot days, the frozen range forecast and the MT5 chart: the `fx_ny_orb` family (openspec change `fx-ny-orb-hot`; research plus a display-only live layer, NET of the recorded spread)
+
+**What it asks.** Does the owner's New York breakout make money, net of cost, on the days the range
+forecast (§3.18) calls hot? It also asks whether the frozen linear HAR-X beats HAR on live data.
+
+The code is in `src/fx_ny_orb/`, the results in `results/fx_ny_orb/` (README and
+`forward/RUNBOOK.md`), the frozen models in the gitignored `research_models/fx_ny_orb/`, and the
+indicator in `mql5/Indicators/ProphetNYOrb.mq5`.
+
+**[B] Historical.**
+- **Bars.** M15 mid bars from the M1 parquets (2018-08-08 .. 2026-08-07), with each bar's median
+  spread.
+- **Forecast.** fx_nyvol's saved walk-forward `p_harx` and causal Q75 define the hot days and
+  `F = exp(p_harx) × close14`, read-only and never refitted.
+- **The rule.** The opening range is the M15 bars 14:00–14:45 Berlin. The first M15 close outside it
+  from 15:00 triggers an entry at the next open, if:
+  - the range is ≤ 0.50 F;
+  - the breakout is ≤ 0.25 F beyond the level;
+  - the entry is before 19:00.
+- **Exits.** SL 0.25 F and TP 0.60 F. A same-bar conflict counts as SL. The forced exit is the 20:45
+  close, with one trade per day.
+- **Costs.** Half the spread at entry and at exit, plus 0.4 bps.
+- **Cells.** Two, at 0.05/2: the hot mean net R is above 0, and hot beats non-hot.
+  - A four-series day-block bootstrap, 5 days; with no cold trades it reproduces fx_bb's ratio
+    bootstrap exactly.
+  - **Outcomes are computed only after `PRE_REGISTRATION.md` and `.json` are committed**, checked
+    through git by `prereg.gate`.
+- **Power, before any outcome.** 170 hot trades on 121 dates, so the minimum detectable mean is
+  0.32 R. The range-width condition removes 57 % of hot days.
+
+**[A] Forward.**
+- **Frozen models.** OLS HAR-X and HAR, fitted to 2026-11-20 and pinned by digest. They reproduce
+  fx_nyvol's last-fold HAR-X within 1e-6.
+- **Three live passes,** read-only on MT5, on the real Berlin label clock (never the last tick):
+  - **forecast** at 16:05 Sofia, after the 14:00 bar closes;
+  - **signal** every 15 minutes, 16:01–20:01, using closed bars plus only the open of the bar in
+    progress;
+  - **settle** at 23:05.
+- **Logs.** Append-only and never backfilled; a missed signal pass is marked `missed`.
+- **Cells.** `EURUSD/GBPUSD_harx_vs_har` at 0.05/2, scored once after 270 settled days per pair or on
+  2028-01-31.
+
+**[C] Chart.**
+- **The file.** Each pass rebuilds `Common\Files\EURUSDProphet\ny_orb.tsv`, written atomically.
+  Python writes every price, time and text, in BG and EN.
+- **The indicator** draws the opening-range box and its lines, the forecast band (size, not
+  direction; red when hot), the realised range, and past simulated trades.
+- **The gate.** A live entry arrow with SL/TP is exported **only when `orb_hot_net_r` is KEEP**, today
+  is hot and a signal is logged. That is the owner's decision.
+- **No execution.** The indicator places no order. It compiles with 0 errors and 0 warnings in all
+  local terminals.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

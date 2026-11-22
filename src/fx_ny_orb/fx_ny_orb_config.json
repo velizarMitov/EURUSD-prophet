@@ -1,0 +1,61 @@
+{
+  "family": "fx_ny_orb",
+  "pairs": ["EURUSD", "GBPUSD"],
+  "factor_pairs": ["EURUSD", "GBPUSD", "AUDUSD"],
+  "paths": {
+    "results": "results/fx_ny_orb",
+    "artifacts": "research_models/fx_ny_orb",
+    "fx_nyvol_results": "results/fx_nyvol",
+    "m1": {
+      "EURUSD": "results/curl/raw/EURUSD_M1.parquet",
+      "GBPUSD": "results/curl/raw/GBPUSD_M1.parquet"
+    }
+  },
+  "pip": {"EURUSD": 0.0001, "GBPUSD": 0.0001, "AUDUSD": 0.0001},
+  "data": {
+    "window_start": "2018-08-08",
+    "window_end": "2026-08-07",
+    "max_spread_pips": 50,
+    "label_tz": "Europe/Berlin"
+  },
+  "rule": {
+    "or_bars": ["14:00", "14:15", "14:30", "14:45"],
+    "breakout_from": "15:00",
+    "entry_before": "19:00",
+    "last_bar": "20:45",
+    "or_width_max_f": 0.50,
+    "breakout_max_f": 0.25,
+    "stop_f": 0.25,
+    "target_f": 0.60,
+    "slippage_bps": 0.4,
+    "tie_rule": "stop_wins"
+  },
+  "frozen": {"fit_end": "2026-11-20"},
+  "forward": {
+    "min_days": 270,
+    "deadline": "2028-01-31",
+    "h1_bars": 4000,
+    "m15_bars": 600,
+    "forecast_after": "15:00",
+    "settle_after": "22:00",
+    "signal_until": "19:01",
+    "hot_window_days": 60,
+    "hot_quantile": 0.75
+  },
+  "scoring": {
+    "alpha": 0.025,
+    "family_size": 2,
+    "block_days": 5,
+    "resamples": 10000,
+    "seed_historical": 20261127,
+    "seed_forward": 20261128,
+    "power": 0.8,
+    "declared_sd_r": 1.5,
+    "max_dropped_resamples": 0.01
+  },
+  "export": {
+    "subdir": "EURUSDProphet",
+    "file": "ny_orb.tsv",
+    "display_days": 60
+  }
+}

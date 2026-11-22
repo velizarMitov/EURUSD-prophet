@@ -1,0 +1,109 @@
+{
+ "stage": "labels",
+ "generated": "2026-11-22T15:04:52+00:00",
+ "config_digest": "cb6fd6a7d4f3b830d5b2d640eaa935cbc90c65b4e378fe4851aae29f5d056c41",
+ "power": {
+  "EURUSD": {
+   "hot": {
+    "days": 230,
+    "simulable": 230,
+    "trades": 84,
+    "dates": 84,
+    "no range": 0,
+    "range too wide": 142,
+    "no breakout": 0,
+    "breakout too far": 4,
+    "too late": 0,
+    "no forecast": 0,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.458517,
+    "mde_dates": 0.458517
+   },
+   "cold": {
+    "days": 1828,
+    "simulable": 1828,
+    "trades": 986,
+    "dates": 986,
+    "no range": 0,
+    "range too wide": 718,
+    "no breakout": 13,
+    "breakout too far": 99,
+    "too late": 11,
+    "no forecast": 1,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.133831,
+    "mde_dates": 0.133831
+   }
+  },
+  "GBPUSD": {
+   "hot": {
+    "days": 185,
+    "simulable": 185,
+    "trades": 86,
+    "dates": 86,
+    "no range": 0,
+    "range too wide": 93,
+    "no breakout": 1,
+    "breakout too far": 3,
+    "too late": 2,
+    "no forecast": 0,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.453154,
+    "mde_dates": 0.453154
+   },
+   "cold": {
+    "days": 1873,
+    "simulable": 1873,
+    "trades": 965,
+    "dates": 965,
+    "no range": 0,
+    "range too wide": 788,
+    "no breakout": 6,
+    "breakout too far": 103,
+    "too late": 10,
+    "no forecast": 1,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.135279,
+    "mde_dates": 0.135279
+   }
+  },
+  "pooled": {
+   "hot": {
+    "days": 415,
+    "simulable": 415,
+    "trades": 170,
+    "dates": 121,
+    "no range": 0,
+    "range too wide": 235,
+    "no breakout": 1,
+    "breakout too far": 7,
+    "too late": 2,
+    "no forecast": 0,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.322308,
+    "mde_dates": 0.382034
+   },
+   "cold": {
+    "days": 3701,
+    "simulable": 3701,
+    "trades": 1951,
+    "dates": 1290,
+    "no range": 0,
+    "range too wide": 1506,
+    "no breakout": 19,
+    "breakout too far": 202,
+    "too late": 21,
+    "no forecast": 2,
+    "no M15 data": 0,
+    "corrupt spread": 0,
+    "mde_trades": 0.095141,
+    "mde_dates": 0.117004
+   }
+  }
+ }
+}

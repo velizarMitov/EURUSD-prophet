@@ -294,6 +294,24 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
       non-linearity helps. Do not cite LightGBM or the MLP as the best range model. Using
       HAR-X needs its own pre-registration.
 
+15. **The NY opening-range breakout on hot days is its own family, `fx_ny_orb` (`src/fx_ny_orb/`,
+    openspec change `fx-ny-orb-hot`, `ARCHITECTURE_DOCS.md §3.20`).**
+    - **[B] Historical.** The owner's M15 breakout rule, 2018-08 .. 2026-08, net of the recorded
+      spread plus 0.4 bps.
+      - Two cells at `alpha = 0.05/2` in `results/fx_ny_orb/fx_ny_orb_hypothesis_log.csv`.
+      - **No outcome may be computed before `PRE_REGISTRATION.md` and `.json` are committed.**
+        `prereg.gate` checks git.
+    - **[A] Forward.** A frozen OLS HAR-X against HAR on live days, two cells at `alpha = 0.05/2`,
+      scored at 270 days or 2028-01-31.
+    - **The clock.** Live passes use real time on the Berlin label clock, **never MT5's last
+      tick**: a stale weekend tick once backfilled Friday. The logs are append-only and never
+      backfilled.
+    - **[C] The chart.** `ProphetNYOrb.mq5` draws from `Common\Files\EURUSDProphet\ny_orb.tsv`.
+      - **A live entry arrow exists only behind a historical KEEP of `orb_hot_net_r`** (the owner's
+        gate).
+      - The indicator never places an order, and its text never names a lot or a promise.
+    - It never writes `models/`, another family's files, the M1 parquets or the horizon-study cache.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.
