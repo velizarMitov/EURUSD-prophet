@@ -57,7 +57,7 @@
 
   Generate it on the real data.
 - [x] 4.2 Implement `prereg.py`. It writes `PRE_REGISTRATION.md` and `.json` (the rule, costs, cells, window, config digest, the power table from labels.json, and the HAR-X selection fact), and adds the git gate. Verify with tests that the gate refuses an untracked, a modified and a missing file and passes a clean committed one, using a temporary git repo. Generate both files.
-- [ ] 4.3 **Owner step:** review and commit `results/fx_ny_orb/PRE_REGISTRATION.md` and `.json`. Verify that `python -m src.fx_ny_orb.prereg --check` reports both files committed and unchanged.
+- [x] 4.3 **Owner step:** review and commit `results/fx_ny_orb/PRE_REGISTRATION.md` and `.json`. Verify that `python -m src.fx_ny_orb.prereg --check` reports both files committed and unchanged.
 
 ## 5. Historical simulation and scoring
 
@@ -79,7 +79,7 @@
   - five example trades by a fixed rule.
 
   Verify with tests that two builds differ only in the generation line, and that nothing appears before scoring.
-- [ ] 5.3 Run the real historical scoring once, after task 4.3. Verify that the registry has exactly two rows and every other registry is byte-identical, then build the report twice.
+- [x] 5.3 Run the real historical scoring once, after task 4.3. Verify that the registry has exactly two rows and every other registry is byte-identical, then build the report twice.
 
 ## 6. Frozen models and live passes
 
@@ -113,7 +113,7 @@
   - the file is replaced atomically, since a reader never sees a partial file;
   - nothing in `src/` reads it back.
 - [x] 7.2 Write `mql5/Indicators/ProphetNYOrb.mq5`, per the chart-display spec and design D8. Write `scripts/fx_ny_orb/install_mt5_indicator.ps1` and `uninstall_mt5_indicator.ps1`, modelled on the gold scripts. Verify that the install script compiles the indicator in every local terminal with 0 errors, and attach the compile log to the README.
-- [ ] 7.3 Write `scripts/fx_ny_orb/install_tasks.ps1` and `uninstall_tasks.ps1`, for the three scheduled tasks, Monday to Friday, local time: the forecast at 16:05, the signal every 15 minutes from 16:01 to 20:01, and the settlement at 23:05. Verify with a dry-run flag that prints the task definitions without registering them. **Owner step:** run the installer.
+- [x] 7.3 Write `scripts/fx_ny_orb/install_tasks.ps1` and `uninstall_tasks.ps1`, for the three scheduled tasks, Monday to Friday, local time: the forecast at 16:05, the signal every 15 minutes from 16:01 to 20:01, and the settlement at 23:05. Verify with a dry-run flag that prints the task definitions without registering them. **Owner step:** run the installer.
 
 ## 8. Docs and integration
 

@@ -311,6 +311,9 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
         gate).
       - The indicator never places an order, and its text never names a lot or a promise.
     - It never writes `models/`, another family's files, the M1 parquets or the horizon-study cache.
+    - Result (2026-11-22): both historical cells DROP. Hot days average −0.164 net R over 170 trades
+      (non-hot −0.031 R over 1 951), with 66 % of hot trades stopped out. The live entry arrow stays
+      off; the chart shows the range, band and realised range only.
 
 ## Notebook specifics
 
