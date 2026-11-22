@@ -1,0 +1,84 @@
+{
+  "family": "fx_nyvol",
+  "pairs": ["EURUSD", "GBPUSD"],
+  "factor_pairs": ["EURUSD", "GBPUSD", "AUDUSD"],
+  "paths": {
+    "fx_session_data": "results/fx_session/data",
+    "results": "results/fx_nyvol",
+    "artifacts": "research_models/fx_nyvol"
+  },
+  "data": {
+    "history_start": "2012-01-01",
+    "known_gaps": {"GBPUSD": ["2014-03"]},
+    "min_h1_per_d1": 12,
+    "label_tz": "Europe/Berlin",
+    "max_spread_pips": 50,
+    "pip": {"EURUSD": 0.0001, "GBPUSD": 0.0001, "AUDUSD": 0.0001}
+  },
+  "session": {
+    "entry_hour": 14,
+    "exit_hour": 21,
+    "target_hours": [15, 21],
+    "asia_hours": [0, 8],
+    "london_hours": [9, 13],
+    "data_hour": 14,
+    "pre_hours": [0, 14],
+    "range_window_days": 20,
+    "har_windows": [1, 5, 20],
+    "fomc_dates": "results/fomc_dates.csv"
+  },
+  "features": {
+    "columns": [
+      "log_ny_range_lag1", "log_ny_range_ma5", "log_ny_range_ma20",
+      "log_asia_range", "log_london_range", "log_data_hour_range", "abs_data_hour_return",
+      "london_range_ratio", "data_hour_range_ratio", "cross_pre_range_ratio",
+      "day_of_week", "is_nfp_day", "is_fomc_day", "dst_mismatch"
+    ],
+    "har_columns": ["log_ny_range_lag1", "log_ny_range_ma5", "log_ny_range_ma20"]
+  },
+  "folds": {
+    "first_eval_start": "2013-01-01",
+    "fold_months": 6,
+    "val_fraction": 0.15,
+    "embargo_days": 1
+  },
+  "lightgbm": {
+    "objective": "l2",
+    "num_leaves": 7,
+    "min_data_in_leaf": 50,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "mlp": {
+    "hidden": [32, 16],
+    "dropout": [0.2, 0.2],
+    "lr": 0.001,
+    "weight_decay": 0.001,
+    "batch_size": 256,
+    "max_epochs": 300,
+    "patience": 20,
+    "plateau_factor": 0.5,
+    "plateau_patience": 8,
+    "seeds": [11, 22, 33, 44, 55],
+    "allow_cpu": false
+  },
+  "scoring": {
+    "alpha": 0.0125,
+    "family_size": 4,
+    "block_days": 5,
+    "resamples": 10000,
+    "seed": 20261126,
+    "power": 0.8,
+    "hot_quantile": 0.75,
+    "hot_window_days": 60
+  }
+}

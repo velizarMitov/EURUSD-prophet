@@ -276,6 +276,24 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
         stop and time stop. Its profit factor is 0.92 net.
       - LightGBM is within noise of the base rate.
 
+14. **The New York session range is its own family, `fx_nyvol` (`src/fx_nyvol/`, openspec change
+    `fx-ny-volatility`, `ARCHITECTURE_DOCS.md §3.18`).**
+    - **Target.** `y = log(mid range of the bars labelled 15:00–21:00 Berlin / mid close14)`
+      for EURUSD and GBPUSD. Features come at the close of the 14:00 bar.
+    - **Data.** It reads fx_session's caches and helpers read-only. Eligibility is joint for
+      both pairs, and a spread above 50 pips voids the day.
+    - It is **gross of cost** and has its own registry,
+      `results/fx_nyvol/fx_nyvol_hypothesis_log.csv`: four cells at `alpha = 0.05/4` with
+      5-day blocks. It never touches the production volatility family or the `0.05/9` bar.
+    - It never writes `models/`. Its frozen artifacts are in `research_models/fx_nyvol/`.
+    - Result (2026-11-22):
+      - LightGBM vs HAR is KEEP for both pairs (−9.6 % and −6.2 % MSE).
+      - The MLP vs LightGBM is KEEP for EURUSD and DROP for GBPUSD.
+    - **The descriptive linear HAR-X beats both non-linear models** (MSE 0.80 and 0.85 ×
+      HAR's). The KEEPs show that pre-session information predicts the range, not that
+      non-linearity helps. Do not cite LightGBM or the MLP as the best range model. Using
+      HAR-X needs its own pre-registration.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

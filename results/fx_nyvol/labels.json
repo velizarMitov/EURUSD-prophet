@@ -1,0 +1,34 @@
+{
+ "stage": "labels",
+ "generated": "2026-11-22T13:38:01+00:00",
+ "config_digest": "570a8661f04063660b0ab4d4b5f40059c4e22f1391cf4b8c3f7356af228fd855",
+ "feature_list_digest": "4554bab416ee4ab8cd10803b3d49534fef1112e0b465bf80d066bea4a900c8e0",
+ "pairs": {
+  "EURUSD": {
+   "weekdays": 3875,
+   "eligible": 3692,
+   "oos": 3475,
+   "mde_sd": 0.05229973587618308,
+   "exclusions": {
+    "incomplete session": 42,
+    "unverified clock week": 116,
+    "missing pre-session bar": 4,
+    "corrupt spread": 1,
+    "warm-up": 20
+   }
+  },
+  "GBPUSD": {
+   "weekdays": 3875,
+   "eligible": 3692,
+   "oos": 3475,
+   "mde_sd": 0.05229973587618308,
+   "exclusions": {
+    "incomplete session": 42,
+    "unverified clock week": 116,
+    "missing pre-session bar": 4,
+    "corrupt spread": 1,
+    "warm-up": 20
+   }
+  }
+ }
+}

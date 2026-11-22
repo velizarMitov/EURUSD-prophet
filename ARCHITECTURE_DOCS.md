@@ -1939,9 +1939,55 @@ the gitignored `research_models/fx_bb/`.
 - **Cell 2.** LightGBM's log-loss is 0.69967 against the base rate's 0.69616. The upper
   bound is +0.0097, and accuracy is 50.9 % on 1 048 events.
 
-### 3.19 Bollinger first breach as a trade, exit at SMA20: the `fx_bb_sma` family (openspec change `fx-bb-sma-exit`; research-only, NET of the recorded spread)
+### 3.18 The New York session range: the `fx_nyvol` family (openspec change `fx-ny-volatility`; research-only, GROSS of cost)
 
-(§3.18 is reserved by the pending change `fx-ny-volatility`.)
+**What it asks.** Can the size of the 16:00–23:00 Sofia session be forecast at 16:00 Sofia
+better than from its own history? Its direction could not be (§3.15).
+- **Target.** `y = log((mid high − mid low) / mid close14)` over the bars labelled
+  15:00–21:00 Berlin, for EURUSD and GBPUSD.
+- **Features.** 14, known at the close of the bar labelled 14:00:
+  - the HAR lags (1, 5 and 20 previous target days);
+  - the Asia, London and data-hour log ranges and the absolute data-hour return;
+  - the London and data-hour range ratios;
+  - a cross-pair morning range ratio over EURUSD, GBPUSD and AUDUSD;
+  - the calendar flags.
+
+The code is in `src/fx_nyvol/`, the results in `results/fx_nyvol/`, and the frozen artifacts in
+the gitignored `research_models/fx_nyvol/`.
+
+**Data and eligibility.**
+- The fx_session H1 caches and its helpers are used read-only: `session_calendar`,
+  `hour_grid`, `_window`, `_ratio_to_mean`, `calendar_block` and the 6-month folds.
+- **Eligibility is joint for both pairs:** the session calendar, complete 00:00–14:00 bars
+  for all three pairs, and no spread above 50 pips.
+- A truncation test on the real caches cuts every bar after 14:00 and proves each row
+  unchanged.
+- The data hour's range is floored at one point before the log.
+
+**Evaluation.**
+- **Folds.** 6-month expanding folds from 2013-01-01, with a 1-day embargo and the last
+  15 % for validation. That gives 28 folds and 3 475 out-of-sample days per pair.
+- **The reference** is a HAR OLS fitted on each fold's training days.
+- **LightGBM** uses the `l2` objective with fx_session's settings.
+- **The MLP** is a 32-16 network with an MSE loss on the standardised target, the mean of
+  5 seeds, CUDA only. It trains only behind a LightGBM KEEP.
+- **Four cells at `alpha = 0.05/4`,** scored once on the per-day squared-error difference
+  with a 5-day block bootstrap (`fx_fib.score.test_cell`). Untriggered alpha is never
+  reassigned.
+- **The report** gives MSE, MAE, R², the ratio to HAR and Spearman. It adds the causal-Q75
+  hot-session precision and recall, the MSE per year, fold and event day, a bid parity
+  line, and the descriptive **HAR-X**: the same OLS on all 14 features.
+
+**Result (2026-11-22):**
+- LightGBM vs HAR is **KEEP** for both pairs: −9.6 % MSE for EURUSD and −6.2 % for GBPUSD.
+- The MLP vs LightGBM is **KEEP for EURUSD** (−3.0 %) and **DROP for GBPUSD** (−0.7 %).
+- **The descriptive HAR-X beats both non-linear models.** Its MSE is 0.80 × HAR's (EURUSD)
+  and 0.85 × (GBPUSD), against 0.88–0.94 for LightGBM and the MLP. Its R² is 0.41 and 0.38.
+- **So the KEEPs establish that pre-session information predicts the New York range. They
+  do not establish that a non-linear model helps.**
+- Promoting HAR-X would be a new, separately pre-registered hypothesis.
+
+### 3.19 Bollinger first breach as a trade, exit at SMA20: the `fx_bb_sma` family (openspec change `fx-bb-sma-exit`; research-only, NET of the recorded spread)
 
 **What it asks.** The owner's practical version of §3.17 on the same events:
 - **Entry.** At the D1 mid close of a first Bollinger (20, 2) breach.
