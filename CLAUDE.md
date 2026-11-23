@@ -315,6 +315,32 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
       (non-hot −0.031 R over 1 951), with 66 % of hot trades stopped out. The live entry arrow stays
       off; the chart shows the range, band and realised range only.
 
+16. **Bollinger Bands and the NY session range on gold are their own family, `gold_bbnr`
+    (`src/gold_bbnr/`, openspec change `gold-bb-nyrange`, `ARCHITECTURE_DOCS.md §3.21`).**
+    - **Inputs.** It reads `results/gold/gold_h1.csv` read-only, with the gold clock check. It
+      lives outside `src/gold/` and never touches `gold_config*.json` or the gold registries.
+    - **The dollar index.**
+      - It is fetched once into `results/gold_bbnr/data/`: hourly from MT5 `USDIndDec26` (from
+        2017; the contract expires on 2026-12-11) and daily from Yahoo `DX-Y.NYB`.
+      - Both caches are pinned by digest in the pre-registration. **Never refetch them.**
+      - The hourly series is lag-0-checked against EURUSD on every load.
+    - **Gross of cost on bid prices**; no verdict is a trading result.
+    - **Registries.** There are three: `gold_bb` (2 cells), `gold_bb_sma` (2 cells) and `gold_nyvol`
+      (3 cells, HAR-X vs HAR, LightGBM vs HAR-X, MLP vs HAR-X). Each cell is scored once.
+      **No outcome may be computed before `results/gold_bbnr/PRE_REGISTRATION.md` and `.json` are
+      committed**; `prereg.gate` checks git, the config digest and the cache digests.
+    - **Power.** The Bollinger cells are weak: gold has about 180 first breaches in 2015–2026.
+    - It never writes `models/`. Its frozen Part 2 models are in `research_models/gold_bbnr/`.
+    - Result (2026-11-23):
+      - All four Bollinger cells DROP. The reversion rule averages −0.251 ATR, and the SMA20 trade
+        averages −0.087 R.
+      - Gold tends to keep going after a breach. That is descriptive only and must never be cited
+        as an edge.
+      - In the range family, HAR-X vs HAR is KEEP, at 0.847 × HAR's MSE. LightGBM and the MLP are
+        both DROP against HAR-X.
+      - The linear HAR-X is the best range model, as in fx_nyvol. Using it live needs its own
+        pre-registration.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

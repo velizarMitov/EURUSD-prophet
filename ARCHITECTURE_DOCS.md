@@ -2091,6 +2091,76 @@ indicator in `mql5/Indicators/ProphetNYOrb.mq5`.
 - **No execution.** The indicator places no order. It compiles with 0 errors and 0 warnings in all
   local terminals.
 
+**Result (2026-11-22).** Both historical cells were DROP: hot days average −0.164 net R over 170 trades
+(non-hot −0.031 R). The live arrow stays off.
+
+### 3.21 Bollinger Bands and the New York session range on gold: the `gold_bbnr` family (openspec change `gold-bb-nyrange`; research-only, GROSS of cost on bid prices)
+
+**What it asks.** Do the currency ideas of §3.17–§3.19 hold on gold (XAUUSD)?
+- Part 1a asks whether Bollinger first breaches revert.
+- Part 1b asks whether they pay as an SMA20-exit trade.
+- Part 2 asks whether pre-session information predicts the size of the 15:00–21:00 Berlin range.
+
+The code is in `src/gold_bbnr/`, the results in `results/gold_bbnr/` (README there), and the frozen
+Part 2 models in the gitignored `research_models/gold_bbnr/`.
+
+**Inputs.**
+- **Gold H1.** The gold family's cache, `results/gold/gold_h1.csv`, read-only, 2015-01-02 ..
+  2026-11-20. Its clock is checked by `src.gold.clock.verify`. D1 bars close at 17:00 New York, as in
+  fx_bb. Prices are bid only and there is no cost model, so no verdict is a trading result.
+- **The dollar index, fetched once and pinned by digest in the pre-registration.**
+  - Hourly: MT5 ActivTrades `USDIndDec26`, from 2017-01-03. Every load checks that its returns mirror
+    EURUSD's at lag 0 in each year (−0.90 to −0.95). The contract expires on 2026-12-11, so the cache
+    is never refetched.
+  - Daily: Yahoo `DX-Y.NYB`. Only closes dated before the gold day are used.
+
+**The three parts.**
+- **Part 1a, `gold_bb_hypothesis_log.csv`.** fx_bb's events (3-day cooldown) and the outcome
+  `r = dir × (close[t+3] − close[t]) / ATR20`.
+  - The model is LightGBM on 11 features: fx_bb's set without the cross-pair feature, plus two
+    previous-day DXY features signed by the event direction.
+- **Part 1b, `gold_bb_sma_hypothesis_log.csv`.** fx_bb_sma's trade: TP at SMA20 and a symmetric stop.
+  - Exits are scanned on H1 bars. A tie is a stop. A gap through the stop fills at the open; a gap
+    through the target fills at the level.
+  - The time stop is at t+10, with one open trade at a time.
+- **Part 2, `gold_nyvol_hypothesis_log.csv`.** fx_nyvol's target and features, with the DXY pre-session
+  range ratio in place of the three-pair ratio.
+  - The models are HAR, HAR-X, LightGBM and a 5-seed CUDA MLP, all on the same rows.
+  - Folds are 6 months from 2018-01-01.
+
+**Cells and folds.**
+- Parts 1a and 1b each have two cells at 0.05/2: the rule's mean above 0, and LightGBM log-loss below
+  the fit-slice base rate.
+- Part 2 has three independent cells at 0.05/3: HAR-X vs HAR, LightGBM vs HAR-X, and MLP vs HAR-X.
+- Scoring uses fx_bb's ratio day-block bootstrap, with 5, 10 and 5-day blocks.
+- The Part 1 folds are 12 months from 2018. A fold with fewer than 60 training rows predicts nothing.
+
+**Gates.**
+- The label report reads no outcome, exit or target.
+- Every outcome stage first runs `prereg.gate`, which checks git, the config digest and the three
+  cache digests.
+
+**Power, before any outcome.**
+- Part 1a: 173 rule events, so the minimum detectable mean is 0.257 ATR. 106 model events (folds from
+  2020), so the minimum detectable accuracy is 0.636.
+- Part 1b: at most 179 trades, so the minimum detectable mean is at least 0.209 R.
+- Part 2: 2 211 scored days, so the minimum detectable difference is 0.063 SD.
+- The Bollinger cells can see only a large effect.
+
+**Result (2026-11-23, pre-registration committed in `8d2f4bd`; `results/gold_bbnr/report.md`).**
+- Part 1a: both cells DROP. The rule averages −0.251 ATR over 173 events with a 43.4 % win rate.
+  Gold tends to keep going after a first breach, most of all above the upper band (−0.371 ATR over
+  103 events). That continuation is descriptive and was not a registered hypothesis, so it must not
+  be cited as an edge. LightGBM's log-loss is worse than the base rate's.
+- Part 1b: both cells DROP. The trade averages −0.087 R over 151 trades with a 45.0 % win rate. Its
+  exits split 38 / 29 / 33 % between stop, take profit and time stop.
+- Part 2: HAR-X vs HAR is KEEP, with an MSE of 0.847 × HAR's. LightGBM vs HAR-X and the MLP vs
+  HAR-X are DROP: both are worse than HAR-X, at 0.991 and 0.952 × HAR's MSE.
+- As in fx_nyvol, the linear HAR-X is the best range model. Pre-session information predicts gold's
+  NY range, and non-linearity adds nothing. Using HAR-X live needs its own pre-registration.
+- Frozen Part 2 models (fit on all 2 442 usable days): `ols.json`, `lightgbm.txt` and `mlp.pt`, with
+  digests in `results/gold_bbnr/frozen_manifest.csv`.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

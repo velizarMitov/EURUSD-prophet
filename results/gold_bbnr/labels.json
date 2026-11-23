@@ -1,0 +1,214 @@
+{
+ "cache_digests": {
+  "dxy_d1": "8da163572167113c7c1bc0598414cda75785c809285460c744c1f70218f19ba0",
+  "dxy_h1": "b4d8df711f01c85f86c2374f9ad899bcdcee2a89444145e841df08c03551a7c5",
+  "gold_h1": "023a72fc14abf6647c792889c30987a80a942e9ba8f8f6a0b4c9d367a485f39c"
+ },
+ "config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+ "dxy": {
+  "d1_days": 3140,
+  "gap_days": [
+   [
+    "2025-02-03",
+    0.01108
+   ]
+  ],
+  "h1_bars": 53046,
+  "h1_first": "2017-01-03 02:00:00+00:00"
+ },
+ "gold": {
+  "d1_days": 3070,
+  "first": "2015-01-02 04:00:00+00:00",
+  "h1_bars": 70527,
+  "last": "2026-11-20 21:00:00+00:00",
+  "valid_days": 3068
+ },
+ "part_1a": {
+  "before_first_fold": 38,
+  "counts": {
+   "cooldown_removed": 6,
+   "down": 73,
+   "first_breaches": 180,
+   "outside_days": 413,
+   "up": 107,
+   "valid_days": 3068
+  },
+  "events": 174,
+  "folds": [
+   {
+    "k": 2,
+    "start": "2020-01-01",
+    "test": 13,
+    "train": 64
+   },
+   {
+    "k": 3,
+    "start": "2021-01-01",
+    "test": 20,
+    "train": 78
+   },
+   {
+    "k": 4,
+    "start": "2022-01-01",
+    "test": 14,
+    "train": 94
+   },
+   {
+    "k": 5,
+    "start": "2023-01-01",
+    "test": 16,
+    "train": 111
+   },
+   {
+    "k": 6,
+    "start": "2024-01-01",
+    "test": 13,
+    "train": 127
+   },
+   {
+    "k": 7,
+    "start": "2025-01-01",
+    "test": 17,
+    "train": 139
+   },
+   {
+    "k": 8,
+    "start": "2026-01-01",
+    "test": 13,
+    "train": 157
+   }
+  ],
+  "mde_model_accuracy": 0.6360570057271109,
+  "mde_rule": 0.25734410899959936,
+  "model_events": 106,
+  "n_folds": 7,
+  "no_outcome": 1,
+  "per_year_model": {
+   "2020": 13,
+   "2021": 20,
+   "2022": 14,
+   "2023": 16,
+   "2024": 13,
+   "2025": 17,
+   "2026": 13
+  },
+  "per_year_rule": {
+   "2015": 12,
+   "2016": 13,
+   "2017": 15,
+   "2018": 15,
+   "2019": 12,
+   "2020": 13,
+   "2021": 20,
+   "2022": 14,
+   "2023": 16,
+   "2024": 13,
+   "2025": 17,
+   "2026": 13
+  },
+  "rule_dates": 173,
+  "rule_events": 173,
+  "sd_3d_atr": 1.2081850160808867,
+  "thin_fold": 27,
+  "warm_up": 2
+ },
+ "part_1b": {
+  "before_first_fold": 38,
+  "candidates": 180,
+  "declared_sd_r": 1.0,
+  "folds": [
+   {
+    "k": 2,
+    "start": "2020-01-01",
+    "test": 13,
+    "train": 64
+   },
+   {
+    "k": 3,
+    "start": "2021-01-01",
+    "test": 20,
+    "train": 80
+   },
+   {
+    "k": 4,
+    "start": "2022-01-01",
+    "test": 15,
+    "train": 96
+   },
+   {
+    "k": 5,
+    "start": "2023-01-01",
+    "test": 16,
+    "train": 115
+   },
+   {
+    "k": 6,
+    "start": "2024-01-01",
+    "test": 13,
+    "train": 130
+   },
+   {
+    "k": 7,
+    "start": "2025-01-01",
+    "test": 19,
+    "train": 142
+   },
+   {
+    "k": 8,
+    "start": "2026-01-01",
+    "test": 14,
+    "train": 162
+   }
+  ],
+  "mde_model_accuracy_at_upper_bound": 0.6335603348027083,
+  "mde_rule_at_upper_bound": 0.20940031073527185,
+  "model_upper_bound": 110,
+  "n_folds": 7,
+  "no_exit_data": 1,
+  "per_year_candidates": {
+   "2015": 12,
+   "2016": 13,
+   "2017": 15,
+   "2018": 17,
+   "2019": 12,
+   "2020": 13,
+   "2021": 20,
+   "2022": 15,
+   "2023": 16,
+   "2024": 13,
+   "2025": 19,
+   "2026": 14
+  },
+  "rule_upper_bound": 179,
+  "thin_fold": 29,
+  "warm_up": 2
+ },
+ "part_2": {
+  "data_hour_floored": 0,
+  "dates": 3069,
+  "first_train": 229,
+  "first_usable": "2017-01-31",
+  "mde_sd_units": 0.06315580917342378,
+  "n_folds": 18,
+  "per_year_scored": {
+   "2018": 250,
+   "2019": 250,
+   "2020": 251,
+   "2021": 250,
+   "2022": 250,
+   "2023": 249,
+   "2024": 243,
+   "2025": 245,
+   "2026": 223
+  },
+  "reasons": {
+   "incomplete session": 92,
+   "invalid day": 1,
+   "usable": 2442,
+   "warm-up": 534
+  },
+  "scored_days": 2211,
+  "usable": 2442
+ },
+ "written_at": "2026-11-22T21:28:59+00:00"
+}

@@ -1,0 +1,82 @@
+{
+ "part": "bb",
+ "run_at": "2026-11-23T05:54:00+00:00",
+ "config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+ "prereg_commit_date": "2026-11-23T07:53:36+02:00",
+ "counts": {
+  "valid_days": 3068,
+  "outside_days": 413,
+  "first_breaches": 180,
+  "cooldown_removed": 6,
+  "up": 107,
+  "down": 73
+ },
+ "n_events": 174,
+ "n_rule": 173,
+ "n_model": 106,
+ "folds": [
+  {
+   "k": 2,
+   "start": "2020-01-01",
+   "n_fit": 54,
+   "n_val": 10,
+   "n_eval": 13,
+   "base_rate": 0.48148148148148145,
+   "best_iteration": 1
+  },
+  {
+   "k": 3,
+   "start": "2021-01-01",
+   "n_fit": 66,
+   "n_val": 12,
+   "n_eval": 20,
+   "base_rate": 0.45454545454545453,
+   "best_iteration": 15
+  },
+  {
+   "k": 4,
+   "start": "2022-01-01",
+   "n_fit": 80,
+   "n_val": 14,
+   "n_eval": 14,
+   "base_rate": 0.4625,
+   "best_iteration": 6
+  },
+  {
+   "k": 5,
+   "start": "2023-01-01",
+   "n_fit": 94,
+   "n_val": 17,
+   "n_eval": 16,
+   "base_rate": 0.44680851063829785,
+   "best_iteration": 19
+  },
+  {
+   "k": 6,
+   "start": "2024-01-01",
+   "n_fit": 108,
+   "n_val": 19,
+   "n_eval": 13,
+   "base_rate": 0.42592592592592593,
+   "best_iteration": 2
+  },
+  {
+   "k": 7,
+   "start": "2025-01-01",
+   "n_fit": 118,
+   "n_val": 21,
+   "n_eval": 17,
+   "base_rate": 0.4322033898305085,
+   "best_iteration": 1
+  },
+  {
+   "k": 8,
+   "start": "2026-01-01",
+   "n_fit": 133,
+   "n_val": 24,
+   "n_eval": 13,
+   "base_rate": 0.44360902255639095,
+   "best_iteration": 399
+  }
+ ]
+}

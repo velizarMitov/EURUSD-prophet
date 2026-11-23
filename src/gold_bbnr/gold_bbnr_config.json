@@ -1,0 +1,146 @@
+{
+  "family": "gold_bbnr",
+  "paths": {
+    "results": "results/gold_bbnr",
+    "data": "results/gold_bbnr/data",
+    "artifacts": "research_models/gold_bbnr"
+  },
+  "paths_read": {
+    "gold_h1": "results/gold/gold_h1.csv",
+    "fx_session_data": "results/fx_session/data",
+    "fomc_dates": "results/fomc_dates.csv"
+  },
+  "data": {
+    "window_start": "2015-01-02",
+    "window_end": "2026-11-20",
+    "label_tz": "Europe/Berlin",
+    "day_tz": "America/New_York",
+    "day_close_hour": 17,
+    "min_h1_per_d1": 12,
+    "clock_threshold": 0.95
+  },
+  "dxy": {
+    "mt5_symbol": "USDIndDec26",
+    "h1_start": "2017-01-03",
+    "h1_file": "dxy_h1.csv",
+    "yahoo_ticker": "DX-Y.NYB",
+    "d1_start": "2014-06-01",
+    "d1_file": "dxy_d1.csv",
+    "client_name": "Mozilla/5.0 (research data client)",
+    "lag_check_lags": [-1, 0, 1],
+    "lag_check_pair": "EURUSD",
+    "min_pre_bars": 10,
+    "gap_flag": 0.01
+  },
+  "bands": {"length": 20, "width": 2.0, "ddof": 0},
+  "atr_period": 20,
+  "horizon_days": 3,
+  "cooldown_days": 3,
+  "features_bb": {
+    "columns": [
+      "bb_zscore_abs", "bb_width_rank_60d", "rsi_14_dist", "bar_range_vs_atr20", "close_pos_in_bar",
+      "ret_3d_atr", "trend_ma50_alignment", "atr_ratio_20_60", "breach_side", "dxy_zscore_20d", "dxy_ret_5d"
+    ],
+    "rsi_period": 14,
+    "sma_slow": 50,
+    "atr_slow": 60,
+    "width_rank_days": 60,
+    "momentum_days": 3,
+    "dxy_window": 20,
+    "dxy_ret_days": 5
+  },
+  "trade": {
+    "take_profit": "sma20_at_entry",
+    "stop_multiple": 1.0,
+    "time_stop_days": 10,
+    "tie_rule": "stop_wins",
+    "stop_gap_fill": "open",
+    "target_gap_fill": "level"
+  },
+  "folds_bb": {
+    "first_eval_start": "2018-01-01",
+    "fold_months": 12,
+    "val_fraction": 0.15,
+    "purge_days": 5,
+    "embargo_days": 5,
+    "min_train": 60
+  },
+  "lightgbm_bb": {
+    "objective": "binary",
+    "num_leaves": 4,
+    "min_data_in_leaf": 20,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "session": {
+    "point": 0.01,
+    "data_hour": 14,
+    "target_hours": [15, 21],
+    "asia_hours": [0, 8],
+    "london_hours": [9, 13],
+    "pre_hours": [0, 14],
+    "range_window_days": 20,
+    "har_windows": [1, 5, 20]
+  },
+  "features_ny": {
+    "columns": [
+      "log_ny_range_lag1", "log_ny_range_ma5", "log_ny_range_ma20",
+      "log_asia_range", "log_london_range", "log_data_hour_range", "abs_data_hour_return",
+      "london_range_ratio", "data_hour_range_ratio", "dollar_pre_range_ratio",
+      "day_of_week", "is_nfp_day", "is_fomc_day", "dst_mismatch"
+    ],
+    "har_columns": ["log_ny_range_lag1", "log_ny_range_ma5", "log_ny_range_ma20"]
+  },
+  "folds_ny": {
+    "first_eval_start": "2018-01-01",
+    "fold_months": 6,
+    "val_fraction": 0.15,
+    "embargo_days": 1
+  },
+  "lightgbm_ny": {
+    "objective": "l2",
+    "num_leaves": 7,
+    "min_data_in_leaf": 50,
+    "learning_rate": 0.02,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "n_estimators": 2000,
+    "early_stopping_rounds": 100,
+    "seed": 42,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbose": -1
+  },
+  "mlp": {
+    "hidden": [32, 16],
+    "dropout": [0.2, 0.2],
+    "lr": 0.001,
+    "weight_decay": 0.001,
+    "batch_size": 256,
+    "max_epochs": 300,
+    "patience": 20,
+    "plateau_factor": 0.5,
+    "plateau_patience": 8,
+    "seeds": [11, 22, 33, 44, 55],
+    "allow_cpu": false
+  },
+  "scoring": {
+    "power": 0.8,
+    "resamples": 10000,
+    "bb": {"alpha": 0.025, "family_size": 2, "block_days": 5, "seed": 20261201},
+    "bb_sma": {"alpha": 0.025, "family_size": 2, "block_days": 10, "seed": 20261202, "declared_sd_r": 1.0},
+    "nyvol": {"alpha": 0.016666666666666666, "family_size": 3, "block_days": 5, "seed": 20261203,
+              "declared_sd_se_diff": 1.0}
+  }
+}

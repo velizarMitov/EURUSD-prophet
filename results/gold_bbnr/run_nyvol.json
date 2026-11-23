@@ -1,0 +1,298 @@
+{
+ "part": "nyvol",
+ "run_at": "2026-11-23T05:54:22+00:00",
+ "config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+ "prereg_commit_date": "2026-11-23T07:53:36+02:00",
+ "usable_days": 2442,
+ "scored_days": 2211,
+ "folds": [
+  {
+   "k": 0,
+   "start": "2018-01-01",
+   "n_fit": 195,
+   "n_val": 34,
+   "n_eval": 125,
+   "last_train_day": "2017-12-28",
+   "trees": 1,
+   "mlp_best_epochs": [
+    19,
+    7,
+    11,
+    53,
+    3
+   ]
+  },
+  {
+   "k": 1,
+   "start": "2018-07-01",
+   "n_fit": 301,
+   "n_val": 53,
+   "n_eval": 125,
+   "last_train_day": "2018-06-28",
+   "trees": 371,
+   "mlp_best_epochs": [
+    14,
+    12,
+    0,
+    14,
+    0
+   ]
+  },
+  {
+   "k": 2,
+   "start": "2019-01-01",
+   "n_fit": 407,
+   "n_val": 72,
+   "n_eval": 124,
+   "last_train_day": "2018-12-28",
+   "trees": 216,
+   "mlp_best_epochs": [
+    42,
+    28,
+    45,
+    21,
+    101
+   ]
+  },
+  {
+   "k": 3,
+   "start": "2019-07-01",
+   "n_fit": 512,
+   "n_val": 91,
+   "n_eval": 126,
+   "last_train_day": "2019-06-27",
+   "trees": 310,
+   "mlp_best_epochs": [
+    124,
+    88,
+    91,
+    109,
+    81
+   ]
+  },
+  {
+   "k": 4,
+   "start": "2020-01-01",
+   "n_fit": 619,
+   "n_val": 110,
+   "n_eval": 125,
+   "last_train_day": "2019-12-30",
+   "trees": 294,
+   "mlp_best_epochs": [
+    56,
+    132,
+    93,
+    108,
+    77
+   ]
+  },
+  {
+   "k": 5,
+   "start": "2020-07-01",
+   "n_fit": 726,
+   "n_val": 128,
+   "n_eval": 126,
+   "last_train_day": "2020-06-29",
+   "trees": 385,
+   "mlp_best_epochs": [
+    47,
+    146,
+    64,
+    79,
+    86
+   ]
+  },
+  {
+   "k": 6,
+   "start": "2021-01-01",
+   "n_fit": 833,
+   "n_val": 147,
+   "n_eval": 123,
+   "last_train_day": "2020-12-30",
+   "trees": 189,
+   "mlp_best_epochs": [
+    86,
+    59,
+    86,
+    42,
+    36
+   ]
+  },
+  {
+   "k": 7,
+   "start": "2021-07-01",
+   "n_fit": 937,
+   "n_val": 166,
+   "n_eval": 127,
+   "last_train_day": "2021-06-29",
+   "trees": 93,
+   "mlp_best_epochs": [
+    3,
+    72,
+    5,
+    65,
+    86
+   ]
+  },
+  {
+   "k": 8,
+   "start": "2022-01-01",
+   "n_fit": 1045,
+   "n_val": 185,
+   "n_eval": 124,
+   "last_train_day": "2021-12-30",
+   "trees": 172,
+   "mlp_best_epochs": [
+    0,
+    45,
+    97,
+    63,
+    131
+   ]
+  },
+  {
+   "k": 9,
+   "start": "2022-07-01",
+   "n_fit": 1151,
+   "n_val": 203,
+   "n_eval": 126,
+   "last_train_day": "2022-06-29",
+   "trees": 219,
+   "mlp_best_epochs": [
+    52,
+    70,
+    73,
+    82,
+    60
+   ]
+  },
+  {
+   "k": 10,
+   "start": "2023-01-01",
+   "n_fit": 1258,
+   "n_val": 222,
+   "n_eval": 124,
+   "last_train_day": "2022-12-29",
+   "trees": 211,
+   "mlp_best_epochs": [
+    49,
+    89,
+    48,
+    46,
+    52
+   ]
+  },
+  {
+   "k": 11,
+   "start": "2023-07-01",
+   "n_fit": 1363,
+   "n_val": 241,
+   "n_eval": 125,
+   "last_train_day": "2023-06-29",
+   "trees": 124,
+   "mlp_best_epochs": [
+    41,
+    36,
+    33,
+    36,
+    60
+   ]
+  },
+  {
+   "k": 12,
+   "start": "2024-01-01",
+   "n_fit": 1469,
+   "n_val": 260,
+   "n_eval": 117,
+   "last_train_day": "2023-12-28",
+   "trees": 104,
+   "mlp_best_epochs": [
+    21,
+    10,
+    31,
+    23,
+    25
+   ]
+  },
+  {
+   "k": 13,
+   "start": "2024-07-01",
+   "n_fit": 1569,
+   "n_val": 277,
+   "n_eval": 126,
+   "last_train_day": "2024-06-27",
+   "trees": 126,
+   "mlp_best_epochs": [
+    27,
+    50,
+    65,
+    13,
+    21
+   ]
+  },
+  {
+   "k": 14,
+   "start": "2025-01-01",
+   "n_fit": 1676,
+   "n_val": 296,
+   "n_eval": 121,
+   "last_train_day": "2024-12-30",
+   "trees": 214,
+   "mlp_best_epochs": [
+    36,
+    53,
+    60,
+    22,
+    36
+   ]
+  },
+  {
+   "k": 15,
+   "start": "2025-07-01",
+   "n_fit": 1779,
+   "n_val": 314,
+   "n_eval": 124,
+   "last_train_day": "2025-06-27",
+   "trees": 145,
+   "mlp_best_epochs": [
+    50,
+    37,
+    31,
+    56,
+    36
+   ]
+  },
+  {
+   "k": 16,
+   "start": "2026-01-01",
+   "n_fit": 1884,
+   "n_val": 333,
+   "n_eval": 122,
+   "last_train_day": "2025-12-30",
+   "trees": 283,
+   "mlp_best_epochs": [
+    24,
+    85,
+    47,
+    83,
+    55
+   ]
+  },
+  {
+   "k": 17,
+   "start": "2026-07-01",
+   "n_fit": 1988,
+   "n_val": 351,
+   "n_eval": 101,
+   "last_train_day": "2026-06-29",
+   "trees": 469,
+   "mlp_best_epochs": [
+    71,
+    139,
+    109,
+    95,
+    129
+   ]
+  }
+ ]
+}

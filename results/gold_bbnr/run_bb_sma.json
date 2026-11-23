@@ -1,0 +1,67 @@
+{
+ "part": "bb_sma",
+ "run_at": "2026-11-23T05:54:09+00:00",
+ "config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+ "prereg_commit_date": "2026-11-23T07:53:36+02:00",
+ "candidates": 180,
+ "blocked": 28,
+ "opened": 152,
+ "n_rule": 151,
+ "n_model": 77,
+ "folds": [
+  {
+   "k": 3,
+   "start": "2021-01-01",
+   "n_fit": 61,
+   "n_val": 11,
+   "n_eval": 16,
+   "base_rate": 0.47540983606557374,
+   "best_iteration": 5
+  },
+  {
+   "k": 4,
+   "start": "2022-01-01",
+   "n_fit": 73,
+   "n_val": 13,
+   "n_eval": 11,
+   "base_rate": 0.5068493150684932,
+   "best_iteration": 2
+  },
+  {
+   "k": 5,
+   "start": "2023-01-01",
+   "n_fit": 83,
+   "n_val": 15,
+   "n_eval": 13,
+   "base_rate": 0.4939759036144578,
+   "best_iteration": 3
+  },
+  {
+   "k": 6,
+   "start": "2024-01-01",
+   "n_fit": 95,
+   "n_val": 17,
+   "n_eval": 12,
+   "base_rate": 0.47368421052631576,
+   "best_iteration": 2
+  },
+  {
+   "k": 7,
+   "start": "2025-01-01",
+   "n_fit": 104,
+   "n_val": 18,
+   "n_eval": 14,
+   "base_rate": 0.4519230769230769,
+   "best_iteration": 215
+  },
+  {
+   "k": 8,
+   "start": "2026-01-01",
+   "n_fit": 116,
+   "n_val": 21,
+   "n_eval": 11,
+   "base_rate": 0.4396551724137931,
+   "best_iteration": 150
+  }
+ ]
+}
