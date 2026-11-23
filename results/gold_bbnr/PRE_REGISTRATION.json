@@ -1,0 +1,78 @@
+{
+ "cache_digests": {
+  "dxy_d1": "8da163572167113c7c1bc0598414cda75785c809285460c744c1f70218f19ba0",
+  "dxy_h1": "b4d8df711f01c85f86c2374f9ad899bcdcee2a89444145e841df08c03551a7c5",
+  "gold_h1": "023a72fc14abf6647c792889c30987a80a942e9ba8f8f6a0b4c9d367a485f39c"
+ },
+ "change": "gold-bb-nyrange",
+ "config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+ "facts": [
+  "Owner decisions (2026-11-22): both Bollinger variants, gross of cost (the gold cache has no spread), HAR/HAR-X/LightGBM/MLP for the range, and the dollar index (MT5 hourly for Part 2, Yahoo daily for Part 1).",
+  "Gold H1 2015-2026 was already used by the gold family (validation and one-shot test blocks): its D1/H1 volatility LSTMs CLEARED against GARCH and its range intervals were DROP. Neither scored band events or the NY session range.",
+  "Currency precedents: fx-bb-reversion and fx-bb-sma-exit DROP on six pairs; fx-ny-volatility LightGBM KEEP for both pairs and the descriptive HAR-X beat LightGBM and the MLP, which is why HAR-X is registered here; fx-ny-orb-hot DROP.",
+  "Before this pre-registration only event counts, bar presence, the DXY clock and gaps were looked at (179 first breaches 2015-2026 measured before the plan). No gold outcome, exit or target was computed.",
+  "The MT5 contract USDIndDec26 expires on 2026-12-11; its cache is pinned by digest and never refetched."
+ ],
+ "families": {
+  "bb": {
+   "alpha": 0.025,
+   "block_days": 5,
+   "cells": {
+    "gold_bb_lightgbm_vs_base_rate": "mean log-loss of the walk-forward LightGBM below the fit-slice base rate of r > 0",
+    "gold_bb_rule_mean_reversion": "mean r = dir * (close[t+3] - close[t]) / ATR20 > 0 over every event with an outcome"
+   },
+   "registry": "gold_bb_hypothesis_log.csv",
+   "seed": 20261201
+  },
+  "bb_sma": {
+   "alpha": 0.025,
+   "block_days": 10,
+   "cells": {
+    "gold_bb_sma_lightgbm_vs_base_rate": "mean log-loss of the walk-forward LightGBM below the fit-slice base rate of R > 0",
+    "gold_bb_sma_rule_mean_r": "mean R > 0 over every opened trade with an exit"
+   },
+   "registry": "gold_bb_sma_hypothesis_log.csv",
+   "seed": 20261202
+  },
+  "nyvol": {
+   "alpha": 0.016666666666666666,
+   "block_days": 5,
+   "cells": {
+    "gold_harx_vs_har": "mean squared error of y: HAR-X below HAR",
+    "gold_lgbm_vs_harx": "mean squared error of y: LightGBM below HAR-X",
+    "gold_mlp_vs_harx": "mean squared error of y: 5-seed MLP below HAR-X"
+   },
+   "registry": "gold_nyvol_hypothesis_log.csv",
+   "seed": 20261203
+  }
+ },
+ "gross": true,
+ "power": {
+  "part_1a": {
+   "mde_model_accuracy": 0.6360570057271109,
+   "mde_rule": 0.25734410899959936,
+   "model_events": 106,
+   "rule_dates": 173,
+   "rule_events": 173,
+   "sd_3d_atr": 1.2081850160808867
+  },
+  "part_1b": {
+   "mde_model_accuracy_at_upper_bound": 0.6335603348027083,
+   "mde_rule_at_upper_bound": 0.20940031073527185,
+   "model_upper_bound": 110,
+   "rule_upper_bound": 179
+  },
+  "part_2": {
+   "first_train": 229,
+   "mde_sd_units": 0.06315580917342378,
+   "scored_days": 2211,
+   "usable": 2442
+  }
+ },
+ "power_level": 0.8,
+ "resamples": 10000,
+ "window": [
+  "2015-01-02",
+  "2026-11-20"
+ ]
+}
