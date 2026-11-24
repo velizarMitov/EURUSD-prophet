@@ -331,6 +331,9 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
       committed**; `prereg.gate` checks git, the config digest and the cache digests.
     - **Power.** The Bollinger cells are weak: gold has about 180 first breaches in 2015–2026.
     - It never writes `models/`. Its frozen Part 2 models are in `research_models/gold_bbnr/`.
+    - **The gold cache keeps growing.** The study reads only rows up to `bars.PINNED_LAST`
+      (2026-11-20 21:00), and the gate hashes only that prefix, with line endings normalised.
+      Never widen the window or move that pin.
     - Result (2026-11-23):
       - All four Bollinger cells DROP. The reversion rule averages −0.251 ATR, and the SMA20 trade
         averages −0.087 R.

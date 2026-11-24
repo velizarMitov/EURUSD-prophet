@@ -3,6 +3,7 @@ digests of the three caches (spec gold-bb-nyrange/gold-bars, dollar-index)."""
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 import pandas as pd
@@ -21,7 +22,11 @@ class Inputs:
 
 
 def cache_digests(cfg: dict) -> dict:
-    return {'gold_h1': sha256_file(repo_path(cfg['paths_read']['gold_h1'])),
+    """gold_h1 hashes only the pinned prefix (rows up to bars.PINNED_LAST), because the gold logger appends to
+    it, with line endings normalised to CRLF as they were when pinned, because a git checkout may write LF."""
+    raw = B.pinned_bytes(repo_path(cfg['paths_read']['gold_h1']))
+    gold = hashlib.sha256(raw.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')).hexdigest()
+    return {'gold_h1': gold,
             'dxy_h1': sha256_file(D.data_path(cfg, 'h1_file')),
             'dxy_d1': sha256_file(D.data_path(cfg, 'd1_file'))}
 

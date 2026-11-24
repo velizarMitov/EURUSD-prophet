@@ -22,6 +22,23 @@ from . import repo_path
 
 OHLC = ['open', 'high', 'low', 'close']
 
+# The last row of the gold H1 cache as pre-registered (commit 8d2f4bd). The gold logger keeps appending
+# to that file, including the 22:00 bar of 2026-11-20 inside the window, so the study reads only the rows
+# up to this label, and the digest check hashes only that byte prefix (see `pinned_bytes`).
+PINNED_LAST = '2026-11-20T21:00:00+00:00'
+
+
+def pinned_bytes(path: str, last: str = PINNED_LAST) -> bytes:
+    """The file's bytes up to and including the line that starts with `last`. Without that line, the whole
+    file, so its digest no longer matches and the gate refuses."""
+    with open(path, 'rb') as fh:
+        data = fh.read()
+    i = data.find(b'\n' + last.encode())
+    if i < 0:
+        return data
+    end = data.find(b'\n', i + 1)
+    return data if end < 0 else data[:end + 1]
+
 
 def _day_cfg(cfg: dict) -> dict:
     return {'data': {k: cfg['data'][k] for k in ('label_tz', 'day_tz', 'day_close_hour')}}
@@ -41,6 +58,7 @@ def load_h1(cfg: dict, path: str | None = None) -> pd.DataFrame:
     if not df.index.is_unique:
         raise ValueError('the gold H1 cache has duplicate labels')
     df = clip_window(df, cfg)
+    df = df[df.index <= pd.Timestamp(PINNED_LAST)]
     verify(df.index, float(cfg['data']['clock_threshold']))
     return df
 

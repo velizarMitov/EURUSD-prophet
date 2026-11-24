@@ -2158,6 +2158,10 @@ Part 2 models in the gitignored `research_models/gold_bbnr/`.
   HAR-X are DROP: both are worse than HAR-X, at 0.991 and 0.952 × HAR's MSE.
 - As in fx_nyvol, the linear HAR-X is the best range model. Pre-session information predicts gold's
   NY range, and non-linearity adds nothing. Using HAR-X live needs its own pre-registration.
+- The gold logger keeps appending to `results/gold/gold_h1.csv`, including the 22:00 bar of 2026-11-20,
+  which falls inside the window. The study therefore reads only rows up to `bars.PINNED_LAST`
+  (`2026-11-20T21:00`, the last row when pre-registered). The gate hashes only that prefix, with line
+  endings normalised to CRLF, because a git checkout may write LF.
 - Frozen Part 2 models (fit on all 2 442 usable days): `ols.json`, `lightgbm.txt` and `mlp.pt`, with
   digests in `results/gold_bbnr/frozen_manifest.csv`.
 

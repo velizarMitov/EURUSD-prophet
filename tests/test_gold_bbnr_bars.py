@@ -83,3 +83,42 @@ def test_short_day_is_invalid():
     d1 = B.d1_ny(wk[keep], CFG)
     assert not d1.loc['2019-06-04', 'valid'] and d1.loc['2019-06-05', 'valid']
     assert pd.Timestamp('2019-06-04') not in B.valid(d1).index
+
+
+def test_pinned_prefix_ignores_appended_rows_but_not_edits(tmp_path):
+    head = 'time,open,high,low,close\r\n2026-11-20T20:00:00+00:00,1,2,0,1\r\n'
+    last = f'{B.PINNED_LAST},1,2,0,1.5\r\n'
+    p = tmp_path / 'g.csv'
+    p.write_bytes((head + last).encode())
+    pinned = B.pinned_bytes(str(p))
+    p.write_bytes((head + last + '2026-11-20T22:00:00+00:00,1,2,0,9\r\n').encode())
+    assert B.pinned_bytes(str(p)) == pinned
+    p.write_bytes((head.replace(',1,2,0,1', ',1,2,0,7') + last).encode())
+    assert B.pinned_bytes(str(p)) != pinned
+    p.write_bytes(head.encode())                               # the pinned row is gone: the whole file
+    assert B.pinned_bytes(str(p)) == head.encode()
+
+
+def test_loader_drops_rows_after_the_pinned_label(tmp_path, monkeypatch):
+    monkeypatch.setattr(B, 'verify', lambda idx, thr: None)
+    idx = pd.date_range('2026-11-20 18:00', periods=6, freq='h', tz='UTC')
+    df = pd.DataFrame({'time': idx.strftime('%Y-%m-%dT%H:%M:%S+00:00'), 'open': 1.0, 'high': 2.0, 'low': 0.0, 'close': 1.0})
+    p = tmp_path / 'g.csv'
+    df.to_csv(p, index=False)
+    got = B.load_h1(CFG, str(p))
+    assert got.index.max() == pd.Timestamp(B.PINNED_LAST)
+
+
+def test_gold_digest_ignores_line_endings(tmp_path):
+    import copy
+    from src.gold_bbnr import inputs as I
+    text = f'time,open,high,low,close\n{B.PINNED_LAST},1,2,0,1.5\n'
+    c = copy.deepcopy(CFG)
+    p = tmp_path / 'g.csv'
+    c['paths_read']['gold_h1'] = str(p)
+    p.write_bytes(text.encode())
+    lf = I.cache_digests(c)['gold_h1']
+    p.write_bytes(text.replace('\n', '\r\n').encode())
+    assert I.cache_digests(c)['gold_h1'] == lf
+    p.write_bytes(text.replace('1.5', '1.6').encode())
+    assert I.cache_digests(c)['gold_h1'] != lf

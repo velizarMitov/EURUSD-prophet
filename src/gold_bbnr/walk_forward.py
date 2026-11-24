@@ -46,7 +46,8 @@ def _gate(cfg):
 
 def _write(cfg, name, df):
     os.makedirs(results_dir(cfg), exist_ok=True)
-    df.to_csv(os.path.join(results_dir(cfg), name), index=False, compression='gzip')
+    df.to_csv(os.path.join(results_dir(cfg), name), index=False,
+              compression={'method': 'gzip', 'mtime': 0})          # no write time in the header: same bytes
 
 
 def _write_run(cfg, part, rec):
