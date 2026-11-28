@@ -1,0 +1,19 @@
+{
+ "version": "2017-01-30",
+ "source": "RTS Spot Afternoon Report, Contingency \"Footnote\" Rules (Revised 01/30/17)",
+ "clock": {
+  "close_ny": "16:00",
+  "open_ny": "18:00",
+  "friday_spot_close_ny": "12:00"
+ },
+ "rule0": {"proportionality_points": 15},
+ "rule1": {"guerilla": "entry differs from the 4 pm price; filled only when touched after the open"},
+ "rule2": {"trigger_points": 40, "stop_points": 40, "target_points": 60, "friday_spot": false,
+           "gap_same_direction_points": 40},
+ "rule3": {"min_distance_points": 15, "fallback_stop_points": 38, "fallback_target_points": 44,
+           "max_losses_spot": 3, "under_npr": false},
+ "rule4": {"trigger_points": 80, "stop_points": 44, "target_points": 48},
+ "rule5": {"gap_points": 40, "extra_points": 20},
+ "npr": {"allowed_rules_when_entry_npr": [2, 4], "allowed_rules_when_direction_npr": []},
+ "simulation": {"tie": "stop", "guerilla_fill_bar_checks": "stop only"}
+}

@@ -1,0 +1,49 @@
+{
+ "family": "rts_signals",
+ "paths": {
+  "results": "results/rts_signals",
+  "artifacts": "research_models/rts_signals",
+  "inbox": "inbox",
+  "drop": "drop",
+  "secrets": "secrets",
+  "cache": "cache"
+ },
+ "pairs": {
+  "POUND": {"symbol": "GBPUSD", "track": "GBP/USD", "factor": 10000, "pip": 0.0001, "point": 0.00001},
+  "EURO": {"symbol": "EURUSD", "track": "EUR/USD", "factor": 10000, "pip": 0.0001, "point": 0.00001},
+  "AUD": {"symbol": "AUDUSD", "track": "AUD/USD", "factor": 10000, "pip": 0.0001, "point": 0.00001},
+  "YEN": {"symbol": "USDJPY", "track": "USD/JPY", "factor": 100, "pip": 0.01, "point": 0.001},
+  "SWISS": {"symbol": "USDCHF", "track": "USD/CHF", "factor": 10000, "pip": 0.0001, "point": 0.00001},
+  "CAD": {"symbol": "USDCAD", "track": "USD/CAD", "factor": 10000, "pip": 0.0001, "point": 0.00001}
+ },
+ "mt5": {
+  "terminal_path": "C:/Users/test/Desktop/mt5app/terminal64.exe",
+  "history_start": "2026-10-29",
+  "label_tz": "Europe/Berlin",
+  "rts_tz": "America/New_York"
+ },
+ "gmail": {
+  "senders": ["ber@rts-forex.com", "barbararock261@gmail.com"],
+  "query_extra": "has:attachment filename:pdf",
+  "scope": "https://www.googleapis.com/auth/gmail.readonly",
+  "max_messages": 50,
+  "client_file": "client_secret.json",
+  "token_file": "token.json"
+ },
+ "parse": {
+  "parser_version": "1",
+  "narrative_flag_points": 500,
+  "entry_flag_points": 300,
+  "points_tolerance": 1,
+  "price_mismatch_points": 50,
+  "morning_gain_tolerance_pp": 0.05,
+  "morning_pages": 3
+ },
+ "simulation": {"first_bar_within_minutes": 60, "max_gap_minutes": 60},
+ "reconcile": {"tolerance_points": 3},
+ "forward": {"min_trades": 300, "deadline": "2027-06-30"},
+ "scoring": {"alpha": 0.05, "family_size": 1, "block_days": 5, "resamples": 10000, "seed": 20261202,
+             "declared_sd_r": 1.0},
+ "export": {"subdir": "EURUSDProphet", "file": "rts_signals.tsv", "display_days": 20},
+ "task": {"name": "EURUSDProphet-RTSInbox", "minute": 20}
+}

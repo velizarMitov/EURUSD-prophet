@@ -1,0 +1,10 @@
+sha256,kind,report_date,pair,value,flag
+1ebbdf012ab79f01e31442ed82d0fc102e2732eb830ee5f0afa2e7788716075c,spot,2026-11-23,EURO,2026-11-18,points differ from entry minus exit (26 vs -26)
+14088d16e756880d1a5c80076e57948cce19c6a3757f6e48a12e1dac766e5428,spot,2026-11-25,CAD,13202,narrative price off by more than 500 points
+14088d16e756880d1a5c80076e57948cce19c6a3757f6e48a12e1dac766e5428,spot,2026-11-25,EURO,2026-11-18,points differ from entry minus exit (26 vs -26)
+14088d16e756880d1a5c80076e57948cce19c6a3757f6e48a12e1dac766e5428,spot,2026-11-25,CAD,2026-11-23,points differ from entry minus exit (-42 vs +42)
+91be886d97610324afac03c8cff5a7155855e4fbdeec75ba1e8e5239327db26d,spot,2026-11-27,EURO,2026-11-18,points differ from entry minus exit (26 vs -26)
+91be886d97610324afac03c8cff5a7155855e4fbdeec75ba1e8e5239327db26d,spot,2026-11-27,CAD,2026-11-23,points differ from entry minus exit (-42 vs +42)
+219df5ddc4235bdd862e78983ec2ee6c52b22edc15c039388be72857d9c4b7c4,spot,2026-11-24,EURO,2026-11-18,points differ from entry minus exit (26 vs -26)
+219df5ddc4235bdd862e78983ec2ee6c52b22edc15c039388be72857d9c4b7c4,spot,2026-11-24,CAD,2026-11-23,points differ from entry minus exit (-42 vs +42)
+680df57a439d79300821003a2ae46683e5363b3f44276b1414256635b37908d9,spot,2026-11-20,EURO,2026-11-18,points differ from entry minus exit (26 vs -26)

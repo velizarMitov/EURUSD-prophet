@@ -613,3 +613,8 @@ run_at,status,mt5,phase,forecasts,gaps,settled,failures,note
 2026-11-28T05:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
 2026-11-28T06:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
 2026-11-28T07:01:02+00:00,ok,True,registered,4,15,4,0,"{""instruments"": {""eurusd"": ""forecast 2026-11-27 22:00:00+00:00"", ""gold"": ""forecast 2026-11-27 19:00:00+00:00""}}"
+2026-11-28T08:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
+2026-11-28T09:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
+2026-11-28T10:01:04+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
+2026-11-28T11:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"
+2026-11-28T12:01:03+00:00,mt5 unreachable,False,registered,0,0,0,2,"{""instruments"": {}}"

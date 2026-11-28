@@ -2227,6 +2227,77 @@ write outside the repo.
 - Size only. Python writes every text, and tests scan the file and the indicator's literals for trade
   words and order functions.
 
+### 3.23 Rockefeller Treasury Services report signals: the `rts_signals` family (openspec change `rts-signals`; a third party's levels, display and evaluation only, NET of the recorded spread)
+
+**What it asks.** Are the spot recommendations in RTS's daily reports, which the owner receives by email,
+reliable on the owner's own prices? The code is in `src/rts_signals/`, the results in
+`results/rts_signals/` (README, RUNBOOK, history and report there), and the raw PDFs, caches and secrets in
+the gitignored `research_models/rts_signals/`. RTS levels are never this project's signal, and the family
+contains no order, sizing or execution code.
+
+**Ingest.**
+- PDFs arrive from Gmail (`gmail.py`, scope `gmail.readonly`; only `messages.list`, `messages.get` and
+  `attachments.get`) or from the drop folder. The OAuth client and token live in
+  `research_models/rts_signals/secrets/` and are never printed. Without a token a pass reports
+  `gmail not authorised`.
+- A file is stored once by SHA-256. A second file with the same kind and date is recorded `second version`
+  and adds no rows.
+- `parse.py` recognises Spot Afternoon and Morning reports by their titles and reads the date
+  from the document.
+  - Spot prices convert /10 000, or /100 for YEN. YEN, SWISS and CAD are USDJPY, USDCHF and USDCAD.
+  - **Spot only** (owner decision 2026-11-28: the owner trades spot and has no futures on MT5). A Futures
+    report is logged `futures — not read` and adds no row.
+  - Track-record lines merged by the PDF text (`0.81881`) are split by the pair's decimals.
+- **The Morning positions table is an image.** It is read by RapidOCR (`ocr.py`,
+  `rapidocr-onnxruntime`, offline), owner decision 2026-11-28. Every row is checked: Gain/Loss must equal
+  ±(Spot − Rate)/Rate within 0.05 pp, or the row is flagged and never shown.
+- Inconsistencies are flagged and never fixed. The 12 November PDFs show:
+  - the CAD "Rule 2 at 13202" typo;
+  - an 11/18 EUR/USD buy whose loss is printed as +26;
+  - a CAD +42 corrected to −42 in a later report.
+- Stored rows are extracted numbers and digests only. Test fixtures are trimmed excerpts.
+
+**The rule book.** `rules.json` holds every number: proportionality 15, Rule 2 40/40/60 (never on a Friday
+in spot), Rule 3 fallback 38/44 with at most 3 losses, Rule 4 80/44/48, Rule 5 40 + 20, and the Friday
+spot close at 12:00 New York. Its digest is part of the pre-registration. `README.md` is generated from it
+in Bulgarian and English. New York times convert to Berlin labels per date, so 18:00 New York is 00:00
+Berlin in a normal week and 23:00 in the mismatch weeks.
+
+**Simulation** on M1 bid bars with their recorded spread, read-only from the `mt5app` terminal into
+append-only caches.
+- **Base trade (the scored object).** Rule 0 at the session open, with proportionality, or a Rule 1
+  guerilla limit filled when touched. It exits at the stop, the target, or the time stop at 16:00 New York
+  (Friday 12:00). A bar touching both levels counts as the stop. Net subtracts the recorded spread once:
+  a buy pays it at entry, a sell at exit.
+- **Full-rules replay** (Rules 2–5, NPR): descriptive only and never scored. It closes at the session end,
+  while RTS may carry positions overnight.
+- **Reconciliation** of RTS's track record within ±3 points labels each trade `confirmed`,
+  `different exit` or `not reproducible`. November 2026: 105 trades, 101 confirmed, 4 different exit. RTS
+  states +151 points gross; less the broker's spread at each entry it is about −214. RTS enters Rule 0
+  trades at the 18:00 New York rollover, when the spread is widest. This is descriptive, because it was
+  seen before the cell was designed.
+
+**The cell.** `rts_spot_net_r` at alpha 0.05 (family size 1) in `rts_signals_hypothesis_log.csv`.
+- The statistic is the mean net R of forward base trades, tested with `fx_bb.score.test_ratio` over
+  business days keyed by report date: 5-day blocks, 10 000 resamples, seed 20261202, one-sided. KEEP if
+  the lower bound is above 0.
+- A forward trade comes from a report dated after the pre-registration's commit day and received before
+  its session ended. Late reports are ledgered `received late` and excluded. The ledger is append-only and
+  never backfilled.
+- It is scored once on the first 300 trades, or `UNDERPOWERED — NO DECISION` on 2027-06-30. The
+  minimum detectable effect is about 0.18 R per trade, with a declared SD of 1 R and design effect 1.6.
+- It never touches the `0.05/9` bar or any other registry, `models/` or `config.json`.
+
+**The task and the chart.**
+- `EURUSDProphet-RTSInbox` runs hourly at :20: fetch → ingest → bars → simulate → ledger → reports →
+  chart. Every step is idempotent and none stops the pass.
+- `Common\Files\EURUSDProphet\rts_signals.tsv` is the family's only write outside the repo.
+- `mql5/Indicators/ProphetRTS.mq5` draws on the six pairs at H1 and below:
+  - **today's levels as soon as they arrive**, labelled `RTS: … непроверено` (owner decision 2026-11-28);
+  - past base trades coloured by the net result;
+  - the Morning positions and `N / 300 · няма присъда` in the corner.
+- The chart file never carries a lot size or a promise.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

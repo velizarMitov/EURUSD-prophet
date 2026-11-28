@@ -368,6 +368,32 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
     - **The chart.** `ProphetGoldNYRange.mq5` draws size only, on GOLD at H1 and below, from
       `Common\Files\EURUSDProphet\gold_ny_range.tsv`. Its text never names a trade or a direction.
 
+18. **Rockefeller Treasury Services report signals are their own family, `rts_signals` (`src/rts_signals/`,
+    openspec change `rts-signals`, `ARCHITECTURE_DOCS.md §3.23`).**
+    - **A third party's levels, never this project's signal.** Display and evaluation only: no order,
+      sizing or execution code anywhere. **Spot only**: Futures reports are logged and never read.
+    - **Inputs.** PDFs come from Gmail (`gmail.readonly` only; client and token in the gitignored
+      `research_models/rts_signals/secrets/`, never printed or committed) or the drop folder.
+      - Raw PDFs and their text are paid content. They stay in `research_models/`; only extracted numbers,
+        digests and trimmed test excerpts are committed.
+      - The Morning positions table is an image, read by RapidOCR and checked arithmetically.
+      - Inconsistencies in a report are flagged, never fixed.
+    - **The rule book is data.** `src/rts_signals/rules.json` holds every number, and its digest is
+      pre-registered next to the config's. A changed number is a new hypothesis.
+    - **The scored object is the base trade only**: Rule 0 (with proportionality) or Rule 1, stop, target,
+      time stop 16:00 New York (Friday 12:00), a tie counts as the stop, on M1 bid bars.
+      - It is net of the recorded spread only, so no verdict is a trading result.
+      - The Rules 2–5 replay and the reconciliation with RTS's track record are descriptive. November 2026:
+        +151 points gross, about −214 net of the broker's spread at entry, 101 / 105 confirmed.
+    - **The cell.** `rts_spot_net_r` at alpha 0.05 in `results/rts_signals/rts_signals_hypothesis_log.csv`,
+      scored once at 300 forward trades or on 2027-06-30. A report received after its session ended is
+      `received late` and never counts. The ledger is append-only and never backfilled.
+      **Nothing counts before `results/rts_signals/PRE_REGISTRATION.md` and `.json` are committed.**
+    - **The chart.** `ProphetRTS.mq5` shows today's levels at once, labelled `непроверено` (owner decision
+      2026-11-28), from `Common\Files\EURUSDProphet\rts_signals.tsv`. The task is
+      `EURUSDProphet-RTSInbox`, hourly at :20.
+    - It never writes `models/`, `config.json` or another family's files, and never touches the `0.05/9` bar.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

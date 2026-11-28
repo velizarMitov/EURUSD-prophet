@@ -23,3 +23,10 @@ python-dotenv>=1.0.0
 fredapi>=0.5.1
 pandas_datareader>=0.10.0
 arch>=6.0.0
+# rts_signals (openspec change rts-signals): read-only Gmail fetch and OCR of the Morning positions table.
+# google-api-core < 2.30 keeps opentelemetry-api at the mlflow-compatible 1.42.
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+google-api-core<2.30
+rapidocr-onnxruntime>=1.2
+pypdf>=4.0
