@@ -2165,6 +2165,68 @@ Part 2 models in the gitignored `research_models/gold_bbnr/`.
 - Frozen Part 2 models (fit on all 2 442 usable days): `ols.json`, `lightgbm.txt` and `mlp.pt`, with
   digests in `results/gold_bbnr/frozen_manifest.csv`.
 
+### 3.22 The forward test of gold's NY-range HAR-X: the `gold_nyfwd` family (openspec change `gold-nyrange-forward`; forward research with a display-only chart, GROSS of cost on bid prices)
+
+**What it asks.** Does §3.21's KEEP, HAR-X beating HAR on gold's NY session range, hold on live days?
+The code is in `src/gold_nyfwd/`, the results in `results/gold_nyfwd/` (README and RUNBOOK there), and
+the live caches in the gitignored `research_models/gold_nyfwd/`.
+
+**The model is pinned, never refitted.**
+- `prereg.build` copies the HAR-X (15) and HAR (4) coefficients from gold_bbnr's frozen `ols.json`
+  into `PRE_REGISTRATION.json`, after checking the file against gold_bbnr's frozen manifest.
+- Passes predict from the committed JSON. They refuse (`FrozenChanged`) if `ols.json` still exists and
+  its digest differs.
+- Features, target and eligibility are gold_bbnr's own functions (`bars.d1_ny`,
+  `ny_features.dataset`, `ny_target`), called with gold_bbnr's config. `bars.load_h1` is never used,
+  because it is pinned to 2026-11-20.
+
+**Live data.**
+- MT5 is read-only, from the `mt5app` terminal: `GOLD`, `EURUSD` and every listed `USDInd` contract.
+- The family keeps its own append-only H1 caches. Each pass tops them up with the last 4 000 closed bars
+  (from position 1, and no bar whose hour has not ended). A cached bar is never rewritten.
+- "Now" is real time on the Berlin label clock (`forecast_eval.m15_data.label_now`), never the last tick.
+- **The contract roll.** A day uses the `USDInd` contract with the nearest expiry at least 2 weekdays
+  after it. `USDIndDec26` (expiry 2026-12-11) covers days up to 2026-12-09.
+  - Every contract ever listed is remembered in `contracts.json`, so earlier days keep their contract.
+  - Before first use, a contract must pass a lag check: hourly returns against EURUSD must be most
+    negative at lag 0 within ±3 h. `USDIndDec26` gave −0.92 at lag 0 on 3 484 returns.
+  - A contract that fails, or a day with no qualifying contract, gives `no dollar data`. Such a day
+    never counts.
+  - The 20-day mean of the dollar feature mixes contracts without adjustment, as the feature is defined.
+
+**The two passes** (tasks `EURUSDProphet-GoldNYForecast` at 16:08 and `EURUSDProphet-GoldNYSettle` at
+23:08 Sofia). Each runs the config guard, the git gate, the clock window, then once-per-day.
+- **Forecast.** Gold and the dollar frame are truncated to bars labelled ≤ 14:00 on the day. The pass
+  logs `p_harx`, `p_har`, `F = exp(p_harx) × close14`, close14 and the contract.
+  - Instead of a forecast it may log one reason: `unverified clock week` (the gold weekly-open check,
+    whole cache and this week's open), `missing pre-session bar`, `no dollar data` or `warm-up`.
+  - On 2026-11-16 .. 20 the live features equalled gold_bbnr's historical ones to 1e-15.
+- **Settlement.** Each ok forecast is settled once its bar labelled 21:00 is cached, on the cache
+  truncated to that bar. The NY-close D1 validity therefore counts bars up to 21:00 only.
+  - It records `y`, both squared errors and the realised high and low, or `invalid day` /
+    `incomplete session`. In the dry run, 2026-11-26 (Thanksgiving) was `incomplete session`.
+  - A day with no forecast row is never settled or backfilled.
+
+**The cell.** `gold_harx_vs_har_forward` at alpha 0.05 (family size 1) in
+`gold_nyfwd_hypothesis_log.csv`.
+- The statistic is the mean of `se_harx − se_har`, tested with fx_fib's `test_cell`: 5-day blocks,
+  10 000 resamples, seed 20261201. KEEP if the upper bound is below 0.
+- It is scored once on the FIRST 60 forward days, i.e. settled ok days after the commit date on the
+  label clock. With fewer on 2027-04-30 it is `UNDERPOWERED — NO DECISION`.
+- Power at 60 days is about 34 % (historical mean difference −0.0276, block SE 0.0037 at 2 211 days,
+  scaled). A DROP is not evidence that the model fails.
+- It never touches the `0.05/9` bar, the gold, gold_bbnr or fx_ny_orb registries, `models/` or
+  `config.json`.
+
+**The chart.** Each pass rebuilds `Common\Files\EURUSDProphet\gold_ny_range.tsv`, the family's only
+write outside the repo.
+- `mql5/Indicators/ProphetGoldNYRange.mq5` draws on `GOLD*` at H1 and below:
+  - the ±F/2 band around close14 for the bars labelled 15:00–22:00;
+  - the dotted realised box;
+  - a corner with the forward count out of 60 and "no verdict yet".
+- Size only. Python writes every text, and tests scan the file and the indicator's literals for trade
+  words and order functions.
+
 ---
 
 ## 4. Testing, Validation & Error Diagnostics

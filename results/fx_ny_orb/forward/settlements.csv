@@ -1,3 +1,11 @@
 date,pair,status,y,p_harx,p_har,se_harx,se_har,F,hot,real_high,real_low,trade_reason,direction,entry_time,entry,stop,target,exit_time,exit,exit_reason,r_net,net_pips,settled_at
 2026-11-23 00:00:00+00:00,EURUSD,forecast unverified clock week,,,,,,,,,,,,,,,,,,,,,2026-11-23 22:05:02.133743+00:00
 2026-11-23 00:00:00+00:00,GBPUSD,forecast unverified clock week,,,,,,,,,,,,,,,,,,,,,2026-11-23 22:05:02.133743+00:00
+2026-11-24 00:00:00+00:00,EURUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-24 22:05:02.259538+00:00
+2026-11-24 00:00:00+00:00,GBPUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-24 22:05:02.259538+00:00
+2026-11-25 00:00:00+00:00,EURUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-25 22:05:01.925595+00:00
+2026-11-25 00:00:00+00:00,GBPUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-25 22:05:01.925595+00:00
+2026-11-26 00:00:00+00:00,EURUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-26 22:05:02.328645+00:00
+2026-11-26 00:00:00+00:00,GBPUSD,forecast missing pre-session bar,,,,,,,,,,,,,,,,,,,,,2026-11-26 22:05:02.328645+00:00
+2026-11-27 00:00:00+00:00,EURUSD,incomplete session,-5.776166973687503,-5.806731331388557,-5.731065932173493,0.0009341799616779607,0.002034103945648439,0.0032976532328179,False,1.09659,1.09319,breakout too far,-1,,,,,,,,,,2026-11-27 22:05:02.713867+00:00
+2026-11-27 00:00:00+00:00,GBPUSD,incomplete session,,-5.939773608783451,-5.738375308896835,,,0.0034566110692948,False,1.3130000000000002,1.3093700000000001,breakout too far,-1,,,,,,,,,,2026-11-27 22:05:02.713867+00:00

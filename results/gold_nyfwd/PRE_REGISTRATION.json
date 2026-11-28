@@ -1,0 +1,95 @@
+{
+ "alpha": 0.05,
+ "block_days": 5,
+ "cell": "gold_harx_vs_har_forward",
+ "change": "gold-nyrange-forward",
+ "config_digest": "d52f0577d62c2752605a42bd1f626cf03e3ee474c942c3dc0a6f74cb5494131a",
+ "contract_rule": "the USDInd contract with the nearest expiry at least 2 trading days after the day, lag-0 checked against EURUSD (lags [-3, -2, -1, 0, 1, 2, 3]); no qualifying contract = no dollar data, the day never counts and the horizon is not extended",
+ "cost": "Gross of cost on bid prices (no spread, slippage or swap) \u2014 not a trading result.",
+ "drop_is_not_failure": "The test is weak by the owner's choice of horizon. A DROP is not evidence that the model fails; only a KEEP is a finding.",
+ "facts": [
+  "HAR-X and HAR are gold_bbnr's frozen OLS fits on every usable day up to 2026-11-20 (the range is in the model section; the hourly dollar index starts in 2017). gold-bb-nyrange was scored 2026-11-23: the historical cell gold_harx_vs_har was KEEP at 0.847 x HAR's MSE on 2 211 walk-forward days 2018-01-02 .. 2026-11-20.",
+  "The frozen fit used all history, so the forward effect may be smaller than the walk-forward one. That is what this test measures.",
+  "LightGBM and the MLP were DROP against HAR-X historically and are not forecast live.",
+  "gold_bbnr's Bollinger cells were all DROP; nothing here concerns direction or a trade."
+ ],
+ "family_size": 1,
+ "forward_day": "a settled ok day whose label date is after the commit date of PRE_REGISTRATION.json on the Berlin label clock",
+ "historical": {
+  "boot_se": 0.003703732293099692,
+  "mean_diff": -0.027553212765572273,
+  "mse_har": 0.17979307548321255,
+  "mse_harx": 0.15223986271764028,
+  "n_days": 2211,
+  "verdict": "KEEP"
+ },
+ "horizon": {
+  "deadline": "2027-04-30",
+  "min_days": 60,
+  "rule": "scored once on the first 60 forward days, as soon as they exist; with fewer on 2027-04-30, recorded UNDERPOWERED \u2014 NO DECISION. The horizon is never extended."
+ },
+ "hypothesis": "mean over forward days of (HAR-X squared error - HAR squared error) < 0",
+ "model": {
+  "coef_har": [
+   -0.5984973538236663,
+   0.049568597466986275,
+   0.36229325470454926,
+   0.4633063983122563
+  ],
+  "coef_harx": [
+   -0.6465131285484945,
+   -0.009040317253615704,
+   0.18066403074016935,
+   0.4821614917902688,
+   0.15878059795043864,
+   0.04302121988564025,
+   0.04360265874477408,
+   -2.169938388047124,
+   0.07792549893850803,
+   0.10078032780528343,
+   0.021780251923558133,
+   0.02409989832273038,
+   0.07177342588124418,
+   0.6327445149589107,
+   -0.16061504711002075
+  ],
+  "columns": [
+   "log_ny_range_lag1",
+   "log_ny_range_ma5",
+   "log_ny_range_ma20",
+   "log_asia_range",
+   "log_london_range",
+   "log_data_hour_range",
+   "abs_data_hour_return",
+   "london_range_ratio",
+   "data_hour_range_ratio",
+   "dollar_pre_range_ratio",
+   "day_of_week",
+   "is_nfp_day",
+   "is_fomc_day",
+   "dst_mismatch"
+  ],
+  "fit_first_day": "2017-01-31",
+  "fit_last_day": "2026-11-20",
+  "fit_n_days": 2442,
+  "gold_bbnr_config_digest": "03ecd5a5372c38cc732e4fa33c9233d038fd83a04f6f313fbb5e67783f849cb8",
+  "har_columns": [
+   "log_ny_range_lag1",
+   "log_ny_range_ma5",
+   "log_ny_range_ma20"
+  ],
+  "ols_sha256": "5c21860f75d0a63ef862162a15e70fc5ea3af3cd0f75abfed7f16c21ceb7848e"
+ },
+ "one_sided": true,
+ "power": {
+  "calculation": "SE_n = 0.003704 x sqrt(2211 / 60) = 0.02248; power = Phi(0.02755 / 0.02248 - 1.6449) = 0.337",
+  "n_days": 60,
+  "power": 0.33747946924048144,
+  "se_at_n": 0.022483210898941664
+ },
+ "registry": "results/gold_nyfwd/gold_nyfwd_hypothesis_log.csv",
+ "resamples": 10000,
+ "seed": 20261201,
+ "target": "y = log((max high - min low of the gold bars labelled 15:00-21:00 Berlin) / close of the 14:00 bar), bid prices; eligibility and target from gold_bbnr.ny_target unchanged",
+ "verdict_rule": "KEEP if the bootstrap upper (1 - alpha) bound of the mean difference is below 0, else DROP"
+}

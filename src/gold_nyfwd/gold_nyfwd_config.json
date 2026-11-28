@@ -1,0 +1,42 @@
+{
+  "family": "gold_nyfwd",
+  "paths": {
+    "results": "results/gold_nyfwd",
+    "artifacts": "research_models/gold_nyfwd"
+  },
+  "mt5": {
+    "terminal_path": "C:\\Users\\test\\Desktop\\mt5app\\terminal64.exe",
+    "gold_symbol": "GOLD",
+    "lag_pair_symbol": "EURUSD",
+    "contract_prefix": "USDInd",
+    "roll_margin_trading_days": 2,
+    "h1_bars": 4000
+  },
+  "lag_check": {
+    "lags": [-3, -2, -1, 0, 1, 2, 3],
+    "min_returns": 200
+  },
+  "clock": {
+    "gold_threshold": 0.95
+  },
+  "forward": {
+    "forecast_after": "15:00",
+    "settle_after": "22:00",
+    "pre_session_last_hour": 14,
+    "settle_last_hour": 21,
+    "min_days": 60,
+    "deadline": "2027-04-30"
+  },
+  "scoring": {
+    "alpha": 0.05,
+    "family_size": 1,
+    "block_days": 5,
+    "resamples": 10000,
+    "seed": 20261201
+  },
+  "export": {
+    "subdir": "EURUSDProphet",
+    "file": "gold_ny_range.tsv",
+    "display_days": 60
+  }
+}

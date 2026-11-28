@@ -344,6 +344,30 @@ The exam is passed; a false-positive feature is now live capital risk. These rul
       - The linear HAR-X is the best range model, as in fx_nyvol. Using it live needs its own
         pre-registration.
 
+17. **The forward test of that gold HAR-X is its own family, `gold_nyfwd` (`src/gold_nyfwd/`, openspec
+    change `gold-nyrange-forward`, `ARCHITECTURE_DOCS.md §3.22`).**
+    - **The model is pinned.** The frozen gold_bbnr HAR-X and HAR coefficients are copied into
+      `results/gold_nyfwd/PRE_REGISTRATION.json`, and passes predict only from that copy. A pass refuses
+      if gold_bbnr's `ols.json` exists and differs. Never refit; LightGBM and the MLP are not forecast live.
+    - **Inputs.** It uses gold_bbnr's feature, target and D1 code read-only, never `bars.load_h1`. MT5 is
+      read-only from the `mt5app` terminal into its own append-only caches in `research_models/gold_nyfwd/`.
+      It never reads or writes the gold family's caches.
+    - **The clock** is real time on the Berlin label clock, never the last tick. Forecasts use bars
+      labelled ≤ 14:00 only.
+    - **The dollar index rolls by rule.** A day uses the `USDInd` contract with the nearest expiry at least
+      2 weekdays after it, lag-0 checked against EURUSD first. `USDIndDec26` covers days up to
+      2026-12-09. With no qualifying contract, the day is `no dollar data` and never counts.
+    - **Tasks.** `EURUSDProphet-GoldNYForecast` at 16:08 and `EURUSDProphet-GoldNYSettle` at 23:08 Sofia,
+      Mon–Fri. The logs are append-only and never backfilled.
+    - **The cell.** One cell, `gold_harx_vs_har_forward`, at alpha 0.05 in
+      `results/gold_nyfwd/gold_nyfwd_hypothesis_log.csv`. It is scored once on the first 60 forward days
+      after the pre-registration commit, or on 2027-04-30 as `UNDERPOWERED — NO DECISION`. Power is
+      about 34 %, so **a DROP is not evidence that the model fails**.
+    - It is **gross of cost on bid prices**. It never touches the `0.05/9` bar, `models/`,
+      `config.json` or any other registry.
+    - **The chart.** `ProphetGoldNYRange.mq5` draws size only, on GOLD at H1 and below, from
+      `Common\Files\EURUSDProphet\gold_ny_range.tsv`. Its text never names a trade or a direction.
+
 ## Notebook specifics
 
 - It runs **from `notebooks/`**, so file paths are `../` (e.g. `../config.json`, `../models/`). Any `subprocess` call to pytest must pass `cwd=os.path.abspath('..')` or pytest collects 0 tests.

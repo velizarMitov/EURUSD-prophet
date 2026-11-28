@@ -1,0 +1,3 @@
+date,pair,status,direction,entry_time,entry,stop,target,exit_time,exit,exit_reason,r_net,net_pips,hot,late,settled_at
+2026-11-27 00:00:00+00:00,EURUSD,no signal: breakout too far,,,,,,,,,,,False,,2026-11-27 22:05:02.713867+00:00
+2026-11-27 00:00:00+00:00,GBPUSD,no signal: breakout too far,,,,,,,,,,,False,,2026-11-27 22:05:02.713867+00:00
